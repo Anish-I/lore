@@ -1,11 +1,13 @@
 """Vault recall/ranking eval over a diverse multi-domain corpus.
 
 Runs in an ISOLATED Qdrant collection + tenant so it never touches demo data.
-Uses real local semantic embeddings (fastembed BGE) + local cross-encoder rerank.
+Uses real local semantic embeddings (fastembed BGE) + local cross-encoder rerank
++ BM25 sparse lane (fastembed Qdrant/bm25) for hybrid retrieval.
 
 Usage:
     cd core && python ../eval/run_eval.py            # default: hybrid + rerank
     RERANK=0 python ../eval/run_eval.py              # ablation: no rerank
+    SPARSE=0 python ../eval/run_eval.py              # ablation: dense-only (no BM25)
 """
 import os, sys, tempfile, pathlib
 
@@ -15,7 +17,7 @@ TENANT = "eval"
 SCOPE = "eval-all"
 
 from vault import db
-from vault.embed import LocalEmbedder
+from vault.embed import LocalEmbedder, LocalSparseEmbedder
 from vault.rerank import LocalReranker, FakeReranker
 from vault.index import index_note
 from vault.recall import retrieve
@@ -25,6 +27,7 @@ from vault import qdrant_store
 # CORPUS: filename -> markdown. Spread across tech / business / health / food /
 # finance / travel. Content is realistic; queries below are PARAPHRASED so this
 # tests semantic recall, not keyword matching.
+# Exact-token notes (identifiers like PROJ-1234) test the BM25 sparse lane.
 # ---------------------------------------------------------------------------
 CORPUS = {
  # ---- TECH ----
@@ -98,11 +101,38 @@ Contributions are made with after-tax money, grow tax-free, and qualified withdr
  "japan_trip.md": """# Japan Trip Plan
 Two weeks: Tokyo for five days, day trip to Hakone for hot springs and Mt Fuji views, then the bullet train to Kyoto for temples and Osaka for food. Get a rail pass before arriving; it must be bought outside Japan.
 """,
+ # ---- EXACT-TOKEN NOTES (exercise the BM25 sparse lane) ----
+ "bug_proj1234.md": """# Bug Report PROJ-1234
+## Summary
+PROJ-1234 tracks a critical null-pointer exception in the payment gateway when a card token expires mid-transaction.
+## Reproduction
+1. Initiate a checkout with a token expiring in <1 second.
+2. Observe NullPointerException in PaymentService.charge() at line 87.
+## Fix
+Added a pre-flight token validity check before calling the processor API. PROJ-1234 is now resolved and deployed to production.
+""",
+ "doc_doc5678.md": """# Architecture Decision Record DOC-5678
+## Context
+DOC-5678 documents the decision to migrate our monolith to an event-driven microservices architecture.
+## Decision
+We adopt Apache Kafka as the message broker. Each bounded context publishes domain events; consumers subscribe and maintain their own read models.
+## Consequences
+Operational complexity increases but team autonomy and independent deploy cadence improve significantly. DOC-5678 is the canonical reference for this migration.
+""",
+ "svc_svc0042.md": """# Service Runbook SVC-0042
+## Overview
+SVC-0042 is the notification delivery service responsible for sending email, push, and SMS alerts to end users.
+## On-call
+Escalate SVC-0042 pages to the platform team. Check the dead-letter queue first; most failures are transient SMTP timeouts.
+## Metrics
+SVC-0042 emits delivery_success_rate and delivery_latency_p99 to Datadog dashboard #4421.
+""",
 }
 
 # ---------------------------------------------------------------------------
 # QUERIES: (query, expected_filename, domain). Wording deliberately differs
 # from the note so semantic recall is what's tested.
+# Exact-token queries (identifiers) exercise the BM25 sparse lane.
 # ---------------------------------------------------------------------------
 QUERIES = [
  # tech
@@ -129,6 +159,10 @@ QUERIES = [
  # cross-domain disambiguation (similar words, different domain)
  ("how do we reduce our cloud bill", "q3_okrs.md", "business"),
  ("connecting a second data source early keeps customers around", "churn_analysis.md", "business"),
+ # exact-token queries — BM25 sparse lane must surface these at rank 1
+ ("what is the status of PROJ-1234", "bug_proj1234.md", "sparse"),
+ ("find DOC-5678 architecture decision", "doc_doc5678.md", "sparse"),
+ ("on-call runbook for SVC-0042", "svc_svc0042.md", "sparse"),
 ]
 
 def build_corpus(tmp):
@@ -141,6 +175,7 @@ def build_corpus(tmp):
 
 def main():
     use_rerank = os.environ.get("RERANK", "1") != "0"
+    use_sparse = os.environ.get("SPARSE", "1") != "0"
     conn = db.connect(); db.bootstrap_schema(conn)
     # fresh isolated collection
     try: qdrant_store._client.delete_collection("vault_eval")
@@ -149,6 +184,7 @@ def main():
     conn.execute("delete from notes where tenant_id=%s", (TENANT,))
 
     embedder = LocalEmbedder()
+    sparse_embedder = LocalSparseEmbedder() if use_sparse else None
     reranker = LocalReranker() if use_rerank else FakeReranker()
 
     tmp = tempfile.mkdtemp()
@@ -160,16 +196,19 @@ def main():
 
     total_chunks = 0
     for name, p in paths.items():
-        total_chunks += index_note(p, embedder, conn, "evaluser", SCOPE, TENANT)
+        total_chunks += index_note(p, embedder, conn, "evaluser", SCOPE, TENANT,
+                                   sparse_embedder=sparse_embedder)
+    sparse_label = "BM25+dense hybrid" if use_sparse else "dense-only"
     print(f"Indexed {len(paths)} notes / {total_chunks} chunks into vault_eval "
-          f"(rerank={'cross-encoder' if use_rerank else 'OFF'})\n")
+          f"(rerank={'cross-encoder' if use_rerank else 'OFF'}, retrieval={sparse_label})\n")
 
     ranks = []
     per_domain = {}
     print(f"{'DOMAIN':9} {'RANK':4}  QUERY  ->  TOP HIT")
     print("-" * 88)
     for q, expected, domain in QUERIES:
-        hits = retrieve(q, embedder, reranker, [SCOPE], TENANT, limit=5)
+        hits = retrieve(q, embedder, reranker, [SCOPE], TENANT, limit=5,
+                        sparse_embedder=sparse_embedder)
         hit_names = [id2name.get(h.note_id, "?") for h in hits]
         rank = next((i + 1 for i, n in enumerate(hit_names) if n == expected), 0)
         ranks.append(rank)
