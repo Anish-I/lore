@@ -200,10 +200,11 @@ def build_org():
 def pick_scope(person):
     r = rng.random()
     circles = [s for s in person["scopes"] if s in CIRCLES]
-    if r < 0.55: return f"team-{person['team']}" if person["team"] != "exec" else "exec-committee"
-    if r < 0.75: return f"{person['id']}-private"
-    if r < 0.90 and circles: return rng.choice(circles)
-    return "apex-enterprise"
+    team = f"team-{person['team']}" if person["team"] != "exec" else "exec-committee"
+    if r < 0.03: return "apex-enterprise"          # ~3% company-wide (was ~10%)
+    if circles and r < 0.15: return rng.choice(circles)  # ~12% to a circle (members only)
+    if r < 0.45: return f"{person['id']}-private"  # ~30% private
+    return team                                     # ~55% team
 
 def gen_notes(person):
     gens = TEAM_NOTES.get(person["team"], GENERIC)
@@ -241,7 +242,10 @@ def main():
             note_rows.append((note_id, p["id"], scope, title))
             for c in chunk_markdown(note_id, md):
                 cid = hashlib.sha1(f"{note_id}|{c.heading_path}|{c.chunk_index}".encode()).hexdigest()[:24]
-                chunk_rows.append((cid, note_id, c.heading_path, c.text, c.chunk_index, scope, p["id"]))
+                # Fold the heading/title into the embedded+indexed text so identifiers that
+                # live only in the title (claim/policy/incident IDs) are searchable (dense+BM25).
+                text = f"{c.heading_path}\n{c.text}" if c.heading_path else c.text
+                chunk_rows.append((cid, note_id, c.heading_path, text, c.chunk_index, scope, p["id"]))
     print(f"Generated {len(note_rows):,} notes -> {len(chunk_rows):,} chunks. Embedding…")
 
     # batch insert notes
