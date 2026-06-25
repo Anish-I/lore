@@ -15,6 +15,20 @@ def ensure_collection(dim):
         _client.create_payload_index(COLLECTION, "tenant_id", qm.PayloadSchemaType.KEYWORD)
         _client.create_payload_index(COLLECTION, "scope_ids", qm.PayloadSchemaType.KEYWORD)
 
+def delete_note(note_id: str) -> None:
+    """Delete all Qdrant points whose payload note_id matches the given note_id."""
+    existing = [c.name for c in _client.get_collections().collections]
+    if COLLECTION not in existing:
+        return
+    _client.delete(
+        COLLECTION,
+        points_selector=qm.FilterSelector(
+            filter=qm.Filter(must=[
+                qm.FieldCondition(key="note_id", match=qm.MatchValue(value=note_id))
+            ])
+        ),
+    )
+
 def upsert(points):
     _client.upsert(COLLECTION, points=[
         qm.PointStruct(id=p["id"], vector=p["vector"], payload=p["payload"]) for p in points

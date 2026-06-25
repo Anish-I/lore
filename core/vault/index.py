@@ -15,6 +15,7 @@ def index_note(path, embedder, conn, owner_id, scope_id, tenant_id):
     texts = [c.has_context_text() for c in chunks]
     vectors = embedder.embed(texts)
     qdrant_store.ensure_collection(len(vectors[0]))
+    qdrant_store.delete_note(note_id)
 
     conn.execute("insert into notes(id,tenant_id,owner_id,scope_id,source_path,title) values(%s,%s,%s,%s,%s,%s) on conflict (id) do update set title=excluded.title",
                  (note_id, tenant_id, owner_id, scope_id, path, title))
