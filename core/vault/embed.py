@@ -31,3 +31,37 @@ class LocalEmbedder:
         self.model = LocalEmbedder._cache[model]
     def embed(self, texts):
         return [v.tolist() for v in self.model.embed(list(texts))]
+
+# ---------------------------------------------------------------------------
+# Sparse embedders (BM25 / SPLADE lane)
+# ---------------------------------------------------------------------------
+
+class SparseEmbedder(Protocol):
+    """Protocol for sparse token-weight embedders (BM25, SPLADE, …).
+
+    embed_sparse returns one dict per input text:
+        {"indices": List[int], "values": List[float]}
+    where indices are vocabulary token IDs and values are their weights.
+    """
+    def embed_sparse(self, texts: list[str]) -> list[dict]: ...
+
+
+class LocalSparseEmbedder:
+    """BM25 sparse embeddings via fastembed (Qdrant/bm25 ONNX model, offline).
+
+    Returns list of {"indices": List[int], "values": List[float]} dicts
+    suitable for direct insertion into Qdrant sparse vectors.
+
+    The model downloads and caches to ~/.cache/fastembed on first use.
+    """
+    _cache: dict = {}
+
+    def __init__(self, model: str = "Qdrant/bm25"):
+        from fastembed import SparseTextEmbedding
+        if model not in LocalSparseEmbedder._cache:
+            LocalSparseEmbedder._cache[model] = SparseTextEmbedding(model_name=model)
+        self.model = LocalSparseEmbedder._cache[model]
+
+    def embed_sparse(self, texts: list[str]) -> list[dict]:
+        results = list(self.model.embed(texts))
+        return [{"indices": r.indices.tolist(), "values": r.values.tolist()} for r in results]
