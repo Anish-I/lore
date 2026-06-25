@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from .models import RetrievedChunk
 from . import qdrant_store
 from .fusion import rrf
@@ -119,3 +120,64 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
         out.append(RetrievedChunk(cid, c["note_id"], c["text"], c["heading_path"], final[cid],
                                   why=f"blend(rerank*{w:.2f}[{classify_query(query)}]+hybrid*{1 - w:.2f})={final[cid]:.3f}"))
     return out
+
+
+def _scope_of(c):
+    s = c.get("scope_ids") or ["?"]
+    return s[0] if s else "?"
+
+def retrieve_traced(query, embedder, reranker, sparse_embedder,
+                    allowed_scope_ids, tenant_id, limit=8):
+    """Like retrieve(), but runs the dense and sparse lanes SEPARATELY and returns
+    (final_chunks, trace) where trace exposes every pipeline stage for visualization."""
+    cls = classify_query(query)
+    w = _weight_for(query)
+
+    t0 = time.perf_counter()
+    qvec = embedder.embed([query])[0]
+    svec = sparse_embedder.embed_sparse([query])[0]
+    t_embed = (time.perf_counter() - t0) * 1000
+
+    t0 = time.perf_counter()
+    dense = qdrant_store.search(qvec, allowed_scope_ids, tenant_id, limit=20)
+    sparse = qdrant_store.search_sparse(svec, allowed_scope_ids, tenant_id, limit=20)
+    t_ret = (time.perf_counter() - t0) * 1000
+
+    by_id = {}
+    for c in dense + sparse:
+        by_id[c["chunk_id"]] = c
+    fused = rrf([[c["chunk_id"] for c in dense], [c["chunk_id"] for c in sparse]])
+    top_ids = sorted(fused, key=fused.get, reverse=True)[:20]
+    docs = [by_id[i]["text"] for i in top_ids]
+
+    t0 = time.perf_counter()
+    rr = reranker.rerank(query, docs) if docs else []
+    t_rr = (time.perf_counter() - t0) * 1000
+
+    rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
+    fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
+    final_score = {cid: w * rr_norm.get(cid, 0.0) + (1 - w) * fused_norm.get(cid, 0.0)
+                   for cid in top_ids}
+    ranked = sorted(top_ids, key=lambda c: final_score[c], reverse=True)[:limit]
+
+    final = [RetrievedChunk(cid, by_id[cid]["note_id"], by_id[cid]["text"],
+                            by_id[cid]["heading_path"], final_score[cid],
+                            why=f"{cls} (rerank w={w:.2f})") for cid in ranked]
+
+    def row(cid, score):
+        c = by_id[cid]
+        return {"title": c["heading_path"], "scope": _scope_of(c), "score": round(score, 4)}
+
+    trace = {
+        "query": query, "classification": cls, "rerank_weight": round(w, 2),
+        "models": {"dense": "BGE-small-en-v1.5", "sparse": "Qdrant/bm25",
+                   "rerank": "ms-marco-MiniLM-L-6-v2"},
+        "timings_ms": {"embed": round(t_embed), "retrieve": round(t_ret), "rerank": round(t_rr)},
+        "dense": [{"title": c["heading_path"], "scope": _scope_of(c), "score": round(c["score"], 4)} for c in dense[:6]],
+        "sparse": [{"title": c["heading_path"], "scope": _scope_of(c), "score": round(c["score"], 4)} for c in sparse[:6]],
+        "fused": [row(cid, fused[cid]) for cid in sorted(fused, key=fused.get, reverse=True)[:6]],
+        "final": [{"title": by_id[cid]["heading_path"], "scope": _scope_of(by_id[cid]),
+                   "rerank": round(rr_norm.get(cid, 0.0), 3), "final": round(final_score[cid], 3),
+                   "text": by_id[cid]["text"][:240], "note_id": by_id[cid]["note_id"]} for cid in ranked],
+    }
+    return final, trace

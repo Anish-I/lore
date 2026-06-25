@@ -101,6 +101,20 @@ def search(vector, allowed_scope_ids, tenant_id, limit=40):
     return [{"score": r.score, **r.payload} for r in res.points]
 
 
+def search_sparse(sparse_vector, allowed_scope_ids, tenant_id, limit=40):
+    """BM25-only sparse search over the "bm25" named sparse vector (for tracing/UI)."""
+    flt = qm.Filter(must=[
+        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
+        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
+    ])
+    sv = qm.SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"])
+    res = _client.query_points(
+        collection_name=COLLECTION, query=sv, using="bm25",
+        query_filter=flt, limit=limit, with_payload=True,
+    )
+    return [{"score": r.score, **r.payload} for r in res.points]
+
+
 def search_hybrid(dense_vector, sparse_vector, allowed_scope_ids, tenant_id, limit=40):
     """Two-lane prefetch (dense ANN + BM25 sparse) fused via Qdrant RRF.
 
