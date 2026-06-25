@@ -1,0 +1,13 @@
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports: ["6333:6333"]
+    volumes: ["./.qdrant:/qdrant/storage"]
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: vault
+      POSTGRES_PASSWORD: vault
+      POSTGRES_DB: vault
+    ports: ["5433:5432"]
+    volumes: ["./.pgdata:/var/lib/postgresql/data"]
