@@ -197,14 +197,18 @@ def build_org():
             people.append({"id": pid, "name": name, "team": team, "role": f"{team} specialist", "scopes": scopes})
     return people
 
-def pick_scope(person):
+# Note kinds that are confidential and must NEVER be company-wide (enterprise).
+SENSITIVE = {"comp", "investigation", "red-flag", "litigation", "reinsurance",
+             "budget", "close", "rate-filing", "reg-response", "complaint"}
+
+def pick_scope(person, sensitive=False):
     r = rng.random()
     circles = [s for s in person["scopes"] if s in CIRCLES]
     team = f"team-{person['team']}" if person["team"] != "exec" else "exec-committee"
-    if r < 0.03: return "apex-enterprise"          # ~3% company-wide (was ~10%)
-    if circles and r < 0.15: return rng.choice(circles)  # ~12% to a circle (members only)
-    if r < 0.45: return f"{person['id']}-private"  # ~30% private
-    return team                                     # ~55% team
+    if not sensitive and r < 0.03: return "apex-enterprise"  # ~3% company-wide (non-sensitive only)
+    if circles and r < 0.15: return rng.choice(circles)      # ~12% to a circle (members only)
+    if r < 0.45: return f"{person['id']}-private"            # ~30% private
+    return team                                               # ~55% team
 
 def gen_notes(person):
     gens = TEAM_NOTES.get(person["team"], GENERIC)
@@ -214,7 +218,7 @@ def gen_notes(person):
         title = title_fn()
         body = body_fn()
         md = f"# {title}\n\n{body}\n"
-        out.append((person, title, md))
+        out.append((person, title, md, kind))
     return out
 
 def main():
@@ -236,9 +240,9 @@ def main():
     note_rows = []      # (note_id, owner, scope, title)
     chunk_rows = []     # (chunk_id, note_id, heading_path, text, idx, scope, owner)
     for person in people:
-        for (p, title, md) in gen_notes(person):
+        for (p, title, md, kind) in gen_notes(person):
             note_id = hashlib.sha1(f"{p['id']}|{title}|{rng.random()}".encode()).hexdigest()[:16]
-            scope = pick_scope(p)
+            scope = pick_scope(p, kind in SENSITIVE)
             note_rows.append((note_id, p["id"], scope, title))
             for c in chunk_markdown(note_id, md):
                 cid = hashlib.sha1(f"{note_id}|{c.heading_path}|{c.chunk_index}".encode()).hexdigest()[:24]
