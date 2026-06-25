@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: vault-core
+Version: 0.1.0
+Requires-Python: >=3.11
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: qdrant-client
+Requires-Dist: voyageai
+Requires-Dist: psycopg[binary]
+Requires-Dist: watchdog
+Requires-Dist: markdown-it-py
+Requires-Dist: tiktoken
+Requires-Dist: python-dotenv
+Requires-Dist: pydantic
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: httpx; extra == "dev"

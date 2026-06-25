@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+qdrant-client
+voyageai
+psycopg[binary]
+watchdog
+markdown-it-py
+tiktoken
+python-dotenv
+pydantic
+
+[dev]
+pytest
+httpx
