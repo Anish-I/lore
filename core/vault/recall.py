@@ -20,6 +20,32 @@ RERANK_WEIGHT_SEMANTIC = 0.8   # trust the cross-encoder for natural-language qu
 RERANK_WEIGHT_LEXICAL = 0.15   # trust BM25/fusion for identifier / exact-token queries
 
 _ID_TOKEN = re.compile(r"^[A-Za-z]{2,}-\d{2,}$")  # PROJ-1037, ACME-2009, SKU-3005
+_ID_EXTRACT = re.compile(r"\b([A-Za-z]{2,}-(?:[A-Za-z]{2}-)?\d{2,})\b")  # CLM-77741, RF-PA-2026217
+
+def extract_identifier(q: str):
+    m = _ID_EXTRACT.search(q)
+    return m.group(1) if m else None
+
+def _exact_lane(query, by_id, allowed_scope_ids, tenant_id):
+    """Return chunk_ids of notes literally containing the query's identifier, heading
+    matches first. Adds any new candidates to by_id. Empty if no identifier in query."""
+    ident = extract_identifier(query)
+    if not ident:
+        return []
+    rows = qdrant_store.search_exact(ident, allowed_scope_ids, tenant_id, limit=10)
+    rows.sort(key=lambda c: ident.lower() not in (c.get("heading_path", "") or "").lower())
+    out = []
+    for c in rows:
+        by_id.setdefault(c["chunk_id"], c)
+        out.append(c["chunk_id"])
+    return out
+
+def _prepend_unique(exact_ids, ranked):
+    seen, ordered = set(), []
+    for cid in list(exact_ids) + list(ranked):
+        if cid not in seen:
+            seen.add(cid); ordered.append(cid)
+    return ordered
 
 def classify_query(q: str) -> str:
     """'lexical' if the query carries an exact identifier/code token, else 'semantic'."""
@@ -86,7 +112,11 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
         rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
         fused_norm = _minmax({cid: qdrant_scores.get(cid, 0.0) for cid in top_ids})
         final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
-        ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)[:limit]
+        ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
+        exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
+        for cid in exact_ids:
+            final.setdefault(cid, 1.0)
+        ranked = _prepend_unique(exact_ids, ranked)[:limit]
         out = []
         for cid in ranked:
             c = by_id[cid]
@@ -113,7 +143,11 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
     rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
     fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
     final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
-    ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)[:limit]
+    ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
+    exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
+    for cid in exact_ids:
+        final.setdefault(cid, 1.0)
+    ranked = _prepend_unique(exact_ids, ranked)[:limit]
     out = []
     for cid in ranked:
         c = by_id[cid]
@@ -158,7 +192,12 @@ def retrieve_traced(query, embedder, reranker, sparse_embedder,
     fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
     final_score = {cid: w * rr_norm.get(cid, 0.0) + (1 - w) * fused_norm.get(cid, 0.0)
                    for cid in top_ids}
-    ranked = sorted(top_ids, key=lambda c: final_score[c], reverse=True)[:limit]
+    ranked = sorted(top_ids, key=lambda c: final_score[c], reverse=True)
+    # Exact-identifier lane: literal-token matches jump to the front.
+    exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
+    for cid in exact_ids:
+        final_score.setdefault(cid, 1.0)
+    ranked = _prepend_unique(exact_ids, ranked)[:limit]
 
     final = [RetrievedChunk(cid, by_id[cid]["note_id"], by_id[cid]["text"],
                             by_id[cid]["heading_path"], final_score[cid],
