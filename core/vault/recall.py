@@ -22,8 +22,51 @@ def _minmax(d):
         return {k: 0.5 for k in d}
     return {k: (v - lo) / (hi - lo) for k, v in d.items()}
 
-def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8):
+def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
+             sparse_embedder=None):
+    """Retrieve relevant chunks for a query.
+
+    When sparse_embedder is provided the hybrid path is used: Qdrant performs a
+    two-lane prefetch (dense ANN + BM25 sparse) and fuses the lanes via RRF
+    server-side.  The resulting RRF scores are then blended with the local
+    cross-encoder rerank score.
+
+    When sparse_embedder is None (default) the original dense + lexical RRF +
+    rerank path is used, keeping all existing tests green.
+    """
     qvec = embedder.embed([query])[0]
+
+    if sparse_embedder is not None:
+        # ---- Hybrid path: Qdrant dense + BM25 RRF, then rerank blend ----
+        sparse_vec = sparse_embedder.embed_sparse([query])[0]
+        candidates = qdrant_store.search_hybrid(
+            qvec, sparse_vec, allowed_scope_ids, tenant_id, limit=40
+        )
+        if not candidates:
+            return []
+        by_id = {c["chunk_id"]: c for c in candidates}
+        # candidates are already RRF-fused and ranked by Qdrant; take top 20
+        top_ids = [c["chunk_id"] for c in candidates[:20]]
+        docs = [by_id[i]["text"] for i in top_ids]
+        rr = reranker.rerank(query, docs)
+
+        # Blend normalized cross-encoder score with normalized Qdrant fusion score.
+        qdrant_scores = {c["chunk_id"]: c["score"] for c in candidates}
+        rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
+        fused_norm = _minmax({cid: qdrant_scores.get(cid, 0.0) for cid in top_ids})
+        final = {cid: RERANK_WEIGHT * rr_norm[cid] + (1 - RERANK_WEIGHT) * fused_norm[cid]
+                 for cid in top_ids}
+        ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)[:limit]
+        out = []
+        for cid in ranked:
+            c = by_id[cid]
+            out.append(RetrievedChunk(
+                cid, c["note_id"], c["text"], c["heading_path"], final[cid],
+                why=f"hybrid(dense+bm25 RRF)->rerank blend={final[cid]:.3f}",
+            ))
+        return out
+
+    # ---- Dense-only path: dense + lexical RRF + rerank (original behaviour) ----
     candidates = qdrant_store.search(qvec, allowed_scope_ids, tenant_id, limit=40)
     if not candidates:
         return []
