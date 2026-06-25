@@ -162,8 +162,9 @@ Qdrant payload mirrors the ACL-relevant subset (`tenant_id`, `owner`, `scope_ids
 
 ## 9. Tech Stack
 
-- **Language/runtime:** TBD at plan time (Node/TS or Python). Python has the richer ingestion ecosystem
-  (Docling, Marker, Unstructured); Node fits the existing Wingman/Express stack. → **Open question #1.**
+- **Language/runtime (DECIDED 2026-06-25):** **Python core** (FastAPI) for ingestion + indexing + recall engine
+  (Docling/Marker/Zerox + best RAG/embedding tooling + first-class Qdrant client); **thin Node API** layer for the
+  `/ask` surface to match the existing Wingman/Composio stack. Clean service boundary; may collapse to one service later.
 - **Vector:** Qdrant (Docker locally). **DB:** Postgres (existing local instance).
 - **Queue:** lightweight (Postgres-backed or Redis, both already available).
 - **Embeddings:** Voyage `voyage-4-large` (hosted) / BGE-M3 (local). **Rerank:** Voyage `rerank-2.5`.
@@ -188,9 +189,11 @@ Each milestone is independently demoable and testable.
 
 ## 12. Open Questions (resolve at plan time)
 
-1. **Runtime:** Python (richer ingestion libs) vs Node/TS (matches existing stack)?
+1. ~~**Runtime:**~~ **RESOLVED 2026-06-25** → Python core + thin Node API.
 2. **Distillation LLM:** which model, and hosted-first vs local-first for the enterprise data-residency story?
+   (Default for M1: existing hosted OpenAI/Together; local path deferred.)
 3. **Seed data:** real personal vault subset vs synthetic "Acme renewal" corpus for the demo?
+   (Default: synthetic Acme corpus for a clean, shareable demo.)
 
 ## 13. Appendix — Field Survey (what others ship)
 
