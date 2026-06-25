@@ -19,3 +19,15 @@ class VoyageEmbedder:
         self.client = voyageai.Client(api_key=api_key); self.model = model
     def embed(self, texts):
         return self.client.embed(texts, model=self.model, input_type="document").embeddings
+
+class LocalEmbedder:
+    """Real semantic embeddings via fastembed (ONNX, no torch, offline).
+    Default BAAI/bge-small-en-v1.5 -> 384-dim. Model downloads + caches on first use."""
+    _cache = {}
+    def __init__(self, model="BAAI/bge-small-en-v1.5"):
+        from fastembed import TextEmbedding
+        if model not in LocalEmbedder._cache:
+            LocalEmbedder._cache[model] = TextEmbedding(model_name=model)
+        self.model = LocalEmbedder._cache[model]
+    def embed(self, texts):
+        return [v.tolist() for v in self.model.embed(list(texts))]

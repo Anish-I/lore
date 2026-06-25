@@ -17,3 +17,16 @@ class VoyageReranker:
         scores = [0.0]*len(docs)
         for res in r.results: scores[res.index] = res.relevance_score
         return scores
+
+class LocalReranker:
+    """Real cross-encoder reranking via fastembed (ONNX, offline)."""
+    _cache = {}
+    def __init__(self, model="Xenova/ms-marco-MiniLM-L-6-v2"):
+        from fastembed.rerank.cross_encoder import TextCrossEncoder
+        if model not in LocalReranker._cache:
+            LocalReranker._cache[model] = TextCrossEncoder(model_name=model)
+        self.model = LocalReranker._cache[model]
+    def rerank(self, query, docs):
+        if not docs:
+            return []
+        return list(self.model.rerank(query, list(docs)))

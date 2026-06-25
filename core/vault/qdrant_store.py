@@ -1,8 +1,10 @@
+import os
 from qdrant_client import QdrantClient
 from qdrant_client.http import models as qm
 from .config import settings
 
-COLLECTION = "vault_chunks"
+# Collection is overridable (eval/test isolation). Set QDRANT_COLLECTION before import.
+COLLECTION = os.environ.get("QDRANT_COLLECTION", "vault_chunks")
 _client = QdrantClient(url=settings.qdrant_url)
 
 def ensure_collection(dim):

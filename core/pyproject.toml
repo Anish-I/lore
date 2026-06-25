@@ -8,3 +8,4 @@ dependencies = [
 ]
 [project.optional-dependencies]
 dev = ["pytest","httpx"]
+local = ["fastembed"]   # offline semantic embeddings + cross-encoder rerank (no API key)
