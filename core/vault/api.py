@@ -30,6 +30,34 @@ def get_reranker():
 def get_sparse_embedder():
     return None if _FAKE else LocalSparseEmbedder()
 
+_TEAMS = ["underwriting","claims","actuarial","fraud-siu","customer-service","legal-compliance",
+          "marketing","it-eng","finance","hr","sales-distribution","product"]
+_CIRCLES = ["exec-committee","rate-filing-2026","project-telematics","catastrophe-response","ma-diligence","data-governance"]
+PROFILES = {
+  "acme": {"tenant": "acme", "company": "Acme (demo)", "personas": [
+      {"label": "Alice", "scopes": ["alice-private","eng-team","acme-corp"]},
+      {"label": "Bob", "scopes": ["bob-private","eng-team","acme-corp"]},
+      {"label": "New hire", "scopes": ["eng-team","acme-corp"]},
+      {"label": "Admin (all)", "scopes": ["alice-private","bob-private","eng-team","acme-corp"]}],
+    "examples": ["what do we know about Project Phoenix?","why is the Acme renewal at risk?",
+                 "root cause of incident PROJ-1037","how do we handle database connection limits?"]},
+  "apex": {"tenant": "apex", "company": "Apex Auto Insurance", "personas": [
+      {"label": "CEO", "scopes": ["ceo-private","exec-committee","team-finance","team-claims","team-actuarial","apex-enterprise"]},
+      {"label": "Chief Actuary", "scopes": ["chief-actuary-private","exec-committee","team-actuarial","rate-filing-2026","data-governance","apex-enterprise"]},
+      {"label": "Actuary", "scopes": ["team-actuarial","apex-enterprise"]},
+      {"label": "Underwriter", "scopes": ["team-underwriting","apex-enterprise"]},
+      {"label": "Claims Adjuster", "scopes": ["team-claims","apex-enterprise"]},
+      {"label": "Finance Analyst", "scopes": ["team-finance","apex-enterprise"]},
+      {"label": "HR Partner", "scopes": ["team-hr","apex-enterprise"]},
+      {"label": "Rate-Filing circle", "scopes": ["rate-filing-2026","apex-enterprise"]},
+      {"label": "Marketer", "scopes": ["team-marketing","apex-enterprise"]},
+      {"label": "Admin (all)", "scopes": [f"team-{t}" for t in _TEAMS] + _CIRCLES + ["apex-enterprise"]}],
+    "examples": ["loss ratio trend and rate indication","catastrophe reinsurance exposure",
+                 "incident in the rating engine","fraud ring investigation in Florida",
+                 "rate filing for telematics usage-based pricing"]},
+}
+PROFILE = os.environ.get("VAULT_PROFILE", "acme")
+
 class ReindexReq(BaseModel):
     path: str; owner_id: str = "alice"; scope_id: str = "alice-private"; tenant_id: str = "t1"
 class AskReq(BaseModel):
@@ -65,6 +93,10 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
     tr["engine"] = engine
     tr["scopes_asked"] = req.principal_scopes
     return tr
+
+@app.get("/presets")
+def presets():
+    return PROFILES.get(PROFILE, PROFILES["acme"])
 
 @app.get("/", response_class=HTMLResponse)
 def home():

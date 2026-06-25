@@ -53,26 +53,16 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Vault — live retrieval pipeline</h1>
+  <h1>Vault — live retrieval pipeline <span id="co" style="color:var(--mut);font-weight:400"></span></h1>
   <p class="sub">Type a question. Watch every model and stage run for real: classify → embed (BGE + BM25) → retrieve → fuse (RRF) → rerank (cross-encoder) → answer (gemma4). Scope-filtered the whole way.</p>
 
-  <div class="who" id="who">Asking as:
-    <button data-scopes="alice-private,eng-team,acme-corp" class="on">Alice</button>
-    <button data-scopes="bob-private,eng-team,acme-corp">Bob</button>
-    <button data-scopes="eng-team,acme-corp">New hire</button>
-    <button data-scopes="alice-private,bob-private,eng-team,acme-corp">Admin (all)</button>
-  </div>
+  <div class="who" id="who">Asking as:</div>
 
   <div class="bar">
     <input id="q" type="text" placeholder="Ask the vault…" autocomplete="off">
     <button id="go">Run</button>
   </div>
-  <div class="ex" id="ex">
-    <button>what do we know about Project Phoenix?</button>
-    <button>why is the Acme renewal at risk?</button>
-    <button>root cause of incident PROJ-1037</button>
-    <button>how do we handle database connection limits?</button>
-  </div>
+  <div class="ex" id="ex"></div>
 
   <div class="meta" id="meta"></div>
   <div id="spin" class="spin"></div>
@@ -92,18 +82,27 @@
 </div>
 <script>
 const $=s=>document.querySelector(s);
-let scopes="alice-private,eng-team,acme-corp";
+let scopes="", TENANT="acme";
 const scopeColors={};
 const palette=["#58a6ff","#3fb950","#e3b341","#f778ba","#d2a8ff","#79c0ff","#ffa657"];
 function color(s){if(!(s in scopeColors))scopeColors[s]=palette[Object.keys(scopeColors).length%palette.length];return scopeColors[s];}
 function chip(s){const c=color(s);return `<span class="scope" style="background:${c}22;color:${c};border:1px solid ${c}55">${s}</span>`;}
 
+async function init(){
+  const p=await fetch("/presets").then(r=>r.json());
+  TENANT=p.tenant; $("#co").textContent="· "+p.company;
+  $("#who").innerHTML="Asking as: "+p.personas.map((x,i)=>
+    `<button data-scopes="${x.scopes.join(",")}" class="${i===0?'on':''}">${x.label}</button>`).join("");
+  scopes=p.personas[0].scopes.join(",");
+  $("#ex").innerHTML=p.examples.map(q=>`<button>${q}</button>`).join("");
+}
 $("#who").addEventListener("click",e=>{if(e.target.tagName!=="BUTTON")return;
   [...$("#who").querySelectorAll("button")].forEach(b=>b.classList.remove("on"));
   e.target.classList.add("on");scopes=e.target.dataset.scopes;});
 $("#ex").addEventListener("click",e=>{if(e.target.tagName==="BUTTON"){$("#q").value=e.target.textContent;run();}});
 $("#go").addEventListener("click",run);
 $("#q").addEventListener("keydown",e=>{if(e.key==="Enter")run();});
+init();
 
 function rows(el,items,colorVar,max){
   const mx=Math.max(...items.map(i=>i.score||i.final||0),0.0001);
@@ -123,7 +122,7 @@ async function run(){
   $("#spin").textContent="running the pipeline (first run loads models, ~10s)…";
   try{
     const r=await fetch("/trace",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({question:q,principal_scopes:scopes.split(","),tenant_id:"acme"})});
+      body:JSON.stringify({question:q,principal_scopes:scopes.split(","),tenant_id:TENANT})});
     const d=await r.json();
     $("#spin").textContent="";
     if(d.error){$("#spin").textContent=d.error;return;}
