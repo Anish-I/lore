@@ -17,3 +17,6 @@ Task 10: complete (commit 2122c87, node proxy)
 Task 11: complete (sample+run.md; live e2e verified reindex->/ask->cited; full stack node->core OK)
 FINDING (Important): pytest e2e shares live Qdrant/PG, no per-run isolation -> demo pollution. Fix in M3 (ephemeral collection/tenant per test).
 FINDING (fixed): node main-module guard broken on Windows; fixed via pathToFileURL.
+Final review: opus, FIX-FIRST. C1 fixed (555456c), I1 (3669ee2), I4 (3876d85). 13 passed.
+Deferred to docs/BACKLOG.md: I2 (real hybrid/sparse), I3 (authn), test isolation, PG read path.
+M1 COMPLETE: live e2e + full-stack proxy verified; ACL gate green.
