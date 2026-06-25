@@ -1,6 +1,6 @@
-import time
+import os, time
 from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+from watchdog.events import FileSystemEventHandler, FileCreatedEvent, FileModifiedEvent
 from .index import index_note
 from .config import settings
 from . import db
@@ -9,13 +9,17 @@ from .embed import FakeEmbedder, VoyageEmbedder
 def handle_change(path, embedder, conn, owner_id=None, scope_id=None, tenant_id=None):
     if not path.endswith(".md"):
         return 0
+    if not os.path.isfile(path):
+        return 0
     return index_note(path, embedder, conn,
                       owner_id or settings.owner_id, scope_id or settings.scope_id, tenant_id or settings.tenant_id)
 
 class _Handler(FileSystemEventHandler):
     def __init__(self, embedder, conn): self.embedder, self.conn, self._last = embedder, conn, {}
     def on_any_event(self, e):
-        if e.is_directory or not str(e.src_path).endswith(".md"): return
+        if e.is_directory: return
+        if not isinstance(e, (FileCreatedEvent, FileModifiedEvent)): return
+        if not str(e.src_path).endswith(".md"): return
         now = time.time()
         if now - self._last.get(e.src_path, 0) < 2: return
         self._last[e.src_path] = now
