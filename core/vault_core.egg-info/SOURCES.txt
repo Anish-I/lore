@@ -1,9 +1,0 @@
-pyproject.toml
-tests/test_db.py
-vault/__init__.py
-vault/config.py
-vault_core.egg-info/PKG-INFO
-vault_core.egg-info/SOURCES.txt
-vault_core.egg-info/dependency_links.txt
-vault_core.egg-info/requires.txt
-vault_core.egg-info/top_level.txt

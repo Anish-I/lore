@@ -13,3 +13,7 @@ Task 7: complete (commit 7e243b1, recall + e2e + ACL gate verified)
 Task 8: complete (commit b3b89b0, FastAPI /ask+/reindex)
 Task 9: complete (commit 1fbda2a, watcher)
 Note: Qdrant point ids use uuid5(NAMESPACE_URL, chunk_id); chunk_id kept in payload + PG PK.
+Task 10: complete (commit 2122c87, node proxy)
+Task 11: complete (sample+run.md; live e2e verified reindex->/ask->cited; full stack node->core OK)
+FINDING (Important): pytest e2e shares live Qdrant/PG, no per-run isolation -> demo pollution. Fix in M3 (ephemeral collection/tenant per test).
+FINDING (fixed): node main-module guard broken on Windows; fixed via pathToFileURL.
