@@ -50,19 +50,71 @@ function Block({ b, note, onOpen }) {
   return <p style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-lg)', lineHeight: 1.65, margin: '0 0 16px', color: 'var(--text-body)' }}>{b.runs ? <Runs runs={b.runs} onOpen={onOpen} /> : b.s}</p>;
 }
 
-function Editor({ note, mode, onMode, onOpen, scope, onScope }) {
+function TabStrip({ tabs, activeId, onTab, onCloseTab }) {
+  return (
+    <div style={edS.tabbar}>
+      {(tabs || []).map((t) => {
+        const on = t.id === activeId;
+        return (
+          <div key={t.id} style={edS.tab(on)} onClick={() => onTab && onTab(t.id)} title={t.title}>
+            <EdIcon name={t.kind === 'bucket' ? 'library' : 'file-text'} size={13} style={{ color: on ? 'var(--brand-fg)' : 'var(--text-faint)' }} />
+            <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+            <span onClick={(e) => { e.stopPropagation(); onCloseTab && onCloseTab(t.id); }} style={{ display: 'inline-flex', marginLeft: 2, opacity: 0.55, borderRadius: 3 }}
+              onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = 'var(--surface-hover)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.opacity = 0.55; e.currentTarget.style.background = 'transparent'; }}>
+              <EdIcon name="x" size={12} />
+            </span>
+          </div>
+        );
+      })}
+      <div style={{ flex: 1 }} />
+      <EdIconBtn icon="panel-right-close" label="Toggle pane" size="sm" />
+    </div>
+  );
+}
+
+function BucketBody({ bucket: b, onOpen }) {
+  return (
+    <div style={edS.scroll}>
+      <div style={{ maxWidth: 760, margin: '0 auto', padding: '0 36px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <span style={{ width: 44, height: 44, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
+            <EdIcon name="library" size={22} style={{ color: 'var(--brand-fg)' }} />
+          </span>
+          <div style={{ flex: 1 }}>
+            <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>{b.name}</h1>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)', marginTop: 4 }}>{b.group} · {b.notes} notes · recall {b.recall.toFixed(2)}</div>
+          </div>
+          <EdScope scope={b.scope} />
+        </div>
+        <p style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-lg)', lineHeight: 1.6, color: 'var(--text-body)', margin: '0 0 18px' }}>{b.desc}</p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 18 }}>
+          {b.topics.map((t) => <EdBadge key={t} tone="info">#{t}</EdBadge>)}
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-subtle)', marginBottom: 8 }}>contributors</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
+          {b.contributors.map((m) => <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 10px 4px 4px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)' }}><EdAvatar name={m} size={20} /><span style={{ fontSize: 12.5, color: 'var(--text-muted)' }}>{m}</span></div>)}
+        </div>
+        <button onClick={() => onOpen && onOpen()} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, height: 36, padding: '0 16px', border: '1px solid var(--brand-soft-border)', background: 'var(--brand-soft-bg)', color: 'var(--brand-fg)', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 13, fontWeight: 600 }}>
+          <EdIcon name="sparkles" size={15} />Ask this bucket
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode, onOpen, scope, onScope }) {
+  if (bucket) {
+    return (
+      <div style={edS.center}>
+        <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} />
+        <BucketBody bucket={bucket} onOpen={onOpen} />
+      </div>
+    );
+  }
   return (
     <div style={edS.center}>
-      <div style={edS.tabbar}>
-        <div style={edS.tab(true)}>
-          <EdIcon name="file-text" size={13} style={{ color: 'var(--brand-fg)' }} />
-          {note.title}
-          <EdIcon name="x" size={12} style={{ color: 'var(--text-faint)', marginLeft: 4 }} />
-        </div>
-        <div style={{ flex: 1 }} />
-        <EdIconBtn icon="panel-right-close" label="Toggle pane" size="sm" />
-      </div>
-
+      <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} />
       <div style={edS.toolbar}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{note.path || (note.title + '.md')}</span>
         <div style={{ flex: 1 }} />

@@ -52,7 +52,7 @@ function BucketCard({ b, onOpen }) {
   );
 }
 
-function BucketsView({ buckets, onAsk }) {
+function BucketsView({ buckets, onAsk, onOpen }) {
   const [tab, setTab] = React.useState('all');
   const shown = tab === 'all' ? buckets : buckets.filter((b) => tab === 'mine' ? b.scope === 'private' : b.scope === tab);
   return (
@@ -76,7 +76,7 @@ function BucketsView({ buckets, onAsk }) {
           ]} />
         </div>
         <div style={bkS.grid}>
-          {shown.map((b) => <BucketCard key={b.id} b={b} onOpen={() => {}} />)}
+          {shown.map((b) => <BucketCard key={b.id} b={b} onOpen={() => onOpen && onOpen(b)} />)}
         </div>
       </div>
     </div>

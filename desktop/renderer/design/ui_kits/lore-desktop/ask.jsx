@@ -38,7 +38,29 @@ function Evidence({ rows }) {
   );
 }
 
-function AskPanel({ messages, asking, suggestions, onSend, onClose }) {
+function SourceToggle({ value, onChange }) {
+  const opts = [
+    { id: 'me', label: 'Me', icon: 'lock' },
+    { id: 'team', label: 'Team', icon: 'users' },
+    { id: 'both', label: 'Both', icon: 'layers' },
+  ];
+  return (
+    <div style={{ display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', padding: 2, gap: 2 }}>
+      {opts.map((o) => (
+        <button key={o.id} onClick={() => onChange(o.id)} title={`Ask from ${o.label.toLowerCase()}`} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', cursor: 'pointer', border: 'none',
+          borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)', fontSize: 10.5,
+          background: value === o.id ? 'var(--brand-soft-bg)' : 'transparent',
+          color: value === o.id ? 'var(--brand-fg)' : 'var(--text-faint)', fontWeight: value === o.id ? 600 : 400,
+        }}>
+          <AkIcon name={o.icon} size={11} />{o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource }) {
   const [draft, setDraft] = React.useState('');
   const scrollRef = React.useRef(null);
   React.useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, asking]);
@@ -51,9 +73,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose }) {
           <AkIcon name="sparkles" size={14} style={{ color: 'var(--brand-fg)' }} />
         </span>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>Ask Lore</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5, fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', padding: '3px 8px' }}>
-          <AkIcon name="filter" size={11} />team + enterprise
-        </div>
+        <SourceToggle value={source || 'both'} onChange={onSource || (() => {})} />
         <AkIconBtn icon="x" label="Close Ask" size="sm" onClick={onClose} />
       </div>
 
