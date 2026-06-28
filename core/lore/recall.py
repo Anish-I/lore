@@ -64,6 +64,40 @@ def _weight_for(query: str) -> float:
         return float(_FORCED)
     return RERANK_WEIGHT_LEXICAL if classify_query(query) == "lexical" else RERANK_WEIGHT_SEMANTIC
 
+# Domain glossary: bridge plain-language queries to the jargon the notes use.
+# Applied to the RETRIEVAL query only (dense+sparse); rerank still scores the
+# original query. Toggle with EXPAND=0. Domain-pluggable.
+_EXPAND = os.environ.get("EXPAND", "1") != "0"
+_GLOSSARY = {
+    "incurred but not": "IBNR reserving reserve",
+    "ibnr": "incurred but not reported reserving",
+    "set aside": "reserve",
+    "open claim": "reserve claim",
+    "book running": "loss ratio plan",
+    "loss costs": "loss ratio pure premium rate indication",
+    "reduce loss": "loss ratio rate indication telematics",
+    "department of insurance": "DOI regulatory inquiry filing complaint",
+    "regulator": "DOI regulatory inquiry compliance",
+    "excess-of-loss": "reinsurance treaty catastrophe XoL",
+    "excess of loss": "reinsurance treaty catastrophe XoL",
+    "catastrophe": "reinsurance treaty catastrophe cat cover PML",
+    "hurricane": "catastrophe reinsurance PML treaty",
+    "capital protects": "reinsurance combined ratio capital",
+    "profitability": "combined ratio loss ratio expense ratio rate",
+    "raise premiums": "rate indication rate filing",
+}
+
+def expand_query(q: str) -> str:
+    if not _EXPAND:
+        return q
+    ql = q.lower()
+    extra = [terms for trigger, terms in _GLOSSARY.items() if trigger in ql]
+    if not extra:
+        return q
+    have = set(ql.split())
+    add = [t for t in " ".join(extra).split() if t.lower() not in have]
+    return (q + " " + " ".join(dict.fromkeys(add))) if add else q
+
 def _lexical_rank(query, candidates):
     q = set(query.lower().split())
     scored = sorted(candidates, key=lambda c: len(q & set(c["text"].lower().split())), reverse=True)
@@ -90,11 +124,12 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
     When sparse_embedder is None (default) the original dense + lexical RRF +
     rerank path is used, keeping all existing tests green.
     """
-    qvec = embedder.embed([query])[0]
+    eq = expand_query(query)
+    qvec = embedder.embed([eq])[0]
 
     if sparse_embedder is not None:
         # ---- Hybrid path: Qdrant dense + BM25 RRF, then rerank blend ----
-        sparse_vec = sparse_embedder.embed_sparse([query])[0]
+        sparse_vec = sparse_embedder.embed_sparse([eq])[0]
         candidates = qdrant_store.search_hybrid(
             qvec, sparse_vec, allowed_scope_ids, tenant_id, limit=40
         )
@@ -168,8 +203,9 @@ def retrieve_traced(query, embedder, reranker, sparse_embedder,
     w = _weight_for(query)
 
     t0 = time.perf_counter()
-    qvec = embedder.embed([query])[0]
-    svec = sparse_embedder.embed_sparse([query])[0]
+    eq = expand_query(query)
+    qvec = embedder.embed([eq])[0]
+    svec = sparse_embedder.embed_sparse([eq])[0]
     t_embed = (time.perf_counter() - t0) * 1000
 
     t0 = time.perf_counter()

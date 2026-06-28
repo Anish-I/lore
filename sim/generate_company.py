@@ -225,7 +225,7 @@ def gen_notes(person):
 def main():
     t_start = time.time()
     conn = db.connect(); db.bootstrap_schema(conn)
-    try: qdrant_store._client.delete_collection("vault_company")
+    try: qdrant_store._client.delete_collection(os.environ["QDRANT_COLLECTION"])
     except Exception: pass
     conn.execute("delete from chunks where note_id in (select id from notes where tenant_id=%s)", (TENANT,))
     conn.execute("delete from notes where tenant_id=%s", (TENANT,))
@@ -283,7 +283,7 @@ def main():
             el = time.time()-t_start
             print(f"  indexed {done:,}/{len(texts):,} chunks  ({done/max(el,1):.0f} chunks/s, {el:.0f}s elapsed)")
     print(f"DONE: {len(note_rows):,} notes / {len(chunk_rows):,} chunks in {time.time()-t_start:.0f}s "
-          f"into collection vault_company (tenant apex).")
+          f"into collection {os.environ['QDRANT_COLLECTION']} (tenant apex).")
 
 if __name__ == "__main__":
     main()
