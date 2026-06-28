@@ -1,5 +1,5 @@
-from vault.models import Chunk
-from vault.contextualize import needs_context, apply_context
+from lore.models import Chunk
+from lore.contextualize import needs_context, apply_context
 
 def test_short_chunk_needs_context():
     c = Chunk("n1", 0, "Acme Account > Renewal", "Risk: champion left.")

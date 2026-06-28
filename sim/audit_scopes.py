@@ -15,9 +15,9 @@ import os
 os.environ["QDRANT_COLLECTION"] = "vault_company"
 TENANT = "apex"
 
-from vault.embed import LocalEmbedder, LocalSparseEmbedder
-from vault.rerank import LocalReranker
-from vault.recall import retrieve_traced
+from lore.embed import LocalEmbedder, LocalSparseEmbedder
+from lore.rerank import LocalReranker
+from lore.recall import retrieve_traced
 
 E = LocalEmbedder(); S = LocalSparseEmbedder(); R = LocalReranker()
 

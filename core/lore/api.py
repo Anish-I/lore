@@ -10,7 +10,7 @@ from .index import index_note
 from .recall import retrieve, retrieve_traced
 from . import llm
 
-app = FastAPI(title="Vault Core")
+app = FastAPI(title="Lore Core")
 _conn = db.connect(); db.bootstrap_schema(_conn)
 
 # Model selection: Voyage if an API key is set, else REAL local models (fastembed),

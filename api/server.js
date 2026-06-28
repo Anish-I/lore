@@ -14,5 +14,5 @@ export function makeApp(coreUrl = process.env.CORE_URL || "http://localhost:8099
 // Windows-safe main-module check: compare normalized file URLs (the
 // `file://${process.argv[1]}` idiom never matches on Windows paths).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  makeApp().listen(3030, () => console.log("vault-api on :3030"));
+  makeApp().listen(3030, () => console.log("lore-api on :3030"));
 }

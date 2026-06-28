@@ -9,7 +9,7 @@ import pytest
 @pytest.fixture(scope="session", autouse=True)
 def _clean_test_collection():
     from qdrant_client import QdrantClient
-    from vault.config import settings
+    from lore.config import settings
     try:
         QdrantClient(url=settings.qdrant_url).delete_collection("vault_test")
     except Exception:

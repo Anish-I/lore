@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Vault — live retrieval pipeline</title>
+<title>Lore — live retrieval pipeline</title>
 <style>
   :root{--bg:#0b0e14;--panel:#141a23;--panel2:#1b232f;--line:#27313f;--ink:#e6edf3;--mut:#8b97a7;
     --dense:#58a6ff;--sparse:#e3b341;--fuse:#d2a8ff;--final:#3fb950;--accent:#f778ba;}
@@ -53,13 +53,13 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>Vault — live retrieval pipeline <span id="co" style="color:var(--mut);font-weight:400"></span></h1>
+  <h1>Lore — live retrieval pipeline <span id="co" style="color:var(--mut);font-weight:400"></span></h1>
   <p class="sub">Type a question. Watch every model and stage run for real: classify → embed (BGE + BM25) → retrieve → fuse (RRF) → rerank (cross-encoder) → answer (gemma4). Scope-filtered the whole way.</p>
 
   <div class="who" id="who">Asking as:</div>
 
   <div class="bar">
-    <input id="q" type="text" placeholder="Ask the vault…" autocomplete="off">
+    <input id="q" type="text" placeholder="Ask Lore…" autocomplete="off">
     <button id="go">Run</button>
   </div>
   <div class="ex" id="ex"></div>

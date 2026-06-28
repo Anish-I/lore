@@ -1,9 +1,9 @@
 import os, tempfile, uuid, pytest
-from vault import db
-from vault.embed import FakeEmbedder
-from vault.rerank import FakeReranker
-from vault.index import index_note
-from vault.recall import retrieve
+from lore import db
+from lore.embed import FakeEmbedder
+from lore.rerank import FakeReranker
+from lore.index import index_note
+from lore.recall import retrieve
 
 @pytest.fixture(scope="module")
 def conn():

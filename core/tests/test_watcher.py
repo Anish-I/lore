@@ -1,6 +1,6 @@
-from vault import db
-from vault.embed import FakeEmbedder
-from vault.watcher import handle_change
+from lore import db
+from lore.embed import FakeEmbedder
+from lore.watcher import handle_change
 
 def test_handle_change_indexes_md(tmp_path):
     c = db.connect(); db.bootstrap_schema(c)

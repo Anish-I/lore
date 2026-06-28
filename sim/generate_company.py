@@ -21,9 +21,9 @@ NOTES_PER_PERSON = int(os.environ.get("NOTES_PER_PERSON", "150"))
 BATCH = 512
 UPSERT_BATCH = 1000
 
-from vault import db, qdrant_store
-from vault.embed import LocalEmbedder, LocalSparseEmbedder
-from vault.chunker import chunk_markdown
+from lore import db, qdrant_store
+from lore.embed import LocalEmbedder, LocalSparseEmbedder
+from lore.chunker import chunk_markdown
 
 rng = random.Random(SEED)
 

@@ -1,4 +1,4 @@
-from vault.chunker import chunk_markdown
+from lore.chunker import chunk_markdown
 MD = """# Acme Account
 
 ## Renewal
@@ -14,5 +14,5 @@ def test_chunks_carry_heading_path():
 
 def test_no_chunk_exceeds_token_max():
     chunks = chunk_markdown("n1", MD, target_max=350)
-    from vault.chunker import _ntokens
+    from lore.chunker import _ntokens
     assert all(_ntokens(c.text) <= 350 for c in chunks)
