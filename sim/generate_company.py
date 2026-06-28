@@ -13,7 +13,8 @@ Run from core/:  python ../sim/generate_company.py
 """
 import os, hashlib, uuid, random, time
 
-os.environ["QDRANT_COLLECTION"] = "vault_company"
+os.environ["QDRANT_COLLECTION"] = os.environ.get("VAULT_COLLECTION", "vault_company")
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 TENANT = "apex"
 SEED = 42
 PEOPLE_PER_TEAM = int(os.environ.get("PEOPLE_PER_TEAM", "25"))
@@ -233,8 +234,10 @@ def main():
     print(f"Org: {len(people)} people, {len(TEAMS)} teams, {len(CIRCLES)} circles. "
           f"Target notes: {len(people)*NOTES_PER_PERSON:,}")
 
-    embedder = LocalEmbedder(); sparse = LocalSparseEmbedder()
-    qdrant_store.ensure_collection(384, with_sparse=True)
+    embedder = LocalEmbedder(EMBED_MODEL); sparse = LocalSparseEmbedder()
+    dim = len(embedder.embed(["dimension probe"])[0])
+    print(f"Embedder: {EMBED_MODEL} ({dim}d) -> collection {os.environ['QDRANT_COLLECTION']}")
+    qdrant_store.ensure_collection(dim, with_sparse=True)
 
     # collect chunks
     note_rows = []      # (note_id, owner, scope, title)

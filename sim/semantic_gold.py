@@ -8,14 +8,16 @@ right granularity over 46k notes. Reports recall@1/@3/MRR + per-team + the misse
 Run from core/:  python ../sim/semantic_gold.py
 """
 import os
-os.environ["QDRANT_COLLECTION"] = "vault_company"
+os.environ["QDRANT_COLLECTION"] = os.environ.get("VAULT_COLLECTION", "vault_company")
+EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-small-en-v1.5")
 TENANT = "apex"
 
 from lore.embed import LocalEmbedder, LocalSparseEmbedder
 from lore.rerank import LocalReranker
 from lore.recall import retrieve_traced
 
-E = LocalEmbedder(); S = LocalSparseEmbedder(); R = LocalReranker()
+E = LocalEmbedder(EMBED_MODEL); S = LocalSparseEmbedder(); R = LocalReranker()
+print(f"[gold] embedder={EMBED_MODEL}  collection={os.environ['QDRANT_COLLECTION']}")
 
 # (query, team, [acceptable title-substrings for a correct top hit])
 GOLD = [
