@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vault — Scopes, visualized</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#272e3a; --ink:#e6edf3; --mut:#8b949e;
+    --private:#f778ba; --team:#58a6ff; --circle:#d2a8ff; --ent:#3fb950; --warn:#e3b341;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;}
+  .wrap{max-width:1060px;margin:0 auto;padding:40px 22px 80px}
+  h1{font-size:30px;margin:0 0 4px;letter-spacing:-.5px}
+  .sub{color:var(--mut);margin:0 0 30px;font-size:15px}
+  h2{font-size:13px;text-transform:uppercase;letter-spacing:1.5px;color:var(--mut);
+    margin:42px 0 14px;font-weight:700}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+  .one-liner{font-size:19px;line-height:1.5}
+  .one-liner b{color:#fff}
+  .chip{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:700;
+    border:1px solid transparent;white-space:nowrap}
+  .c-private{background:rgba(247,120,186,.15);color:var(--private);border-color:rgba(247,120,186,.35)}
+  .c-team{background:rgba(88,166,255,.15);color:var(--team);border-color:rgba(88,166,255,.35)}
+  .c-circle{background:rgba(210,168,255,.15);color:var(--circle);border-color:rgba(210,168,255,.35)}
+  .c-ent{background:rgba(63,185,80,.15);color:var(--ent);border-color:rgba(63,185,80,.35)}
+  .grid2{display:grid;grid-template-columns:1.05fr 1fr;gap:22px;align-items:center}
+  @media(max-width:780px){.grid2{grid-template-columns:1fr}}
+  .rings{position:relative;width:330px;height:330px;margin:6px auto}
+  .ring{position:absolute;border-radius:50%;display:flex;align-items:flex-start;justify-content:center;
+    border:2px solid;padding-top:8px;font-size:12px;font-weight:700;letter-spacing:.5px}
+  .r-ent{inset:0;border-color:var(--ent);color:var(--ent);background:rgba(63,185,80,.05)}
+  .r-circle{inset:42px;border-color:var(--circle);color:var(--circle);background:rgba(210,168,255,.06)}
+  .r-team{inset:96px;border-color:var(--team);color:var(--team);background:rgba(88,166,255,.07)}
+  .r-private{inset:150px;border-color:var(--private);color:var(--private);background:rgba(247,120,186,.09)}
+  .me{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:30px;height:30px;
+    border-radius:50%;background:#fff;color:#000;display:flex;align-items:center;justify-content:center;
+    font-weight:800;font-size:13px;box-shadow:0 0 0 4px rgba(255,255,255,.12)}
+  .legend{font-size:13.5px;color:var(--mut)}
+  .legend b{color:var(--ink)}
+  table{width:100%;border-collapse:collapse;margin-top:4px}
+  th,td{padding:11px 12px;border-bottom:1px solid var(--line);text-align:left;font-size:14px}
+  th{color:var(--mut);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.6px}
+  td.note{text-align:center;font-size:18px}
+  .yes{color:var(--ent)} .no{color:#5a3b44}
+  .person{font-weight:700}
+  .scopes-cell .chip{margin:2px 3px 2px 0}
+  .q{font-style:italic;color:var(--ink)}
+  .flow{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:14px}
+  .arrow{color:var(--warn);font-weight:800;font-size:20px}
+  .note-pill{padding:8px 12px;border-radius:10px;border:1px solid var(--line);background:#11161d}
+  .foot{color:var(--mut);font-size:12.5px;margin-top:34px;border-top:1px solid var(--line);padding-top:14px}
+  code{background:#11161d;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#c9d1d9;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Vault — Scopes, visualized</h1>
+  <p class="sub">Who is allowed to read which knowledge — and how the same question gives different people different answers.</p>
+
+  <div class="card one-liner">
+    A <b>scope</b> is a label on a note that says <b>“who may read this.”</b>
+    Every person belongs to a <b>set</b> of scopes. When you ask a question,
+    Vault searches <b>only the scopes you’re in.</b>
+  </div>
+
+  <h2>1 · A person stacks scopes (rings nest outward)</h2>
+  <div class="card grid2">
+    <div class="rings" aria-label="nested scope rings">
+      <div class="ring r-ent">ENTERPRISE · acme-corp</div>
+      <div class="ring r-circle">CIRCLE · acme-deal</div>
+      <div class="ring r-team">TEAM · eng-team</div>
+      <div class="ring r-private">PRIVATE</div>
+      <div class="me">A</div>
+    </div>
+    <div class="legend">
+      <p><b>Alice (A)</b> sits in every ring she belongs to at once:</p>
+      <p>
+        <span class="chip c-private">alice-private</span>
+        <span class="chip c-team">eng-team</span>
+        <span class="chip c-circle">acme-deal</span>
+        <span class="chip c-ent">acme-corp</span>
+      </p>
+      <p><b>private</b> = just you · <b>team</b> = your squad ·
+        <b>circle</b> = a cross-cutting group that isn’t a formal team
+        (e.g. the Acme deal pod spanning sales + eng + legal) ·
+        <b>enterprise</b> = the whole company.</p>
+      <p>You see a note if <b>your scope set contains that note’s tag</b>.
+        Permissions and search are the <i>same</i> operation.</p>
+    </div>
+  </div>
+
+  <h2>2 · Same question, different people (the live demo)</h2>
+  <div class="card">
+    <p>Three notes about <b>Project Phoenix</b>, each tagged with one scope:</p>
+    <p>
+      <span class="chip c-private">alice-private</span> Alice’s secret launch date &nbsp;·&nbsp;
+      <span class="chip c-private">bob-private</span> Bob’s bonus worry &nbsp;·&nbsp;
+      <span class="chip c-team">eng-team</span> Engineering roadmap
+    </p>
+    <p class="q">Q: “what do we know about Project Phoenix?”</p>
+    <table>
+      <thead>
+        <tr><th>Who’s asking</th><th>Their scopes</th>
+          <th class="note">Alice<br>note</th><th class="note">Bob<br>note</th><th class="note">Team<br>note</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="person">Alice</td>
+          <td class="scopes-cell"><span class="chip c-private">alice-private</span><span class="chip c-team">eng-team</span></td>
+          <td class="note yes">✓</td><td class="note no">✗</td><td class="note yes">✓</td>
+        </tr>
+        <tr>
+          <td class="person">Bob</td>
+          <td class="scopes-cell"><span class="chip c-private">bob-private</span><span class="chip c-team">eng-team</span></td>
+          <td class="note no">✗</td><td class="note yes">✓</td><td class="note yes">✓</td>
+        </tr>
+        <tr>
+          <td class="person">New hire</td>
+          <td class="scopes-cell"><span class="chip c-team">eng-team</span></td>
+          <td class="note no">✗</td><td class="note no">✗</td><td class="note yes">✓</td>
+        </tr>
+        <tr>
+          <td class="person">CEO / admin</td>
+          <td class="scopes-cell"><span class="chip c-private">alice-private</span><span class="chip c-private">bob-private</span><span class="chip c-team">eng-team</span></td>
+          <td class="note yes">✓</td><td class="note yes">✓</td><td class="note yes">✓</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="legend" style="margin-top:14px">Private notes never even enter the search for someone outside the scope —
+      the filter runs <b>inside</b> retrieval, so there is no leak (guarded by the <code>test_acl_excludes_other_scope</code> test).</p>
+  </div>
+
+  <h2>3 · Knowledge survives a departure — just re-tag the scope</h2>
+  <div class="card">
+    <div class="flow">
+      <span class="note-pill">Alice retires <span class="chip c-private">alice-private</span></span>
+      <span class="arrow">→</span>
+      <span class="note-pill">admin re-tags the notes</span>
+      <span class="arrow">→</span>
+      <span class="note-pill"><span class="chip c-team">eng-team</span> the whole team can now query her knowledge</span>
+    </div>
+    <p class="legend" style="margin-top:14px">No copying, no migration. The “knowledge transfer when someone leaves / is on PTO”
+      promise is just <b>changing a label</b>. Scopes <i>are</i> the knowledge-transfer system.</p>
+  </div>
+
+  <p class="foot">Vault · generated from the live <code>/ask</code> demo on localhost:8099 · scopes enforced inside Qdrant retrieval (tenant_id + scope_ids filter).</p>
+</div>
+</body>
+</html>

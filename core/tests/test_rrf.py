@@ -1,4 +1,4 @@
-from vault.fusion import rrf
+from lore.fusion import rrf
 def test_rrf_rewards_agreement():
     dense = ["a","b","c"]; sparse = ["b","a","d"]
     scored = rrf([dense, sparse])

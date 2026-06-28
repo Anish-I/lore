@@ -40,6 +40,7 @@ def ensure_collection(dim, with_sparse=False):
         )
         _client.create_payload_index(COLLECTION, "tenant_id", qm.PayloadSchemaType.KEYWORD)
         _client.create_payload_index(COLLECTION, "scope_ids", qm.PayloadSchemaType.KEYWORD)
+    ensure_text_index()  # always (idempotent) so the exact-identifier lane works
 
 
 def delete_note(note_id: str) -> None:
@@ -97,6 +98,47 @@ def search(vector, allowed_scope_ids, tenant_id, limit=40):
         query_filter=flt,
         limit=limit,
         with_payload=True,
+    )
+    return [{"score": r.score, **r.payload} for r in res.points]
+
+
+def ensure_text_index():
+    """Add a full-text payload index on 'text' so exact identifier tokens are searchable.
+    Idempotent; safe to call on an existing populated collection (indexes in place)."""
+    try:
+        _client.create_payload_index(
+            COLLECTION, "text",
+            field_schema=qm.TextIndexParams(type="text", tokenizer=qm.TokenizerType.WORD,
+                                            min_token_len=2, lowercase=True),
+        )
+    except Exception:
+        pass
+
+def search_exact(token, allowed_scope_ids, tenant_id, limit=10):
+    """Filter-only retrieval of chunks whose text literally contains the token
+    (used as an exact-identifier lane). ACL-filtered. Returns payload dicts."""
+    flt = qm.Filter(must=[
+        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
+        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
+        qm.FieldCondition(key="text", match=qm.MatchText(text=token)),
+    ])
+    try:
+        pts, _ = _client.scroll(COLLECTION, scroll_filter=flt, limit=limit, with_payload=True)
+    except Exception:
+        return []
+    return [dict(p.payload) for p in pts]
+
+
+def search_sparse(sparse_vector, allowed_scope_ids, tenant_id, limit=40):
+    """BM25-only sparse search over the "bm25" named sparse vector (for tracing/UI)."""
+    flt = qm.Filter(must=[
+        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
+        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
+    ])
+    sv = qm.SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"])
+    res = _client.query_points(
+        collection_name=COLLECTION, query=sv, using="bm25",
+        query_filter=flt, limit=limit, with_payload=True,
     )
     return [{"score": r.score, **r.payload} for r in res.points]
 

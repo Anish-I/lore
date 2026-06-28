@@ -1,4 +1,4 @@
-from vault.recall import classify_query
+from lore.recall import classify_query
 
 def test_identifier_queries_are_lexical():
     assert classify_query("what was the root cause of incident PROJ-1037") == "lexical"

@@ -14,12 +14,12 @@ os.environ["QDRANT_COLLECTION"] = "vault_eval_scale"
 TENANT = "evalscale"
 SCOPE = "evalscale-all"
 
-from vault import db
-from vault.embed import LocalEmbedder, LocalSparseEmbedder
-from vault.rerank import LocalReranker
-from vault.index import index_note
-from vault.recall import retrieve
-from vault import qdrant_store
+from lore import db
+from lore.embed import LocalEmbedder, LocalSparseEmbedder
+from lore.rerank import LocalReranker
+from lore.index import index_note
+from lore.recall import retrieve
+from lore import qdrant_store
 
 # ---- adversarial corpus: 3 families of near-duplicate notes -------------------
 SERVICES = ["checkout", "billing", "auth", "search", "inventory", "notifications"]

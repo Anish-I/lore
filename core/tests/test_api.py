@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
-from vault.api import app, get_embedder, get_reranker
-from vault.embed import FakeEmbedder
-from vault.rerank import FakeReranker
+from lore.api import app, get_embedder, get_reranker
+from lore.embed import FakeEmbedder
+from lore.rerank import FakeReranker
 app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
 app.dependency_overrides[get_reranker] = lambda: FakeReranker()
 client = TestClient(app)

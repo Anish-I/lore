@@ -16,12 +16,12 @@ os.environ["QDRANT_COLLECTION"] = "vault_eval"
 TENANT = "eval"
 SCOPE = "eval-all"
 
-from vault import db
-from vault.embed import LocalEmbedder, LocalSparseEmbedder
-from vault.rerank import LocalReranker, FakeReranker
-from vault.index import index_note
-from vault.recall import retrieve
-from vault import qdrant_store
+from lore import db
+from lore.embed import LocalEmbedder, LocalSparseEmbedder
+from lore.rerank import LocalReranker, FakeReranker
+from lore.index import index_note
+from lore.recall import retrieve
+from lore import qdrant_store
 
 # ---------------------------------------------------------------------------
 # CORPUS: filename -> markdown. Spread across tech / business / health / food /

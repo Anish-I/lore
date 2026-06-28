@@ -1,4 +1,4 @@
-from vault import db
+from lore import db
 def test_bootstrap_creates_tables():
     conn = db.connect()
     db.bootstrap_schema(conn)
