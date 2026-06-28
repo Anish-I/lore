@@ -1,0 +1,33 @@
+/* ============================================================
+   Lore · Motion — fast, functional, no bounce.
+   ============================================================ */
+:root {
+  --dur-instant: 80ms;
+  --dur-fast:    120ms;
+  --dur-base:    160ms;
+  --dur-slow:    200ms;
+  --dur-slower:  280ms;
+
+  --ease-out:   cubic-bezier(0.2, 0.6, 0.2, 1);
+  --ease-in:    cubic-bezier(0.4, 0, 1, 1);
+  --ease-inout: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-emph:  cubic-bezier(0.16, 1, 0.3, 1);
+
+  --transition-color:   color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  --transition-surface: background-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  --transition-transform: transform var(--dur-base) var(--ease-out);
+  --transition-pop:     opacity var(--dur-base) var(--ease-emph), transform var(--dur-base) var(--ease-emph);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-instant: 0ms; --dur-fast: 0ms; --dur-base: 0ms; --dur-slow: 0ms; --dur-slower: 0ms;
+  }
+}
+
+@keyframes lore-fade-in   { from { opacity: 0; } to { opacity: 1; } }
+@keyframes lore-pop-in    { from { opacity: 0; transform: translateY(4px) scale(0.985); } to { opacity: 1; transform: none; } }
+@keyframes lore-pulse     { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
+@keyframes lore-shimmer   { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+@keyframes lore-spin      { to { transform: rotate(360deg); } }
+@keyframes lore-caret     { 0%,100% { opacity: 1; } 50% { opacity: 0; } }

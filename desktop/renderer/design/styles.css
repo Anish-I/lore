@@ -1,0 +1,13 @@
+/* ============================================================
+   Lore — Knowledge OS · Design System entry point
+   Consumers link ONLY this file. It is an @import manifest.
+   ============================================================ */
+
+@import url("./tokens/fonts.css");
+@import url("./tokens/colors.css");
+@import url("./tokens/typography.css");
+@import url("./tokens/spacing.css");
+@import url("./tokens/radius.css");
+@import url("./tokens/elevation.css");
+@import url("./tokens/motion.css");
+@import url("./tokens/base.css");

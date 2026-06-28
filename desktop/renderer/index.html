@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lore — Knowledge OS</title>
+<link rel="stylesheet" href="design/styles.css">
+<style>
+  html, body { margin: 0; height: 100%; background: var(--surface-sunken); overflow: hidden; }
+  #root { position: absolute; inset: 0; }
+</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/markdown-it@14.1.0/dist/markdown-it.min.js"></script>
+  <script src="design/_ds_bundle.js"></script>
+  <script src="wired-data.js"></script>
+  <script src="md-to-runs.js"></script>
+  <script type="text/babel" data-presets="react" src="design/ui_kits/lore-desktop/shell.jsx"></script>
+  <script type="text/babel" data-presets="react" src="design/ui_kits/lore-desktop/editor.jsx"></script>
+  <script type="text/babel" data-presets="react" src="design/ui_kits/lore-desktop/ask.jsx"></script>
+  <script type="text/babel" data-presets="react" src="design/ui_kits/lore-desktop/projects.jsx"></script>
+  <script type="text/babel" data-presets="react" src="design/ui_kits/lore-desktop/buckets.jsx"></script>
+  <script type="text/babel" data-presets="react" src="design/ui_kits/lore-desktop/settings.jsx"></script>
+  <script type="text/babel" data-presets="react" src="wired-app.jsx"></script>
+  <script type="text/babel" data-presets="react">
+    const start = () => {
+      if (!window.LoreApp || !window.VaultDesignSystem_ffbf58) { return setTimeout(start, 40); }
+      const LoreApp = window.LoreApp;
+      ReactDOM.createRoot(document.getElementById('root')).render(<LoreApp />);
+    };
+    start();
+  </script>
+</body>
+</html>

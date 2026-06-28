@@ -1,0 +1,28 @@
+{
+  "name": "lore-desktop",
+  "version": "0.1.0",
+  "description": "Lore — Knowledge OS desktop app (file explorer + cited recall)",
+  "main": "main.js",
+  "author": "Anish Ivaturi",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^31.3.0",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0"
+  },
+  "build": {
+    "appId": "co.lore.desktop",
+    "productName": "Lore",
+    "files": ["main.js", "preload.js", "renderer/**/*"],
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "directories": { "output": "dist" }
+  }
+}

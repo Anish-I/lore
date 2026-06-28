@@ -1,0 +1,8 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Lore">
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="#15161c"></rect>
+  <rect x="2.5" y="2.5" width="59" height="59" rx="14.5" stroke="#ffffff" stroke-opacity="0.08"></rect>
+  <path d="M32 23.5 L12.5 17.5 A2 2 0 0 0 10 19.4 L10 39.2 A2 2 0 0 0 11.4 41.1 L32 47.5 Z" fill="#df9f30"></path>
+  <path d="M32 23.5 L51.5 17.5 A2 2 0 0 1 54 19.4 L54 39.2 A2 2 0 0 1 52.6 41.1 L32 47.5 Z" fill="#d99a2b"></path>
+  <path d="M32 23.5 L32 47.5" stroke="#15161c" stroke-opacity="0.55" stroke-width="1.6" stroke-linecap="round"></path>
+  <path d="M16.5 25.5 L27.5 28.7 M16.5 30.5 L27.5 33.4 M47.5 25.5 L36.5 28.7 M47.5 30.5 L36.5 33.4" stroke="#15161c" stroke-opacity="0.4" stroke-width="1.5" stroke-linecap="round"></path>
+</svg>

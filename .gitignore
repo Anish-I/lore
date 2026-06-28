@@ -8,3 +8,5 @@ data/
 *.egg-info/
 .venv/
 *.stackdump
+desktop/node_modules/
+desktop/dist/

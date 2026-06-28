@@ -1,0 +1,218 @@
+/* ============================================================
+   Lore · Color tokens
+   - Warm-ink neutrals: "paper" (light) + "obsidian" (dark)
+   - Brand: honey-amber (vault gold / highlighter / citations)
+   - Azure: connection (wiki-links, graph edges, enterprise, info)
+   - Jade: success / team scope · Clay: danger
+   Base palette (raw) -> semantic aliases that switch per [data-theme].
+   ============================================================ */
+
+:root {
+  /* ---------- Raw: warm paper (light neutrals) ---------- */
+  --paper-50:  #faf9f6;
+  --paper-100: #f4f2ec;
+  --paper-200: #e9e5db;
+  --paper-300: #d9d4c7;
+  --paper-400: #b8b1a1;
+  --paper-500: #908a7c;
+  --paper-600: #6c6759;
+  --paper-700: #4d4a40;
+  --paper-800: #353229;
+  --paper-900: #211f19;
+
+  /* ---------- Raw: cool-warm obsidian (dark neutrals) ---------- */
+  --obsidian-50:  #e7e8eb;
+  --obsidian-100: #c9cbd1;
+  --obsidian-200: #a4a7b0;
+  --obsidian-300: #7d818c;
+  --obsidian-400: #585c67;
+  --obsidian-500: #41454f;
+  --obsidian-600: #32353f;
+  --obsidian-700: #282a32;
+  --obsidian-750: #232530;
+  --obsidian-800: #1d1f27;
+  --obsidian-850: #191b22;
+  --obsidian-900: #15161c;
+  --obsidian-950: #101116;
+
+  /* ---------- Raw: amber (brand / vault gold / highlighter) ---------- */
+  --amber-50:  #fbf3e1;
+  --amber-100: #f6e3bd;
+  --amber-200: #efcb84;
+  --amber-300: #e8b14e;
+  --amber-400: #df9f30;
+  --amber-500: #d99a2b;   /* brand primary */
+  --amber-600: #bd7f1c;
+  --amber-700: #95621a;
+  --amber-800: #6f4a18;
+
+  /* ---------- Raw: azure (connection / links / graph / info) ---------- */
+  --azure-50:  #e7f1fc;
+  --azure-100: #c4ddf8;
+  --azure-200: #8fbef1;
+  --azure-300: #5aa0ea;
+  --azure-400: #3d8de0;
+  --azure-500: #2f81e0;
+  --azure-600: #2167bd;
+  --azure-700: #1d5092;
+
+  /* ---------- Raw: jade (success / team / healthy) ---------- */
+  --jade-50:  #e3f4ea;
+  --jade-100: #bce3cd;
+  --jade-300: #5cbd84;
+  --jade-400: #3fae6e;
+  --jade-500: #2f9d5f;
+  --jade-600: #25804d;
+  --jade-700: #1e633d;
+
+  /* ---------- Raw: clay (danger / destructive) ---------- */
+  --clay-50:  #fbe9e5;
+  --clay-100: #f4c7bd;
+  --clay-300: #e07f6a;
+  --clay-400: #d35f47;
+  --clay-500: #c4462f;
+  --clay-600: #a3361f;
+  --clay-700: #7e2a18;
+
+  /* ---------- Brand constants (theme-independent) ---------- */
+  --brand:            var(--amber-500);
+  --brand-strong:     var(--amber-600);
+  --brand-soft:       var(--amber-300);
+  --lore-gold:       #d99a2b;
+  --lore-ink:        #15161c;
+  --lore-paper:      #faf9f6;
+}
+
+/* ============================================================
+   Semantic aliases — DARK / workbench (default)
+   ============================================================ */
+:root,
+[data-theme="dark"],
+[data-theme="workbench"] {
+  color-scheme: dark;
+
+  /* surfaces (back -> front) */
+  --surface-sunken:    var(--obsidian-950);
+  --surface-canvas:    var(--obsidian-900);
+  --surface-base:      var(--obsidian-850);
+  --surface-panel:     var(--obsidian-800);
+  --surface-raised:    var(--obsidian-750);
+  --surface-overlay:   var(--obsidian-700);
+  --surface-inset:     var(--obsidian-950);
+  --surface-hover:     rgba(255,255,255,0.04);
+  --surface-active:    rgba(255,255,255,0.07);
+  --surface-selected:  rgba(217,154,43,0.14);
+
+  /* text */
+  --text-strong:   #f3f1ea;
+  --text-primary:  var(--obsidian-50);
+  --text-body:     #d3d5db;
+  --text-muted:    var(--obsidian-200);
+  --text-subtle:   var(--obsidian-300);
+  --text-faint:    var(--obsidian-400);
+  --text-onbrand:  #1c1408;
+  --text-inverse:  var(--paper-900);
+  --text-link:     var(--azure-300);
+  --text-link-hover: var(--azure-200);
+
+  /* borders */
+  --border-subtle: rgba(255,255,255,0.06);
+  --border:        rgba(255,255,255,0.10);
+  --border-strong: rgba(255,255,255,0.16);
+  --border-field:  var(--obsidian-500);
+  --divider:       rgba(255,255,255,0.07);
+
+  /* brand surfaces */
+  --brand-fg:        var(--amber-400);
+  --brand-bg:        var(--amber-500);
+  --brand-bg-hover:  var(--amber-400);
+  --brand-bg-active: var(--amber-600);
+  --brand-soft-bg:   rgba(217,154,43,0.14);
+  --brand-soft-border: rgba(217,154,43,0.32);
+
+  /* citation highlight wash (the "highlighter") */
+  --highlight-bg:    rgba(217,154,43,0.22);
+  --highlight-border: rgba(217,154,43,0.45);
+
+  /* links / connection */
+  --link-fg:         var(--azure-300);
+  --link-soft-bg:    rgba(47,129,224,0.15);
+  --graph-edge:      var(--azure-400);
+
+  /* status */
+  --success-fg: var(--jade-400);  --success-bg: rgba(47,157,95,0.16);  --success-border: rgba(47,157,95,0.4);
+  --danger-fg:  var(--clay-400);  --danger-bg:  rgba(196,70,47,0.18);  --danger-border:  rgba(196,70,47,0.45);
+  --warning-fg: var(--amber-400); --warning-bg: rgba(217,154,43,0.16); --warning-border: rgba(217,154,43,0.4);
+  --info-fg:    var(--azure-300); --info-bg:    rgba(47,129,224,0.16);  --info-border:    rgba(47,129,224,0.4);
+
+  /* scope colors (private/team/enterprise) */
+  --scope-private-fg: var(--obsidian-100); --scope-private-bg: rgba(255,255,255,0.06);
+  --scope-team-fg:    var(--jade-300);     --scope-team-bg:    rgba(47,157,95,0.16);
+  --scope-ent-fg:     var(--azure-300);    --scope-ent-bg:     rgba(47,129,224,0.16);
+
+  /* focus ring */
+  --ring:        var(--amber-400);
+  --ring-offset: var(--surface-canvas);
+}
+
+/* ============================================================
+   Semantic aliases — LIGHT / paper (reading)
+   ============================================================ */
+[data-theme="light"],
+[data-theme="paper"] {
+  color-scheme: light;
+
+  --surface-sunken:    var(--paper-200);
+  --surface-canvas:    var(--paper-100);
+  --surface-base:      var(--paper-50);
+  --surface-panel:     #ffffff;
+  --surface-raised:    #ffffff;
+  --surface-overlay:   #ffffff;
+  --surface-inset:     var(--paper-100);
+  --surface-hover:     rgba(33,31,25,0.04);
+  --surface-active:    rgba(33,31,25,0.07);
+  --surface-selected:  rgba(217,154,43,0.16);
+
+  --text-strong:   #1a1814;
+  --text-primary:  var(--paper-900);
+  --text-body:     var(--paper-800);
+  --text-muted:    var(--paper-600);
+  --text-subtle:   var(--paper-500);
+  --text-faint:    var(--paper-400);
+  --text-onbrand:  #1c1408;
+  --text-inverse:  var(--paper-50);
+  --text-link:     var(--azure-600);
+  --text-link-hover: var(--azure-700);
+
+  --border-subtle: rgba(33,31,25,0.07);
+  --border:        rgba(33,31,25,0.12);
+  --border-strong: rgba(33,31,25,0.20);
+  --border-field:  var(--paper-300);
+  --divider:       rgba(33,31,25,0.09);
+
+  --brand-fg:        var(--amber-700);
+  --brand-bg:        var(--amber-500);
+  --brand-bg-hover:  var(--amber-600);
+  --brand-bg-active: var(--amber-700);
+  --brand-soft-bg:   rgba(217,154,43,0.16);
+  --brand-soft-border: rgba(217,154,43,0.4);
+
+  --highlight-bg:    rgba(232,177,78,0.45);
+  --highlight-border: rgba(189,127,28,0.7);
+
+  --link-fg:         var(--azure-600);
+  --link-soft-bg:    rgba(47,129,224,0.12);
+  --graph-edge:      var(--azure-500);
+
+  --success-fg: var(--jade-600);  --success-bg: rgba(47,157,95,0.12);  --success-border: rgba(47,157,95,0.35);
+  --danger-fg:  var(--clay-600);  --danger-bg:  rgba(196,70,47,0.10);   --danger-border:  rgba(196,70,47,0.32);
+  --warning-fg: var(--amber-700); --warning-bg: rgba(217,154,43,0.16);  --warning-border: rgba(217,154,43,0.4);
+  --info-fg:    var(--azure-600); --info-bg:    rgba(47,129,224,0.10);   --info-border:    rgba(47,129,224,0.3);
+
+  --scope-private-fg: var(--paper-700); --scope-private-bg: rgba(33,31,25,0.06);
+  --scope-team-fg:    var(--jade-600);  --scope-team-bg:    rgba(47,157,95,0.12);
+  --scope-ent-fg:     var(--azure-600); --scope-ent-bg:     rgba(47,129,224,0.1);
+
+  --ring:        var(--amber-600);
+  --ring-offset: var(--surface-base);
+}
