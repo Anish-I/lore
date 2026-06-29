@@ -5,7 +5,14 @@ from .config import settings
 
 # Collection is overridable (eval/test isolation). Set QDRANT_COLLECTION before import.
 COLLECTION = os.environ.get("QDRANT_COLLECTION", "vault_chunks")
-_client = QdrantClient(url=settings.qdrant_url)
+
+# Embedded vs server selection (the hybrid split):
+#   QDRANT_PATH set  → EMBEDDED local mode (no server, no Docker) — the bundled desktop app.
+#   otherwise        → server at settings.qdrant_url — the team/enterprise deployment + tests.
+# Embedded local mode is proven to support our named dense+sparse vectors, query_points
+# prefetch, RRF fusion, and payload-filtered ACL search.
+_QDRANT_PATH = os.environ.get("QDRANT_PATH")
+_client = QdrantClient(path=_QDRANT_PATH) if _QDRANT_PATH else QdrantClient(url=settings.qdrant_url)
 
 
 def ensure_collection(dim, with_sparse=False):
@@ -38,8 +45,11 @@ def ensure_collection(dim, with_sparse=False):
             vectors_config={"dense": qm.VectorParams(size=dim, distance=qm.Distance.COSINE)},
             sparse_vectors_config=sparse_cfg,
         )
-        _client.create_payload_index(COLLECTION, "tenant_id", qm.PayloadSchemaType.KEYWORD)
-        _client.create_payload_index(COLLECTION, "scope_ids", qm.PayloadSchemaType.KEYWORD)
+        # Payload indexes accelerate filtering on server Qdrant; they're a no-op in embedded
+        # local mode (filtering still works unindexed — fine for a single-user vault).
+        if not _QDRANT_PATH:
+            _client.create_payload_index(COLLECTION, "tenant_id", qm.PayloadSchemaType.KEYWORD)
+            _client.create_payload_index(COLLECTION, "scope_ids", qm.PayloadSchemaType.KEYWORD)
     ensure_text_index()  # always (idempotent) so the exact-identifier lane works
 
 
