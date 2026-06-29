@@ -79,6 +79,13 @@ _HEDGE_WEAK = re.compile(r"\b(likely|probably|generally|usually)\b", re.IGNORECA
 _WIKILINK = re.compile(r"\[\[([^\]|#]+)(?:[#|][^\]]*)?\]\]")
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+|\n+")
 _CLAUSE_SPLIT = re.compile(r"[;,:]")
+# Code spans and shell-style $VARS are not prose — masking them (length-preserving) stops
+# co-mentions/cues matching inside `$VAULT`, `code`, etc. (a real false-positive source).
+_CODE_SPAN = re.compile(r"`[^`]*`|\$\w+")
+
+
+def _mask_code(s: str) -> str:
+    return _CODE_SPAN.sub(lambda m: " " * len(m.group(0)), s)
 
 
 def _certainty(sentence: str) -> float:
@@ -101,59 +108,111 @@ def _same_clause(sentence: str, a: int, b: int) -> bool:
     return _CLAUSE_SPLIT.search(sentence, lo, hi) is None
 
 
-def extract_relations(text: str, resolve):
+# Co-mention edges (a known note named in prose, not [[wikilinked]]) are discounted vs
+# explicit wikilinks — recall without letting them outrank linked relations.
+_COMENTION_DISCOUNT = 0.8
+
+
+def extract_relations(text: str, resolve, title_index=None):
     """Extract typed relations from `text`.
 
     Args:
         text: the note's markdown/plaintext.
         resolve: callable(title:str) -> dst_note_id or None. Resolves a [[wikilink]]
                  title to a real note id (caller supplies the tenant-scoped lookup).
+        title_index: optional list of (title, dst_id, compiled_pattern) from
+                     `build_title_index` — enables the gated CO-MENTION recall layer
+                     (known note titles named in prose, no [[ ]] needed). Discounted
+                     and gated by binding cue + same clause + negation/hedge checks.
 
     Returns: list of (dst_id, kind, confidence, evidence), deduped on (dst_id, kind)
     keeping the highest confidence. Only edges meeting the per-kind threshold.
     """
     best = {}  # (dst_id, kind) -> (confidence, evidence)
-    for sentence in _SENT_SPLIT.split(text or ""):
-        links = list(_WIKILINK.finditer(sentence))
-        if not links:
-            continue
-        n_links = len(links)
-        for lm in links:
+    for original in _SENT_SPLIT.split(text or ""):
+        # Match on a code-masked copy (positions preserved); keep `original` for evidence.
+        sentence = _mask_code(original)
+        # Candidates = explicit wikilinks (full weight) + co-mentions of known titles (discounted).
+        candidates = []  # (position, dst_id, discount)
+        for lm in _WIKILINK.finditer(sentence):
             dst = resolve(lm.group(1).strip())
-            if not dst:
-                continue
-            link_pos = lm.start()
+            if dst:
+                candidates.append((lm.start(), dst, 1.0))
+        if title_index:
+            for _title, dst_id, pat in title_index:
+                m = pat.search(sentence)
+                if m:
+                    candidates.append((m.start(), dst_id, _COMENTION_DISCOUNT))
+        if not candidates:
+            continue
+        # Ambiguity is about DISTINCT target notes in the sentence — a wikilink and a bare
+        # mention of the SAME note are not ambiguous.
+        n_targets = len(set(dst for _pos, dst, _disc in candidates))
+
+        for tgt_pos, dst, discount in candidates:
             for cue_re, kind, direction, specificity in _CUES:
                 # v1: forward edges only (subject = the note being indexed). Passive/"by"
                 # ('rev') constructions need edge ownership on the linked note — deferred to v2.
                 if direction != "fwd":
                     continue
-                # The cue must BIND this link: it has to read "<subject> CUE [[link]]", i.e.
-                # the cue ends BEFORE the link and in the same clause. This rejects
-                # "[[Composio]] ... replaces Zapier" (cue's subject is the link) and
-                # "extending [[X]] to support Y" (cue after the link) — the v1 false positives.
+                # The cue must BIND this target: "<subject> CUE <target>", i.e. the cue ends
+                # BEFORE the target and in the same clause. Rejects "<target> ... replaces X"
+                # (cue's subject is the target) and "extending <target> to support Y".
                 cm = None
                 for m in cue_re.finditer(sentence):
-                    if m.end() <= link_pos and _same_clause(sentence, m.end(), link_pos):
+                    if m.end() <= tgt_pos and _same_clause(sentence, m.end(), tgt_pos):
                         cm = m  # keep the closest preceding in-clause cue
                 if cm is None:
                     continue
                 if _is_negated(sentence, cm.start()):
                     continue  # negation cancels the candidate (never becomes contradicts)
-                gap = link_pos - cm.end()
+                gap = tgt_pos - cm.end()
                 proximity = 1.0 if gap <= 40 else 0.85
                 certainty = _certainty(sentence)
-                ambiguity = 1.0 if n_links == 1 else 0.75
-                conf = round(specificity * proximity * certainty * ambiguity, 3)
+                ambiguity = 1.0 if n_targets == 1 else 0.75
+                conf = round(specificity * proximity * certainty * ambiguity * discount, 3)
                 if conf < _MIN_CONFIDENCE.get(kind, 1.1):
                     continue
                 key = (dst, kind)
                 prev = best.get(key)
-                evidence = sentence.strip()[:240]
+                evidence = original.strip()[:240]
                 if prev is None or conf > prev[0]:
                     best[key] = (conf, evidence)
 
     return [(dst, kind, conf, evidence) for (dst, kind), (conf, evidence) in best.items()]
+
+
+# Generic titles that would cause noisy co-mention matches if treated as entities.
+_TITLE_STOPLIST = frozenset((
+    "index", "readme", "notes", "todo", "ideas", "log", "inbox", "untitled",
+    "home", "overview", "misc", "scratch", "draft", "new note",
+))
+
+
+def _is_distinctive(title: str) -> bool:
+    """A title is safe to match in free prose only if it's DISTINCTIVE — multi-word,
+    CamelCase, or long. Bare common words ('Vault', 'Server') match prose noisily and
+    are excluded from co-mention (they still work as explicit [[wikilinks]])."""
+    return (" " in title) or bool(re.search(r"[a-z][A-Z]", title)) or len(title) >= 8
+
+
+def build_title_index(conn, tenant: str, exclude_id: str = None):
+    """Build a co-mention vocabulary: DISTINCTIVE note titles in the tenant, as whole-word
+    case-insensitive patterns, for recognizing entities named in prose. Skips titles shorter
+    than 4 chars, generic stoplist titles, and non-distinctive bare words (noise control)."""
+    rows = conn.execute(
+        "select id, title from notes where tenant_id=%s and title is not null", (tenant,)
+    ).fetchall()
+    index = []
+    for nid, title in rows:
+        if nid == exclude_id:
+            continue
+        t = (title or "").strip()
+        if len(t) < 4 or t.lower() in _TITLE_STOPLIST or not _is_distinctive(t):
+            continue
+        pat = re.compile(r"(?<![A-Za-z0-9])" + re.escape(t) + r"(?![A-Za-z0-9])", re.IGNORECASE)
+        index.append((t, nid, pat))
+    return index
 
 
 def backfill_relations(conn, tenant: str) -> int:
@@ -182,15 +241,20 @@ def backfill_relations(conn, tenant: str) -> int:
             return row[0] if row and row[0] != src_id else None
         return r
 
+    # Build the co-mention title index ONCE (filter self-edges per note in the loop).
+    title_index = build_title_index(conn, tenant)
+
     total = 0
     for nid, body in notes:
-        rels = extract_relations(_text(nid, body), _resolver(nid))
+        rels = extract_relations(_text(nid, body), _resolver(nid), title_index)
         by_kind = {}
         for dst, kind, conf, evidence in rels:
+            if dst == nid:
+                continue  # skip a note co-mentioning its own title
             by_kind.setdefault(kind, []).append((dst, conf, evidence))
         for kind in RELATION_KINDS:
             _upsert_edges(conn, tenant, nid, kind, by_kind.get(kind, []))
-        total += len(rels)
+        total += sum(len(v) for v in by_kind.values())
     return total
 
 

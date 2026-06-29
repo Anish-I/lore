@@ -1,8 +1,15 @@
 """Tests for the heuristic reasoned-graph layer: typed relations + importance."""
+import re
 from lore import db
 from lore.embed import FakeEmbedder
 from lore.index import index_document
-from lore.relations import extract_relations, recompute_importance, RELATION_KINDS
+from lore.relations import extract_relations, recompute_importance, RELATION_KINDS, build_title_index
+
+
+def _title_index(*pairs):
+    """Build a co-mention index from (title, id) pairs (whole-word, case-insensitive)."""
+    return [(t, i, re.compile(r"(?<![A-Za-z0-9])" + re.escape(t) + r"(?![A-Za-z0-9])", re.IGNORECASE))
+            for t, i in pairs]
 
 _TENANT = "rel-test"
 
@@ -53,6 +60,53 @@ def test_multiple_links_apply_ambiguity_penalty():
     assert ("a", "depends_on") in kinds
     for d, k, c, e in rels:
         assert c < 0.95  # penalized below the single-link score
+
+
+# --- co-mention recall layer -----------------------------------------------
+
+def test_comention_recall_names_known_title_without_wikilink():
+    # "Wingman" is a known note named in prose (no [[ ]]). Binding cue → discounted edge.
+    ti = _title_index(("Wingman", "n-wing"))
+    rels = extract_relations("The new bot depends on Wingman for routing.", lambda t: None, ti)
+    edge = [(d, k, c) for d, k, c, e in rels if d == "n-wing"]
+    assert edge and edge[0][1] == "depends_on"
+    assert edge[0][2] < 0.95, "co-mention must be discounted below an explicit-wikilink score"
+    assert edge[0][2] >= 0.70, "a clean binding cue should still clear the threshold"
+
+
+def test_comention_respects_negation_and_binding():
+    ti = _title_index(("Kalshi", "n-k"))
+    # negation suppresses
+    assert extract_relations("This does not depend on Kalshi.", lambda t: None, ti) == []
+    # cue after the title doesn't bind (no edge)
+    assert extract_relations("Kalshi is great and we ship it.", lambda t: None, ti) == []
+
+
+def test_wikilink_beats_comention_on_same_pair():
+    # Same note reachable as a wikilink (full weight) and a bare mention — keep the higher (wikilink).
+    ti = _title_index(("Auth", "n-auth"))
+    rels = extract_relations("This depends on [[Auth]] and also on Auth.",
+                             lambda t: "n-auth" if t.lower() == "auth" else None, ti)
+    confs = [c for d, k, c, e in rels if (d, k) == ("n-auth", "depends_on")]
+    # Deduped to one edge; the kept confidence is the wikilink path (1.0 discount),
+    # strictly above what a 0.8-discounted co-mention alone would score for the same cue.
+    assert len(confs) == 1
+    assert confs[0] >= 0.70
+
+
+def test_build_title_index_skips_short_and_generic():
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    for nid, title in (("ti-1", "Wingman Architecture"), ("ti-2", "Index"), ("ti-3", "ai")):
+        conn.execute(
+            "insert into notes(id,tenant_id,owner_id,scope_id,title,updated_at) "
+            "values(%s,'ti-tenant','me','private',%s,now()) on conflict (id) do update set title=excluded.title",
+            (nid, title))
+    idx = build_title_index(conn, "ti-tenant")
+    titles = {t for t, i, p in idx}
+    assert "Wingman Architecture" in titles
+    assert "Index" not in titles  # stoplisted
+    assert "ai" not in titles     # too short (<4)
 
 
 # --- importance ------------------------------------------------------------

@@ -257,7 +257,8 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
         ).fetchone()
         return row[0] if row and row[0] != source_id else None
 
-    rels = relations.extract_relations(text, _resolve_title)
+    title_index = relations.build_title_index(conn, tenant_id, exclude_id=source_id)
+    rels = relations.extract_relations(text, _resolve_title, title_index)
     by_kind = {}
     for dst, kind, conf, evidence in rels:
         by_kind.setdefault(kind, []).append((dst, conf, evidence))

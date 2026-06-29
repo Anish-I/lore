@@ -9,8 +9,16 @@ SERVER** keeps Postgres + Qdrant. One codebase, selected by config — not a for
 
 ## Three external deps to remove
 1. **Qdrant server (Docker)** → **embedded Qdrant** (`QdrantClient(path=…)`).
-2. **Postgres (Docker)** → **SQLite** (embedded, file-based).
+2. **Postgres server (Docker)** → **embedded Postgres binary** bundled + auto-started by the app.
 3. **System Python** → **PyInstaller-frozen sidecar** bundled by electron-builder.
+
+### DB decision update (2026-06-29) — embedded Postgres, NOT SQLite
+SQLite was only ever for the local single-user app; the hosted server always stays Postgres. But to
+build toward **hosted subscriptions**, maintaining two dialects (SQLite local / PG server) is needless
+risk. **Decision: Postgres everywhere** — bundle a PG binary in the desktop app (no Docker), so local and
+hosted are the *same* dialect. This is *less* migration work (code already speaks psycopg/PG — no SQL
+porting) and scales for SaaS. Cost: ~heavier installer + a supervised local PG process (initdb → pg_ctl →
+data dir in userData → pick a free local port/socket). The earlier SQLite/PG-ism porting plan is dropped.
 
 ## De-risk result (proven, not assumed)
 A live test confirmed **embedded Qdrant local mode supports the exact Lore query**: named `dense`+`bm25`
@@ -37,8 +45,10 @@ fallback. (Codex's #1 risk — sparse/RRF parity in local mode — is retired.)
 ## Phasing (each phase independently shippable)
 1. **Embedded Qdrant** — `QdrantClient(path=…)` behind a config switch (`QDRANT_PATH` env). Removes the Docker
    Qdrant dep. Tests stay on the server via env. *(Proven; smallest, lowest risk — do first.)*
-2. **SQLite data layer** — a thin DB adapter (`db.py` → dialect-aware): SQLite for local, Postgres for server.
-   Versioned migrations replace the `do $$` blocks. Port the enumerated PG-isms. The big phase.
+2. **Embedded Postgres binary** — ship a portable PG with the app; `main.js` (or the sidecar) runs
+   `initdb` once into a userData data dir, starts it via `pg_ctl` on a free local port/socket, points
+   `DATABASE_URL` at it, and stops it on quit. **No SQL changes** (same psycopg/PG dialect as the server).
+   Supersedes the dropped SQLite migration.
 3. **PyInstaller sidecar** — freeze `lore.api` onedir with the ML deps + models; `main.js` spawns it from
    `resourcesPath` with health-check + supervision (replaces the system-`python -m uvicorn` spawn).
 4. **electron-builder packaging + first-run re-index** — `extraResources` the sidecar + embedded store dirs
