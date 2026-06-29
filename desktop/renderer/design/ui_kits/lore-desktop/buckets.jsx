@@ -99,6 +99,7 @@ function WizardStore({ onChanged }) {
   const [q, setQ] = React.useState('');
   const [cat, setCat] = React.useState('all');
   const [shown, setShown] = React.useState(40);
+  const [kindTab, setKindTab] = React.useState('all');
   const load = React.useCallback(async () => {
     if (!window.lore || !window.lore.wizards || !window.lore.wizards.catalog) { setCatalog([]); return; }
     try { setCatalog(await window.lore.wizards.catalog()); } catch { setCatalog([]); }
@@ -112,7 +113,30 @@ function WizardStore({ onChanged }) {
   const catOf = (w) => w.kind === 'wizard' ? 'featured' : ((w.topics && w.topics[0]) || 'tool');
   const cats = ['all', 'featured', 'skill', 'mcp', 'marketplace'];
   const ql = q.trim().toLowerCase();
-  const filtered = catalog.filter((w) => {
+
+  // Kind-level tab counts (from full catalog, unaffected by search)
+  const installedCount = catalog.filter((w) => !!w.installed).length;
+  const tabCounts = {
+    all: catalog.length,
+    bases: catalog.filter((w) => w.kind === 'wizard').length,
+    tools: catalog.filter((w) => w.kind === 'tool').length,
+    installed: installedCount,
+  };
+  const storeTabs = [
+    { value: 'all', label: 'All', count: tabCounts.all },
+    { value: 'bases', label: 'Bases', count: tabCounts.bases },
+    { value: 'tools', label: 'Tools', count: tabCounts.tools },
+  ];
+  if (installedCount > 0) storeTabs.push({ value: 'installed', label: 'Installed', count: installedCount });
+
+  // Kind tab pre-filter, then category chip + search filter
+  const kindFiltered = catalog.filter((w) => {
+    if (kindTab === 'bases') return w.kind === 'wizard';
+    if (kindTab === 'tools') return w.kind === 'tool';
+    if (kindTab === 'installed') return !!w.installed;
+    return true;
+  });
+  const filtered = kindFiltered.filter((w) => {
     if (cat !== 'all' && catOf(w) !== cat) return false;
     if (!ql) return true;
     return (w.name + ' ' + (w.desc || '') + ' ' + (w.topics || []).join(' ')).toLowerCase().includes(ql);
@@ -123,7 +147,10 @@ function WizardStore({ onChanged }) {
   return (
     <div style={{ marginTop: 28 }}>
       <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' }}>Discover knowledge bases & tools</h2>
-      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 12px' }}>{catalog.length.toLocaleString()} available — curated knowledge bases + tools sourced from the web. Install to add into your vault.</p>
+      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 10px' }}>{catalog.length.toLocaleString()} available — curated knowledge bases + tools sourced from the web. Install to add into your vault.</p>
+      <div style={{ marginBottom: 12 }}>
+        <BkTabs value={kindTab} onChange={(v) => { setKindTab(v); setCat('all'); setShown(40); }} tabs={storeTabs} />
+      </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: '1 1 220px', minWidth: 200, padding: '0 10px', height: 32, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
           <BkIcon name="search" size={14} style={{ color: 'var(--text-faint)' }} />

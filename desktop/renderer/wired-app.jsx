@@ -444,31 +444,49 @@ function App() {
   const askSuggestions = activeBucket ? bucketQuestions(activeBucket) : suggestions;
   const askPanel = <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={() => setAskOpen(false)} source={askSource} onSource={setAskSource} />;
 
-  const EmptyEditor = () => (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: 'var(--surface-canvas)', color: 'var(--text-subtle)' }}>
-      {treeData ? (
-        <React.Fragment>
-          <img src="design/assets/sprites/lore-familiar.png" alt="" style={{ width: 116, height: 116, objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))' }} onError={(e) => { e.target.style.display = 'none'; }} />
-          <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, color: 'var(--text-body)' }}>{treeData.name} is open · {treeData.indexed} notes</div>
-          <div style={{ fontSize: 13, color: 'var(--text-subtle)' }}>Pick a note from the sidebar, or create a new one.</div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-            <D.Button variant="primary" icon="plus" onClick={onCreateNote}>New note</D.Button>
-            <D.Button variant="secondary" icon="upload" onClick={() => setShowImportModal(true)}>Import</D.Button>
-            <D.Button variant="ghost" icon="sparkles" onClick={() => setAskOpen(true)}>Ask Lore</D.Button>
-          </div>
-        </React.Fragment>
-      ) : (
-        <React.Fragment>
-          <D.Icon name="folder-open" size={34} style={{ color: 'var(--text-faint)' }} />
-          <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, color: 'var(--text-body)' }}>Open a vault to start.</div>
-          <D.Button variant="primary" icon="folder" onClick={openVault}>Open vault folder…</D.Button>
-          {Onboarding && (
-            <D.Button variant="ghost" icon="settings" onClick={() => setShowOnboarding(true)}>Set up…</D.Button>
-          )}
-        </React.Fragment>
-      )}
-    </div>
-  );
+  const EmptyEditor = () => {
+    const [draftQ, setDraftQ] = React.useState('');
+    const submitAsk = () => {
+      const q = draftQ.trim();
+      if (!q) return;
+      setDraftQ('');
+      ask(q);
+    };
+    return (
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 20, background: 'var(--surface-canvas)', color: 'var(--text-subtle)' }}>
+        {treeData ? (
+          <React.Fragment>
+            <img src="design/assets/sprites/lore-familiar.png" alt="" style={{ width: 96, height: 96, objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))' }} onError={(e) => { e.target.style.display = 'none'; }} />
+            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 20, color: 'var(--text-body)' }}>{treeData.name} · {treeData.indexed} notes</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: 480, padding: '0 24px', boxSizing: 'border-box' }}>
+              <input
+                autoFocus
+                value={draftQ}
+                onChange={(e) => setDraftQ(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') submitAsk(); }}
+                placeholder="Ask your vault anything…"
+                style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1.5px solid var(--border-subtle)', background: 'var(--surface-raised)', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 14, outline: 'none' }}
+              />
+              <D.Button variant="primary" icon="sparkles" onClick={submitAsk}>Ask</D.Button>
+            </div>
+            <div style={{ display: 'flex', gap: 20, marginTop: 2 }}>
+              <button onClick={onCreateNote} style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer', fontSize: 13, textDecoration: 'underline', padding: 0 }}>New note</button>
+              <button onClick={() => setShowImportModal(true)} style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer', fontSize: 13, textDecoration: 'underline', padding: 0 }}>Import</button>
+            </div>
+          </React.Fragment>
+        ) : (
+          <React.Fragment>
+            <D.Icon name="folder-open" size={34} style={{ color: 'var(--text-faint)' }} />
+            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, color: 'var(--text-body)' }}>Open a vault to start.</div>
+            <D.Button variant="primary" icon="folder" onClick={openVault}>Open vault folder…</D.Button>
+            {Onboarding && (
+              <D.Button variant="ghost" icon="settings" onClick={() => setShowOnboarding(true)}>Set up…</D.Button>
+            )}
+          </React.Fragment>
+        )}
+      </div>
+    );
+  };
 
   const GraphEmptyState = ({ loading }) => (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: 'var(--surface-canvas)', color: 'var(--text-subtle)' }}>

@@ -112,19 +112,91 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
   );
 }
 
+// VS Code-style file tree row — replaces FileTreeItem for tighter, denser layout.
+const TREE_INDENT = 12; // px per depth level
 function TreeNode({ node, activeNote, onOpen, onToggle }) {
+  const [hover, setHover] = React.useState(false);
+  const isFolder = node.kind === 'folder';
+  const isActive = node.kind === 'note' && node.id === activeNote;
+  const depth = node.depth || 0;
+
   return (
     <React.Fragment>
-      <FileTreeItem
-        name={node.name} kind={node.kind} depth={node.depth} open={node.open}
-        active={node.kind === 'note' && node.id === activeNote}
-        scope={node.scope} indexed={node.indexed}
-        onClick={() => node.kind === 'folder' ? onToggle(node.id) : onOpen(node.id)}
-      />
-      {node.kind === 'folder' && node.open && node.children &&
-        node.children.map((c) => (
-          <TreeNode key={c.id} node={c} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle} />
+      <div
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
+        onClick={() => isFolder ? onToggle(node.id) : onOpen(node.id)}
+        style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 3,
+          height: 22,
+          paddingRight: 6,
+          paddingLeft: depth * TREE_INDENT + 6,
+          cursor: 'pointer',
+          background: isActive ? 'var(--surface-selected)' : hover ? 'var(--surface-hover)' : 'transparent',
+          transition: 'background 0.08s ease',
+          userSelect: 'none',
+        }}
+      >
+        {/* Indent guides: one faint vertical line per ancestor level */}
+        {Array.from({ length: depth }).map((_, i) => (
+          <span key={i} style={{
+            position: 'absolute',
+            left: i * TREE_INDENT + Math.floor(TREE_INDENT / 2),
+            top: 0,
+            bottom: 0,
+            width: 1,
+            background: 'rgba(255,255,255,0.07)',
+            pointerEvents: 'none',
+          }} />
         ))}
+        {/* Chevron (folders) or blank spacer (files) to keep icon columns aligned */}
+        {isFolder ? (
+          <Icon name="chevron-right" size={11} style={{
+            color: 'var(--text-faint)',
+            transform: node.open ? 'rotate(90deg)' : 'none',
+            transition: 'transform 0.12s ease',
+            flexShrink: 0,
+          }} />
+        ) : (
+          <span style={{ width: 11, flexShrink: 0 }} />
+        )}
+        {/* Folder / file icon */}
+        <Icon
+          name={isFolder ? (node.open ? 'folder-open' : 'folder') : 'file-text'}
+          size={13}
+          style={{
+            color: isActive ? 'var(--brand-fg)' : isFolder ? 'var(--text-subtle)' : 'var(--text-faint)',
+            flexShrink: 0,
+          }}
+        />
+        {/* Label */}
+        <span style={{
+          flex: 1,
+          fontSize: 12.5,
+          lineHeight: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          color: isActive ? 'var(--text-strong)' : 'var(--text-body)',
+          fontWeight: isActive ? 600 : 400,
+          letterSpacing: '0.01em',
+        }}>
+          {node.name}
+        </span>
+        {/* Right-side indicators: indexed dot, scope icons */}
+        {node.indexed && (
+          <span title="indexed" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--jade-400)', flexShrink: 0 }} />
+        )}
+        {node.scope === 'private' && <Icon name="lock" size={10} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />}
+        {node.scope === 'team' && <Icon name="users" size={10} style={{ color: 'var(--scope-team-fg)', flexShrink: 0 }} />}
+        {node.scope === 'enterprise' && <Icon name="building-2" size={10} style={{ color: 'var(--scope-ent-fg)', flexShrink: 0 }} />}
+      </div>
+      {isFolder && node.open && node.children && node.children.map((c) => (
+        <TreeNode key={c.id} node={c} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle} />
+      ))}
     </React.Fragment>
   );
 }
@@ -203,7 +275,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
           </div>
         </div>
       )}
-      <div style={{ flex: 1, overflowY: 'auto', padding: '6px 8px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
         {tree.map((n) => (
           <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle} />
         ))}

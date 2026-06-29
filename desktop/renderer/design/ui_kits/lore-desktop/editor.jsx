@@ -14,8 +14,8 @@ const edS = {
     boxShadow: on ? 'inset 0 2px 0 var(--brand-bg)' : 'none',
   }),
   toolbar: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 18px', borderBottom: '1px solid var(--divider)', flexShrink: 0 },
-  scroll: { flex: 1, overflowY: 'auto', padding: '28px 0 80px' },
-  col: { maxWidth: '64ch', margin: '0 auto', padding: '0 32px' },
+  scroll: { flex: 1, overflowY: 'auto', padding: '48px 0 120px' },
+  col: { maxWidth: 720, width: '100%', margin: '0 auto', padding: '0 48px', boxSizing: 'border-box' },
   context: { width: 'var(--context-width)', flexShrink: 0, background: 'var(--surface-panel)', borderLeft: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column' },
 };
 
@@ -135,7 +135,7 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode,
         {mode === 'edit'
           ? <div style={edS.col}>
               <textarea value={note.raw || ''} onChange={(e) => note.onEdit && note.onEdit(e.target.value)}
-                style={{ width: '100%', minHeight: '60vh', resize: 'vertical', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface-inset)', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 13.5, lineHeight: 1.7, padding: 16, outline: 'none' }} />
+                style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 180px)', resize: 'none', border: 'none', borderRadius: 0, background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--brand-fg)' }} />
             </div>
           : <div style={edS.col}>
               {note.body.map((b, i) => <Block key={i} b={b} note={note} onOpen={onOpen} />)}
