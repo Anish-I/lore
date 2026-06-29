@@ -125,24 +125,28 @@ def _tag_edges(conn, tenant_id, src_id, tags):
     return edges
 
 
-def _upsert_edges(conn, tenant_id, src_id, kind, targets):
-    """Replace this note's outgoing edges of `kind` with `targets`.
+def _upsert_edges(conn, tenant_id, src_id, kind, targets, origin="index"):
+    """Replace this note's outgoing edges of `kind` and `origin` with `targets`.
 
-    Deletes the existing set first (clean slate per kind), then inserts with
-    ON CONFLICT DO UPDATE as a safety net against concurrent ingest of the same
-    source.
+    Deletes the existing set of the SAME origin first (clean slate per kind+origin),
+    then inserts.  The origin scoping means an index recompute ('index') never wipes
+    edges captured from a since-deleted session note ('capture').
     """
     conn.execute(
-        "delete from edges where tenant_id=%s and src_note_id=%s and kind=%s",
-        (tenant_id, src_id, kind),
+        "delete from edges where tenant_id=%s and src_note_id=%s and kind=%s and origin=%s",
+        (tenant_id, src_id, kind, origin),
     )
     for dst_id, weight, evidence in targets:
         conn.execute(
-            """insert into edges(tenant_id, src_note_id, dst_note_id, kind, weight, evidence)
-               values(%s,%s,%s,%s,%s,%s)
+            """insert into edges(tenant_id, src_note_id, dst_note_id, kind, weight, evidence, origin)
+               values(%s,%s,%s,%s,%s,%s,%s)
                on conflict (tenant_id, src_note_id, dst_note_id, kind)
-               do update set weight=excluded.weight, evidence=excluded.evidence, updated_at=now()""",
-            (tenant_id, src_id, dst_id, kind, weight, evidence),
+               do update set weight=excluded.weight, evidence=excluded.evidence,
+                             -- 'capture' is sticky: an edge extracted from a since-deleted
+                             -- session note must never be reclaimed (and later dropped) by index.
+                             origin=case when edges.origin='capture' then 'capture' else excluded.origin end,
+                             updated_at=now()""",
+            (tenant_id, src_id, dst_id, kind, weight, evidence, origin),
         )
 
 

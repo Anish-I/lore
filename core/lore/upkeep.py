@@ -15,7 +15,7 @@ Why deletion is safe and idempotent:
     live on disk; their content lives, de-duplicated and dated, inside topic nodes.
 """
 import re
-from .index import index_document, _parse_wikilinks
+from .index import index_document, _parse_wikilinks, _upsert_edges
 from . import qdrant_store
 from . import llm
 
@@ -206,10 +206,30 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
     # Topic vocabulary from all wikilinks — lets us fold wikilink-less Session notes by mention.
     vocab = _build_topic_vocab(conn, tenant)
 
+    # Reasoned-graph: extract entity-pair relations from each session note's FULL text BEFORE it
+    # is folded + deleted (the richest cues live here). Edges go between the named notes (which
+    # survive) and are stored with origin='capture' so the index recompute never wipes them.
+    from . import relations
+    _title_index = relations.build_title_index(conn, tenant)
+
+    def _resolve_title_to_id(t):
+        row = conn.execute(
+            "select id from notes where lower(title)=%s and tenant_id=%s limit 1",
+            (t.lower(), tenant),
+        ).fetchone()
+        return row[0] if row else None
+
+    capture_edges: dict[tuple, list] = {}   # (src_id, kind) -> [(dst, conf, evidence)]
+
     for note_id, title, scope_id, source_type, body in ephemeral:
         # --- Step 2: extract topics ---
         text = _note_text(conn, note_id, body)
         topics = list(_parse_wikilinks(text))
+
+        # Reasoned-graph capture: A <cue> B relations between named notes in this session's prose.
+        for a_id, b_id, kind, conf, evidence in relations.extract_entity_pairs(
+                text, _title_index, _resolve_title_to_id):
+            capture_edges.setdefault((a_id, kind), []).append((b_id, conf, evidence))
 
         # Fallback for notes with no explicit [[wikilinks]] (e.g. captured Session: notes):
         # fold them into whichever known topics they mention in prose.
@@ -308,8 +328,21 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
             _delete_note(conn, tenant, note_id)
             purged += 1
 
-    # --- Step 6: refresh the reasoned graph (typed relations + node importance) ---
-    from . import relations
+    # --- Step 6: persist captured entity-pair relations (origin='capture') ---
+    # These edges (between named notes in the session prose) survive the date-note deletion
+    # and are not wiped by index recompute. Accumulated across ALL session notes, so each
+    # (src, kind) is upserted once with its full deduped set.
+    capture_count = 0
+    for (src_id, kind), targets in capture_edges.items():
+        deduped: dict = {}
+        for dst, conf, ev in targets:
+            if dst not in deduped or conf > deduped[dst][0]:
+                deduped[dst] = (conf, ev)
+        _upsert_edges(conn, tenant, src_id, kind,
+                      [(dst, c, e) for dst, (c, e) in deduped.items()], origin="capture")
+        capture_count += len(deduped)
+
+    # --- Step 7: refresh the reasoned graph (typed relations + node importance) ---
     rel_edges = relations.backfill_relations(conn, tenant)
     relations.recompute_importance(conn, tenant)
 
@@ -320,4 +353,5 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
         "deleted": deleted,
         "purgedNoise": purged,
         "relations": rel_edges,
+        "captureRelations": capture_count,
     }

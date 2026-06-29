@@ -44,6 +44,9 @@ _EDGES_MIGRATION = [
     "alter table edges add column if not exists weight real default 1.0",
     "alter table edges add column if not exists evidence text",
     "alter table edges add column if not exists updated_at timestamptz default now()",
+    # Edge provenance: 'index' (recomputed each ingest) vs 'capture' (extracted from a
+    # session note before upkeep deletes it — must NOT be wiped by index recompute).
+    "alter table edges add column if not exists origin text default 'index'",
 ]
 
 # Columns added in M2 (body storage + upkeep milestone).

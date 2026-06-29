@@ -3,7 +3,8 @@ import re
 from lore import db
 from lore.embed import FakeEmbedder
 from lore.index import index_document
-from lore.relations import extract_relations, recompute_importance, RELATION_KINDS, build_title_index
+from lore.relations import (extract_relations, extract_entity_pairs, recompute_importance,
+                            RELATION_KINDS, build_title_index)
 
 
 def _title_index(*pairs):
@@ -107,6 +108,29 @@ def test_build_title_index_skips_short_and_generic():
     assert "Wingman Architecture" in titles
     assert "Index" not in titles  # stoplisted
     assert "ai" not in titles     # too short (<4)
+
+
+# --- entity-pair extraction (session captures: A <cue> B, subject is a named entity) ---
+
+def test_entity_pairs_subject_is_named_entity():
+    # "Codex replaces n8n" — subject is Codex (a named note), NOT the note being processed.
+    ti = _title_index(("Codex", "n-codex"), ("n8n", "n-n8n"))
+    pairs = extract_entity_pairs("Codex replaces n8n in the pipeline.", ti)
+    triples = [(a, b, k) for a, b, k, c, e in pairs]
+    assert ("n-codex", "n-n8n", "supersedes") in triples
+    # direction is A->B only, never the reverse
+    assert ("n-n8n", "n-codex", "supersedes") not in triples
+
+
+def test_entity_pairs_needs_cue_between_and_respects_negation():
+    ti = _title_index(("Wingman", "n-w"), ("Composio", "n-c"))
+    # cue between A and B → edge
+    assert ("n-w", "n-c", "depends_on") in [
+        (a, b, k) for a, b, k, c, e in extract_entity_pairs("Wingman depends on Composio for tools.", ti)]
+    # negation suppresses
+    assert extract_entity_pairs("Wingman does not depend on Composio.", ti) == []
+    # no cue between the two entities → nothing
+    assert extract_entity_pairs("Wingman and Composio are both tools.", ti) == []
 
 
 # --- importance ------------------------------------------------------------

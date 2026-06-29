@@ -182,6 +182,55 @@ def extract_relations(text: str, resolve, title_index=None):
     return [(dst, kind, conf, evidence) for (dst, kind), (conf, evidence) in best.items()]
 
 
+def extract_entity_pairs(text: str, title_index, resolve=None):
+    """Extract `A <cue> B` relations where BOTH endpoints are known notes named in the text
+    (the subject is a named ENTITY, not the note being processed). For session captures /
+    rich prose like "Codex replaces n8n" → Codex --supersedes--> n8n.
+
+    Entities = [[wikilinks]] (full weight, via `resolve`) + distinctive title co-mentions
+    (0.8 discount). A directional edge A→B is emitted when a forward cue sits BETWEEN A and B
+    in the same clause, not negated. Returns (src_id, dst_id, kind, confidence, evidence).
+    """
+    best = {}  # (src_id, dst_id, kind) -> (conf, evidence)
+    for original in _SENT_SPLIT.split(text or ""):
+        sentence = _mask_code(original)
+        ents = []  # (start, end, note_id, discount)
+        for lm in _WIKILINK.finditer(sentence):
+            did = resolve(lm.group(1).strip()) if resolve else None
+            if did:
+                ents.append((lm.start(), lm.end(), did, 1.0))
+        if title_index:
+            for _t, did, pat in title_index:
+                m = pat.search(sentence)
+                if m:
+                    ents.append((m.start(), m.end(), did, _COMENTION_DISCOUNT))
+        if len(ents) < 2:
+            continue
+        ents.sort()
+        for a_start, a_end, a_id, a_disc in ents:
+            for b_start, b_end, b_id, b_disc in ents:
+                if a_id == b_id or a_end > b_start:
+                    continue  # need A strictly before B, distinct notes
+                for cue_re, kind, direction, specificity in _CUES:
+                    if direction != "fwd":
+                        continue
+                    # cue must sit BETWEEN A and B, in the same clause: "A <cue> B".
+                    cm = None
+                    for m in cue_re.finditer(sentence):
+                        if m.start() >= a_end and m.end() <= b_start and _same_clause(sentence, a_end, b_start):
+                            cm = m
+                    if cm is None or _is_negated(sentence, cm.start()):
+                        continue
+                    disc = min(a_disc, b_disc)  # discounted if either endpoint is a bare mention
+                    conf = round(specificity * _certainty(sentence) * disc, 3)
+                    if conf < _MIN_CONFIDENCE.get(kind, 1.1):
+                        continue
+                    key = (a_id, b_id, kind)
+                    if key not in best or conf > best[key][0]:
+                        best[key] = (conf, original.strip()[:240])
+    return [(a, b, k, c, e) for (a, b, k), (c, e) in best.items()]
+
+
 # Generic titles that would cause noisy co-mention matches if treated as entities.
 _TITLE_STOPLIST = frozenset((
     "index", "readme", "notes", "todo", "ideas", "log", "inbox", "untitled",
