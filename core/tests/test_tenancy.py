@@ -27,6 +27,16 @@ def test_authorized_scopes_from_membership():
     assert authorized_team_scope_ids(conn, "nobody") == []
 
 
+def test_authorized_scopes_sorted_for_multi_team():
+    conn = db.connect()
+    _seed(conn)
+    conn.execute("insert into memberships(user_id,org_id,team_id,role,status) "
+                 "values('dave','o1','t1','member','active') on conflict (user_id,team_id) do update set status='active'")
+    conn.execute("insert into memberships(user_id,org_id,team_id,role,status) "
+                 "values('dave','o1','t2','member','active') on conflict (user_id,team_id) do update set status='active'")
+    assert authorized_team_scope_ids(conn, "dave") == ["team:t1", "team:t2"]
+
+
 def test_scope_helpers():
     assert team_scope_id(7) == "team:7"
     assert syncable_scope("team") is True

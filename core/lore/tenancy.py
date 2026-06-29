@@ -37,7 +37,7 @@ def syncable_scope(scope_type: str) -> bool:
     return scope_type in _SYNCABLE_SCOPE_TYPES
 
 
-def authorized_team_scope_ids(conn, user_id: str) -> list:
+def authorized_team_scope_ids(conn, user_id: str) -> list[str]:
     """The team scope ids a user may READ, derived from active memberships.
     SERVER-SIDE source of truth — never trust scopes supplied by the client."""
     rows = conn.execute(
