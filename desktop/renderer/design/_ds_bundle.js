@@ -815,11 +815,13 @@ try { (() => {
  * Central to Lore: every note carries exactly one scope.
  */
 function ScopeTag({
-  scope = 'private',
+  scope = null,
   size = 'md',
   showLabel = true,
   style
 }) {
+  const clean = scope == null ? null : String(scope).trim();
+  if (!clean) return null;
   const map = {
     private: {
       icon: 'lock',
@@ -843,7 +845,13 @@ function ScopeTag({
       dot: 'var(--azure-400)'
     }
   };
-  const s = map[scope] || map.private;
+  const s = map[clean] || {
+    icon: 'tag',
+    label: clean,
+    fg: 'var(--brand-fg)',
+    bg: 'var(--surface-inset)',
+    dot: 'var(--brand-fg)'
+  };
   const sm = size === 'sm';
   return /*#__PURE__*/React.createElement("span", {
     style: {
@@ -1213,7 +1221,7 @@ function EvidenceRow({
   index = 1,
   note,
   heading,
-  scope = 'private',
+  scope = null,
   lane = 'hybrid',
   score = 0.0,
   owner,
@@ -1312,7 +1320,7 @@ function EvidenceRow({
     style: {
       color: 'var(--text-faint)'
     }
-  }, "\xB7 ", owner), /*#__PURE__*/React.createElement(__ds_scope.ScopeTag, {
+  }, "\xB7 ", owner), scope && /*#__PURE__*/React.createElement(__ds_scope.ScopeTag, {
     scope: scope,
     size: "sm",
     showLabel: false,
@@ -1410,6 +1418,13 @@ function FileTreeItem({
     style: {
       color: 'var(--scope-ent-fg)'
     }
+  }), scope && !['private', 'team', 'enterprise'].includes(scope) && /*#__PURE__*/React.createElement(__ds_scope.Icon, {
+    name: "tag",
+    size: 11,
+    title: String(scope),
+    style: {
+      color: 'var(--brand-fg)'
+    }
   }));
 }
 Object.assign(__ds_scope, { FileTreeItem });
@@ -1421,7 +1436,7 @@ try { (() => {
 function NoteCard({
   title,
   snippet,
-  scope = 'private',
+  scope = null,
   owner,
   updated,
   links,
@@ -1466,7 +1481,7 @@ function NoteCard({
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap'
     }
-  }, title), /*#__PURE__*/React.createElement(__ds_scope.ScopeTag, {
+  }, title), scope && /*#__PURE__*/React.createElement(__ds_scope.ScopeTag, {
     scope: scope,
     size: "sm"
   })), snippet && /*#__PURE__*/React.createElement("p", {
@@ -1513,11 +1528,12 @@ Object.assign(__ds_scope, { NoteCard });
 try { (() => {
 /** ScopePicker — segmented control for choosing a note's scope. */
 function ScopePicker({
-  value = 'private',
+  value = null,
   onChange,
+  options,
   style
 }) {
-  const opts = [{
+  const defaults = [{
     v: 'private',
     icon: 'lock',
     label: 'private'
@@ -1530,6 +1546,15 @@ function ScopePicker({
     icon: 'building-2',
     label: 'enterprise'
   }];
+  const clean = Array.isArray(options) && options.length ? options.map(o => typeof o === 'string' ? {
+    v: o,
+    icon: 'tag',
+    label: o
+  } : {
+    v: o.value || o.v,
+    icon: o.icon || 'tag',
+    label: o.label || o.value || o.v
+  }).filter(o => o.v) : defaults;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'inline-flex',
@@ -1540,7 +1565,7 @@ function ScopePicker({
       borderRadius: 'var(--radius-md)',
       ...style
     }
-  }, opts.map(o => {
+  }, clean.map(o => {
     const on = o.v === value;
     return /*#__PURE__*/React.createElement("button", {
       key: o.v,
@@ -1617,18 +1642,18 @@ function toggleFolder(tree, id) {
 function App() {
   const [theme, setTheme] = React.useState('dark');
   const [view, setView] = React.useState('workspace');
-  const [activeNote, setActiveNote] = React.useState('acme');
+  const [activeNote, setActiveNote] = React.useState(null);
   const [askOpen, setAskOpen] = React.useState(false);
   const [tree, setTree] = React.useState(D.tree);
   const [mode, setMode] = React.useState('read');
-  const [scope, setScope] = React.useState('team');
+  const [scope, setScope] = React.useState(null);
   const [messages, setMessages] = React.useState([]);
   const [asking, setAsking] = React.useState(false);
   const timer = React.useRef(null);
   React.useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
-  const note = D.notes[activeNote] || D.notes.acme;
+  const note = activeNote ? D.notes[activeNote] : null;
   const openNote = id => {
     if (D.notes[id]) setActiveNote(id);
     setView('workspace');
@@ -2365,537 +2390,22 @@ window.LoreBucketsView = BucketsView;
 
 // ui_kits/lore-desktop/data.js
 try { (() => {
-// Lore desktop — demo data for the UI kit (fake, illustrative).
+// Lore desktop - live surfaces start with no seeded/demo values.
 window.LoreData = {
-  workspace: {
-    name: 'Alice · Sales',
-    scope: 'team',
-    members: 6
-  },
-  tree: [{
-    id: 'f-accounts',
-    kind: 'folder',
-    name: 'Accounts',
-    depth: 0,
-    open: true,
-    children: [{
-      id: 'acme',
-      kind: 'note',
-      name: 'Acme Account',
-      depth: 1,
-      scope: 'team',
-      indexed: true
-    }, {
-      id: 'globex',
-      kind: 'note',
-      name: 'Globex Account',
-      depth: 1,
-      scope: 'private',
-      indexed: true
-    }, {
-      id: 'initech',
-      kind: 'note',
-      name: 'Initech Account',
-      depth: 1,
-      scope: 'team',
-      indexed: true
-    }]
-  }, {
-    id: 'f-play',
-    kind: 'folder',
-    name: 'Playbooks',
-    depth: 0,
-    open: true,
-    children: [{
-      id: 'renewals',
-      kind: 'note',
-      name: 'Renewals Playbook',
-      depth: 1,
-      scope: 'enterprise',
-      indexed: true
-    }, {
-      id: 'discount',
-      kind: 'note',
-      name: 'Discounting Policy',
-      depth: 1,
-      scope: 'enterprise',
-      indexed: true
-    }]
-  }, {
-    id: 'f-meet',
-    kind: 'folder',
-    name: 'Meetings',
-    depth: 0,
-    open: false,
-    children: [{
-      id: 'm-acme',
-      kind: 'note',
-      name: '2026-06-24 Acme sync',
-      depth: 1,
-      scope: 'private',
-      indexed: true
-    }, {
-      id: 'standup',
-      kind: 'note',
-      name: 'Weekly standup',
-      depth: 1,
-      scope: 'team',
-      indexed: true
-    }]
-  }, {
-    id: 'f-inbox',
-    kind: 'folder',
-    name: 'Inbox',
-    depth: 0,
-    open: false,
-    children: [{
-      id: 'quick',
-      kind: 'note',
-      name: 'Quick note',
-      depth: 1,
-      scope: 'private',
-      indexed: false
-    }]
-  }],
-  notes: {
-    acme: {
-      id: 'acme',
-      title: 'Acme Account',
-      scope: 'team',
-      owner: 'alice',
-      updated: '4 min ago',
-      tags: ['account', 'renewal', 'risk'],
-      backlinks: [{
-        note: 'Renewals Playbook',
-        heading: 'Active risks',
-        owner: 'bob'
-      }, {
-        note: '2026-06-24 Acme sync',
-        heading: 'Notes',
-        owner: 'alice'
-      }, {
-        note: 'Weekly standup',
-        heading: 'Accounts',
-        owner: 'alice'
-      }],
-      outline: ['Acme Account', 'Renewal', 'Pricing', 'Next steps'],
-      body: [{
-        t: 'h1',
-        s: 'Acme Account'
-      }, {
-        t: 'meta'
-      }, {
-        t: 'h2',
-        s: 'Renewal'
-      }, {
-        t: 'p',
-        runs: [{
-          x: 'Acme’s annual contract renews in '
-        }, {
-          x: 'Q3 2026',
-          mark: true
-        }, {
-          x: '. Risk: our champion (VP Eng) '
-        }, {
-          x: 'left the company last month',
-          mark: true
-        }, {
-          x: ', and the new VP hasn’t been briefed. See '
-        }, {
-          x: 'Renewals Playbook',
-          link: 'renewals'
-        }, {
-          x: ' for the standard mitigation.'
-        }]
-      }, {
-        t: 'h2',
-        s: 'Pricing'
-      }, {
-        t: 'p',
-        runs: [{
-          x: 'List price '
-        }, {
-          x: '$120k',
-          code: true
-        }, {
-          x: '; we approved a discount to '
-        }, {
-          x: '$96k',
-          code: true
-        }, {
-          x: ' contingent on a 2-year term. Policy reference: '
-        }, {
-          x: 'Discounting Policy',
-          link: 'discount'
-        }, {
-          x: '.'
-        }]
-      }, {
-        t: 'quote',
-        s: 'New VP intro call booked for next Tuesday — bring the renewal one-pager.'
-      }, {
-        t: 'h2',
-        s: 'Next steps'
-      }, {
-        t: 'li',
-        s: 'Brief the new VP before the renewal window opens.'
-      }, {
-        t: 'li',
-        s: 'Confirm 2-year term to hold the $96k price.'
-      }, {
-        t: 'li',
-        runs: [{
-          x: 'Loop in '
-        }, {
-          x: 'Weekly standup',
-          link: 'standup'
-        }, {
-          x: ' on status.'
-        }]
-      }]
-    }
-  },
-  // Canned Ask exchange (the demo "wow")
-  ask: {
-    suggestions: ['What do we know about the Acme renewal risk?', 'Summarize the discounting policy', 'Which accounts renew in Q3?'],
-    question: 'What do we know about the Acme renewal risk?',
-    answerRuns: [{
-      x: 'The Acme renewal is at risk for two reasons. First, the economic champion (VP Eng) '
-    }, {
-      x: 'left the company last month',
-      mark: true
-    }, {
-      x: ' and the incoming VP hasn’t been briefed yet',
-      cite: 1
-    }, {
-      x: '. Second, the approved $96k price is '
-    }, {
-      x: 'contingent on a 2-year term',
-      mark: true
-    }, {
-      x: ' that hasn’t been confirmed',
-      cite: 2
-    }, {
-      x: '. The standard mitigation is to brief the new VP before the renewal window opens',
-      cite: 3
-    }, {
-      x: '.'
-    }],
-    sources: 8,
-    scopes: 'across 2 vaults · alice + bob',
-    evidence: [{
-      index: 1,
-      note: 'Acme Account',
-      heading: 'Renewal',
-      scope: 'team',
-      lane: 'hybrid',
-      score: 0.842,
-      owner: 'alice'
-    }, {
-      index: 2,
-      note: 'Acme Account',
-      heading: 'Pricing',
-      scope: 'team',
-      lane: 'bm25',
-      score: 0.731,
-      owner: 'alice'
-    }, {
-      index: 3,
-      note: 'Renewals Playbook',
-      heading: 'Active risks',
-      scope: 'enterprise',
-      lane: 'graph',
-      score: 0.608,
-      owner: 'bob'
-    }]
-  },
-  projects: [{
-    id: 'p-acme',
-    name: 'Acme renewal',
-    scope: 'team',
-    notes: 12,
-    members: ['Alice Ng', 'Bob Reyes', 'Cara Lin'],
-    updated: '12 min ago',
-    desc: 'Cross-functional push to land the Q3 renewal at the approved price.'
-  }, {
-    id: 'p-onboard',
-    name: 'Sales onboarding',
-    scope: 'enterprise',
-    notes: 34,
-    members: ['Dan Cole', 'Cara Lin'],
-    updated: '2 hours ago',
-    desc: 'The living handbook for new AEs — playbooks, scripts, and account context.'
-  }, {
-    id: 'p-comp',
-    name: 'Competitive intel',
-    scope: 'team',
-    notes: 21,
-    members: ['Bob Reyes', 'Eve Park', 'Alice Ng'],
-    updated: 'yesterday',
-    desc: 'What we know about Globex, Initech, and the rest of the field.'
-  }, {
-    id: 'p-q3',
-    name: 'Q3 forecast',
-    scope: 'private',
-    notes: 7,
-    members: ['Alice Ng'],
-    updated: '3 days ago',
-    desc: 'Personal working notes ahead of the quarterly business review.'
-  }],
-  groups: [{
-    id: 'g-sales',
-    name: 'Sales',
-    scope: 'team',
-    members: 6,
-    vaults: 6
-  }, {
-    id: 'g-eng',
-    name: 'Engineering',
-    scope: 'team',
-    members: 14,
-    vaults: 14
-  }, {
-    id: 'g-co',
-    name: 'Everyone at Northwind',
-    scope: 'enterprise',
-    members: 142,
-    vaults: 142
-  }],
-  // Buckets — shared knowledge collections pooled across vaults around a topic.
-  buckets: [{
-    id: 'b-accounts',
-    name: 'Account intelligence',
-    scope: 'team',
-    group: 'Sales',
-    notes: 84,
-    contributors: ['Alice Ng', 'Bob Reyes', 'Cara Lin', 'Dan Cole'],
-    topics: ['renewals', 'pricing', 'champions'],
-    recall: 0.91,
-    updated: '8 min ago',
-    desc: 'Everything the team knows about active accounts — context, risks, and history.'
-  }, {
-    id: 'b-playbooks',
-    name: 'Playbooks',
-    scope: 'enterprise',
-    group: 'Northwind',
-    notes: 46,
-    contributors: ['Bob Reyes', 'Eve Park'],
-    topics: ['discounting', 'renewals', 'onboarding'],
-    recall: 0.88,
-    updated: '1 hour ago',
-    desc: 'The canonical how-we-sell reference, owned by RevOps and read by everyone.'
-  }, {
-    id: 'b-compete',
-    name: 'Competitive intel',
-    scope: 'team',
-    group: 'Sales',
-    notes: 38,
-    contributors: ['Bob Reyes', 'Alice Ng', 'Eve Park'],
-    topics: ['globex', 'initech', 'market'],
-    recall: 0.84,
-    updated: 'yesterday',
-    desc: 'Field notes on the competition, refreshed after every deal.'
-  }, {
-    id: 'b-research',
-    name: 'Customer research',
-    scope: 'enterprise',
-    group: 'Product',
-    notes: 121,
-    contributors: ['Cara Lin', 'Dan Cole', 'Faye Wu', 'Gil Tan'],
-    topics: ['interviews', 'jtbd', 'feedback'],
-    recall: 0.93,
-    updated: '2 days ago',
-    desc: 'Interview transcripts and synthesis the whole company can ask against.'
-  }, {
-    id: 'b-personal',
-    name: 'My working notes',
-    scope: 'private',
-    group: 'Alice',
-    notes: 29,
-    contributors: ['Alice Ng'],
-    topics: ['drafts', 'ideas', 'todos'],
-    recall: 0.79,
-    updated: '5 min ago',
-    desc: 'Private scratch space — never surfaced to anyone else’s Ask.'
-  }, {
-    id: 'b-meetings',
-    name: 'Meeting memory',
-    scope: 'team',
-    group: 'Sales',
-    notes: 64,
-    contributors: ['Alice Ng', 'Bob Reyes', 'Cara Lin'],
-    topics: ['syncs', 'standups', 'qbrs'],
-    recall: 0.82,
-    updated: '3 hours ago',
-    desc: 'Auto-distilled meeting notes, linked back to the accounts they touch.'
-  }],
+  workspace: { name: null, scope: null, members: 0 },
+  tree: [],
+  notes: {},
+  ask: { suggestions: [], question: null, answerRuns: [], sources: 0, scopes: null, evidence: [] },
+  projects: [],
+  groups: [],
+  buckets: [],
   settings: {
-    account: {
-      name: 'Alice Ng',
-      email: 'alice@northwind.co',
-      role: 'Account Executive',
-      team: 'Sales',
-      avatar: 'Alice Ng'
-    },
-    indexing: {
-      embedder: 'voyage-4-large',
-      reranker: 'rerank-2.5',
-      autoIndex: true,
-      contextual: true,
-      localFallback: false
-    },
-    sync: {
-      provider: 'Lore Cloud · EU',
-      lastSync: '34 seconds ago',
-      encrypted: true
-    },
-    connections: [{
-      id: 'obsidian',
-      name: 'Obsidian vault',
-      detail: '~/Documents/Northwind',
-      status: 'connected'
-    }, {
-      id: 'gdrive',
-      name: 'Google Drive',
-      detail: 'Sales shared drive',
-      status: 'connected'
-    }, {
-      id: 'slack',
-      name: 'Slack',
-      detail: '#sales, #renewals',
-      status: 'connected'
-    }, {
-      id: 'notion',
-      name: 'Notion',
-      detail: 'Not linked',
-      status: 'disconnected'
-    }]
+    account: { name: null, email: null, role: null, team: null, avatar: null },
+    indexing: { embedder: null, reranker: null, autoIndex: false, contextual: false, localFallback: false },
+    sync: { provider: null, lastSync: null, encrypted: false },
+    connections: [],
   },
-  // graph nodes (x,y in a 0..100 space), edges by id
-  graph: {
-    nodes: [{
-      id: 'acme',
-      label: 'Acme Account',
-      scope: 'team',
-      x: 50,
-      y: 47,
-      r: 14,
-      owner: 'alice',
-      links: 6,
-      updated: '4 min ago'
-    }, {
-      id: 'renewals',
-      label: 'Renewals Playbook',
-      scope: 'enterprise',
-      x: 27,
-      y: 27,
-      r: 11,
-      owner: 'bob',
-      links: 5,
-      updated: '1 hour ago'
-    }, {
-      id: 'discount',
-      label: 'Discounting Policy',
-      scope: 'enterprise',
-      x: 73,
-      y: 23,
-      r: 9,
-      owner: 'bob',
-      links: 4,
-      updated: '2 days ago'
-    }, {
-      id: 'standup',
-      label: 'Weekly standup',
-      scope: 'team',
-      x: 74,
-      y: 66,
-      r: 8,
-      owner: 'alice',
-      links: 3,
-      updated: 'yesterday'
-    }, {
-      id: 'm-acme',
-      label: 'Acme sync',
-      scope: 'private',
-      x: 30,
-      y: 70,
-      r: 7,
-      owner: 'alice',
-      links: 2,
-      updated: '3 days ago'
-    }, {
-      id: 'globex',
-      label: 'Globex',
-      scope: 'private',
-      x: 86,
-      y: 46,
-      r: 8,
-      owner: 'alice',
-      links: 3,
-      updated: '1 week ago'
-    }, {
-      id: 'initech',
-      label: 'Initech',
-      scope: 'team',
-      x: 48,
-      y: 82,
-      r: 8,
-      owner: 'cara',
-      links: 4,
-      updated: '5 days ago'
-    }, {
-      id: 'champions',
-      label: 'Champion map',
-      scope: 'team',
-      x: 16,
-      y: 50,
-      r: 7,
-      owner: 'bob',
-      links: 3,
-      updated: '6 hours ago'
-    }, {
-      id: 'pricing',
-      label: 'Pricing matrix',
-      scope: 'enterprise',
-      x: 60,
-      y: 12,
-      r: 7,
-      owner: 'eve',
-      links: 4,
-      updated: '4 days ago'
-    }, {
-      id: 'qbr',
-      label: 'Q3 QBR prep',
-      scope: 'private',
-      x: 90,
-      y: 72,
-      r: 6,
-      owner: 'alice',
-      links: 2,
-      updated: '2 hours ago'
-    }, {
-      id: 'onboard',
-      label: 'AE onboarding',
-      scope: 'enterprise',
-      x: 14,
-      y: 78,
-      r: 7,
-      owner: 'dan',
-      links: 3,
-      updated: '1 week ago'
-    }, {
-      id: 'compete',
-      label: 'Competitive intel',
-      scope: 'team',
-      x: 68,
-      y: 88,
-      r: 7,
-      owner: 'eve',
-      links: 4,
-      updated: 'yesterday'
-    }],
-    edges: [['acme', 'renewals'], ['acme', 'discount'], ['acme', 'standup'], ['acme', 'm-acme'], ['acme', 'initech'], ['acme', 'champions'], ['renewals', 'discount'], ['renewals', 'champions'], ['discount', 'pricing'], ['globex', 'discount'], ['globex', 'compete'], ['initech', 'compete'], ['standup', 'qbr'], ['renewals', 'onboard'], ['onboard', 'champions'], ['pricing', 'qbr'], ['compete', 'initech'], ['m-acme', 'standup']]
-  }
+  graph: { nodes: [], edges: [] },
 };
 })(); } catch (e) { __ds_ns.__errors.push({ path: "ui_kits/lore-desktop/data.js", error: String((e && e.message) || e) }); }
 
@@ -3565,7 +3075,7 @@ function GraphView({
   onOpen
 }) {
   const [hover, setHover] = React.useState(null);
-  const [sel, setSel] = React.useState('acme');
+  const [sel, setSel] = React.useState(null);
   const [filters, setFilters] = React.useState({
     team: true,
     enterprise: true,
@@ -3891,7 +3401,7 @@ function SettingsView({
   const [auto, setAuto] = React.useState(s.indexing.autoIndex);
   const [ctx, setCtx] = React.useState(s.indexing.contextual);
   const [local, setLocal] = React.useState(s.indexing.localFallback);
-  const [defScope, setDefScope] = React.useState('private');
+  const [defScope, setDefScope] = React.useState('');
   return /*#__PURE__*/React.createElement("div", {
     style: stS.wrap
   }, /*#__PURE__*/React.createElement("div", {
@@ -3944,8 +3454,8 @@ function SettingsView({
     variant: "secondary",
     size: "sm"
   }, "Edit profile")), /*#__PURE__*/React.createElement(Row, {
-    label: "Default note scope",
-    hint: "New notes start with this permission.",
+    label: "Note scope",
+    hint: "New notes use this permission when configured.",
     last: true
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4175,18 +3685,7 @@ function Titlebar({
       fontWeight: 600,
       color: 'var(--text-strong)'
     }
-  }, "Lore"), /*#__PURE__*/React.createElement(Icon, {
-    name: "chevron-right",
-    size: 13,
-    style: {
-      color: 'var(--text-faint)'
-    }
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 13,
-      color: 'var(--text-muted)'
-    }
-  }, "Sales")), /*#__PURE__*/React.createElement("div", {
+  }, "Lore")), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       display: 'flex',
@@ -4434,33 +3933,12 @@ function StatusBar() {
     }
   }, /*#__PURE__*/React.createElement(Icon, {
     name: "circle-dot",
-    size: 12,
-    style: {
-      color: 'var(--jade-400)'
-    }
-  }), "indexed \xB7 recall@20"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 5
-    }
-  }, /*#__PURE__*/React.createElement(Icon, {
-    name: "git-fork",
     size: 12
-  }), "7 links"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 5
-    }
-  }, /*#__PURE__*/React.createElement(Icon, {
-    name: "users",
-    size: 12
-  }), "team"), /*#__PURE__*/React.createElement("div", {
+  }), "status unavailable"), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1
     }
-  }), /*#__PURE__*/React.createElement("span", null, "234 words"), /*#__PURE__*/React.createElement("span", {
+  }), /*#__PURE__*/React.createElement("span", {
     style: {
       display: 'inline-flex',
       alignItems: 'center',
@@ -4469,7 +3947,7 @@ function StatusBar() {
   }, /*#__PURE__*/React.createElement(Icon, {
     name: "refresh-cw",
     size: 12
-  }), "synced"), /*#__PURE__*/React.createElement("span", null, "Markdown"));
+  }), "not synced"), /*#__PURE__*/React.createElement("span", null, "Markdown"));
 }
 Object.assign(window, {
   LoreTitlebar: Titlebar,

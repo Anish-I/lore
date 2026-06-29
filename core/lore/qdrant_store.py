@@ -5,7 +5,11 @@ from .config import settings
 
 # Collection is overridable (eval/test isolation). Set QDRANT_COLLECTION before import.
 COLLECTION = os.environ.get("QDRANT_COLLECTION", "vault_chunks")
-_client = QdrantClient(url=settings.qdrant_url)
+_client = (
+    QdrantClient(location=":memory:")
+    if settings.qdrant_url == ":memory:"
+    else QdrantClient(url=settings.qdrant_url)
+)
 
 
 def ensure_collection(dim, with_sparse=False):

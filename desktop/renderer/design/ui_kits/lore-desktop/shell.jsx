@@ -1,13 +1,14 @@
 /* global React */
 // Lore desktop — shell: titlebar, activity rail, sidebar, status bar
 const NS = window.VaultDesignSystem_ffbf58;
-const { Icon, IconButton, Tooltip, Avatar, FileTreeItem, ScopeTag, Input, Kbd, Badge } = NS;
+const { Icon, IconButton, Tooltip, FileTreeItem, ScopeTag, Input, Kbd, Badge } = NS;
 
 const shellS = {
   titlebar: {
     height: 'var(--topbar-height)', display: 'flex', alignItems: 'center', gap: 10,
     padding: '0 12px', background: 'var(--surface-base)',
     borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, WebkitUserSelect: 'none',
+    WebkitAppRegion: 'drag',
   },
   rail: {
     width: 'var(--rail-width)', flexShrink: 0, background: 'var(--surface-base)',
@@ -25,6 +26,7 @@ const shellS = {
     fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)',
   },
 };
+const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
 // Reusable "?" help hint with an instant custom tooltip (native title is unreliable in Electron).
 // Registered on window so other ui-kit files (buckets/projects) can reuse it.
@@ -42,32 +44,63 @@ function HelpHint({ tip, size = 14 }) {
 }
 window.LoreHelpHint = HelpHint;
 
-function Titlebar({ theme, onToggleTheme, onAsk, onSettings, onProfile, onImport }) {
+function SH_scopeColor(scope) {
+  if (scope === 'team') return 'var(--jade-500)';
+  if (scope === 'enterprise') return 'var(--azure-500)';
+  if (scope === 'private') return 'var(--obsidian-400)';
+  return 'var(--brand-fg)';
+}
+
+function SH_scopeIcon(scope) {
+  if (scope === 'team') return 'users';
+  if (scope === 'enterprise') return 'building-2';
+  if (scope === 'private') return 'lock';
+  return 'tag';
+}
+
+function SH_scopeLabel(scope) {
+  return scope ? String(scope) : 'none';
+}
+
+function SH_collectScopes(nodes, out = []) {
+  for (const n of nodes || []) {
+    if (n.scope) out.push(n.scope);
+    if (n.children) SH_collectScopes(n.children, out);
+  }
+  return out;
+}
+
+function SH_uniqScopes(values) {
+  const out = [], seen = new Set();
+  for (const raw of values || []) {
+    const s = raw == null ? '' : String(raw).trim();
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); out.push(s); }
+  }
+  return out;
+}
+
+function Titlebar({ theme, onToggleTheme, onSearch, onAsk, onSettings, onProfile, onImport }) {
   return (
     <div style={shellS.titlebar}>
-      <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
-        <span style={{ width: 11, height: 11, borderRadius: '50%', background: 'var(--clay-400)' }} />
-        <span style={{ width: 11, height: 11, borderRadius: '50%', background: 'var(--amber-400)' }} />
-        <span style={{ width: 11, height: 11, borderRadius: '50%', background: 'var(--jade-400)' }} />
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginLeft: 8 }}>
-        <img src="design/assets/logo/logomark.svg" alt="Lore" style={{ width: 20, height: 20 }} />
+      {isMac && <div style={{ width: 72, flexShrink: 0 }} />}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <img src="design/assets/logo/logomark.svg" alt="Lore" draggable={false} style={{ width: 20, height: 20 }} />
         <span style={{ fontFamily: 'var(--font-serif)', fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>Lore</span>
-        <Icon name="chevron-right" size={13} style={{ color: 'var(--text-faint)' }} />
-        <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>Sales</span>
       </div>
       <div style={{ flex: 1, display: 'flex', justifyContent: 'center' }}>
-        <div style={{
+        <button onClick={onSearch} aria-label="Search or jump to a note" style={{
           display: 'flex', alignItems: 'center', gap: 8, width: 360, height: 28, padding: '0 10px',
           background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-          color: 'var(--text-subtle)', fontSize: 13, cursor: 'text',
+          color: 'var(--text-subtle)', fontSize: 13, cursor: 'pointer', WebkitAppRegion: 'no-drag', fontFamily: 'var(--font-sans)',
         }}>
           <Icon name="search" size={14} />
           <span style={{ flex: 1 }}>Search or jump to…</span>
           <Kbd>⌘K</Kbd>
-        </div>
+        </button>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, WebkitAppRegion: 'no-drag' }}>
         <button onClick={onImport} title="Import files, folders, or a .zip — drop anywhere too" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 11px', marginRight: 4, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 12.5, cursor: 'pointer' }}>
           <Icon name="upload" size={14} />Import
         </button>
@@ -76,9 +109,7 @@ function Titlebar({ theme, onToggleTheme, onAsk, onSettings, onProfile, onImport
           <IconButton icon={theme === 'dark' ? 'sun' : 'moon'} label="Toggle theme" onClick={onToggleTheme} />
         </Tooltip>
         <IconButton icon="settings" label="Settings" onClick={onSettings} />
-        <button onClick={onProfile} title="Account" style={{ background: 'none', border: 'none', padding: 0, marginLeft: 4, cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}>
-          <Avatar name="Alice Ng" size={24} scope="team" />
-        </button>
+        <IconButton icon="user" label="Account" onClick={onProfile} />
       </div>
     </div>
   );
@@ -130,7 +161,7 @@ function TreeNode({ node, activeNote, onOpen, onToggle }) {
 }
 
 function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote }) {
-  const SB_SCOPE = { team: 'var(--jade-500)', enterprise: 'var(--azure-500)', private: 'var(--obsidian-400)' };
+  const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
   // While viewing a Wizard, the sidebar shows the Wizard — NOT your personal files (scope isolation).
   if (wizard) {
     return (
@@ -164,7 +195,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
     );
   }
   const kbChip = (active, scope) => {
-    const c = scope ? SB_SCOPE[scope] : null;
+    const c = scope ? SH_scopeColor(scope) : null;
     return {
       display: 'inline-flex', alignItems: 'center', gap: 5,
       padding: '3px 9px', borderRadius: 'var(--radius-full)', cursor: 'pointer',
@@ -180,7 +211,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)' }}>
         <Icon name="folder-open" size={16} style={{ color: 'var(--brand-fg)' }} />
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>{workspace.name}</span>
-        <ScopeTag scope={workspace.scope} size="sm" showLabel={false} />
+        {workspace.scope && <ScopeTag scope={workspace.scope} size="sm" showLabel={false} />}
         <IconButton icon="plus" label="New note" size="sm" onClick={onCreateNote} />
       </div>
       {bases && bases.length > 0 && (
@@ -196,7 +227,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
               const sc = baseScopes && baseScopes[b];
               return (
                 <button key={b} onClick={() => onToggleBase(b)} style={kbChip(kbFilter && kbFilter.includes(b), sc)}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: SB_SCOPE[sc] || 'var(--obsidian-400)', flexShrink: 0 }} />{b}
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: sc ? SH_scopeColor(sc) : 'var(--text-faint)', flexShrink: 0 }} />{b}
                 </button>
               );
             })}
@@ -211,15 +242,13 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
       <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', flexDirection: 'column', gap: 7 }}>
         <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Scope legend</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px 12px' }}>
-          {[
-            { icon: 'lock', color: 'var(--obsidian-400)', label: 'Private (you)' },
-            { icon: 'users', color: 'var(--jade-500)', label: 'Team' },
-            { icon: 'building-2', color: 'var(--azure-500)', label: 'Enterprise' },
-          ].map((s) => (
-            <span key={s.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
-              <Icon name={s.icon} size={11} style={{ color: s.color }} />{s.label}
+          {legendScopes.length ? legendScopes.map((sc) => (
+            <span key={sc} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
+              <Icon name={SH_scopeIcon(sc)} size={11} style={{ color: SH_scopeColor(sc) }} />{SH_scopeLabel(sc)}
             </span>
-          ))}
+          )) : (
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No scope configured</span>
+          )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid var(--divider)', paddingTop: 6 }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--jade-400)', animation: 'lore-pulse 2.4s var(--ease-out) infinite' }} />
@@ -233,12 +262,9 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
 function StatusBar() {
   return (
     <div style={shellS.status}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="circle-dot" size={12} style={{ color: 'var(--jade-400)' }} />indexed · recall@20</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="git-fork" size={12} />7 links</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="lock" size={12} />private</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="circle-dot" size={12} />status unavailable</span>
       <div style={{ flex: 1 }} />
-      <span>234 words</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="refresh-cw" size={12} />synced</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="refresh-cw" size={12} />not synced</span>
       <span>Markdown</span>
     </div>
   );

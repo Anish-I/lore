@@ -44,7 +44,7 @@ function ensureDirs() {
 }
 
 // Load the Lore app config (scope/owner/tenant) from the Electron userData directory.
-// Falls back to safe defaults if the file is absent or unparseable.
+// Missing config leaves identity unset; capture buffers locally until the user configures it.
 function loadLoreConfig() {
   const candidates = [
     process.env.APPDATA && path.join(process.env.APPDATA, 'lore-desktop', 'lore-config.json'),
@@ -54,7 +54,7 @@ function loadLoreConfig() {
   for (const p of candidates) {
     try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch {}
   }
-  return { scope: 'private', owner: 'you', tenant: 'solo' };
+  return { scope: null, owner: null, tenant: null };
 }
 
 // ---------- per-session disk state ----------
@@ -129,6 +129,9 @@ async function flush(key, meta, text, cfg) {
   try { ({ redactSecrets } = require('../lib/redact')); } catch {}
 
   const [redacted] = redactSecrets(text);
+  if (!cfg.scope || !cfg.owner || !cfg.tenant) {
+    return;
+  }
 
   const ac    = new AbortController();
   const timer = setTimeout(() => ac.abort(), 800);
@@ -140,9 +143,9 @@ async function flush(key, meta, text, cfg) {
         session_id: key,
         title:      `Lore Session ${key.slice(0, 8)}`,
         text:       redacted,
-        scope:      cfg.scope  || 'private',
-        owner:      cfg.owner  || 'you',
-        tenant:     cfg.tenant || 'solo',
+        scope:      cfg.scope,
+        owner:      cfg.owner,
+        tenant:     cfg.tenant,
         mode:       MODE,
       }),
       signal: ac.signal,

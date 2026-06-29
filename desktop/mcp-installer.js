@@ -121,7 +121,6 @@ function installMcp() {
     command: pythonPath,
     args:    ['-m', 'lore.mcp_server'],
     cwd:     CORE_DIR,
-    env:     { VAULT_PROFILE: 'solo' },
   };
 
   // Atomic write: write to a temp file, then rename over the target.

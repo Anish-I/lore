@@ -7,7 +7,6 @@ const BACKEND = 'http://localhost:8099';
 contextBridge.exposeInMainWorld('lore', {
   // --- filesystem (main process) ---
   pickVault:      ()           => ipcRenderer.invoke('vault:pick'),
-  defaultVault:   ()           => ipcRenderer.invoke('vault:default'),
   readTree:       (root)       => ipcRenderer.invoke('vault:tree', root),
   readNote:       (path)       => ipcRenderer.invoke('note:read', path),
   writeNote:      (path, text) => ipcRenderer.invoke('note:write', { path, text }),
@@ -40,8 +39,8 @@ contextBridge.exposeInMainWorld('lore', {
 
   // --- graph ---
   // Fetches {nodes, edges} from the backend via main (avoids CORS).
-  // scopes: optional comma-separated string, e.g. 'private,team'
-  graph: (scopes) => ipcRenderer.invoke('graph:get', scopes),
+  // opts: {tenant, scopes} where scopes may be an array or comma-separated string.
+  graph: (opts) => ipcRenderer.invoke('graph:get', opts),
 
   // --- import ---
   // importFiles(paths) → copy files/folders/zips into the vault + index them. {ok, copied, skipped, errors}
@@ -59,13 +58,13 @@ contextBridge.exposeInMainWorld('lore', {
 
   // --- hooks ---
   // detect()           → [{id, name, description, detected, installed}, ...]
-  // install({tool?, …}) → {ok, reason?}   tool defaults to 'claude'
+  // install({tool, …}) → {ok, reason?}
   // uninstall(tool?)   → {ok, reason?}
   // status(sessionId?) → backend /capture/status proxy
   hooks: {
     detect:    ()                => ipcRenderer.invoke('hooks:detect'),
     install:   (opts)            => ipcRenderer.invoke('hooks:install', opts || {}),
-    uninstall: (tool = 'claude') => ipcRenderer.invoke('hooks:uninstall', tool),
+    uninstall: (tool) => ipcRenderer.invoke('hooks:uninstall', tool),
     status:    (sessionId)       => ipcRenderer.invoke('hooks:status', sessionId),
   },
 

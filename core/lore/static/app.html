@@ -82,7 +82,7 @@
 </div>
 <script>
 const $=s=>document.querySelector(s);
-let scopes="", TENANT="acme";
+let scopes="", TENANT="";
 const scopeColors={};
 const palette=["#58a6ff","#3fb950","#e3b341","#f778ba","#d2a8ff","#79c0ff","#ffa657"];
 function color(s){if(!(s in scopeColors))scopeColors[s]=palette[Object.keys(scopeColors).length%palette.length];return scopeColors[s];}
@@ -90,11 +90,18 @@ function chip(s){const c=color(s);return `<span class="scope" style="background:
 
 async function init(){
   const p=await fetch("/presets").then(r=>r.json());
-  TENANT=p.tenant; $("#co").textContent="· "+p.company;
-  $("#who").innerHTML="Asking as: "+p.personas.map((x,i)=>
-    `<button data-scopes="${x.scopes.join(",")}" class="${i===0?'on':''}">${x.label}</button>`).join("");
-  scopes=p.personas[0].scopes.join(",");
-  $("#ex").innerHTML=p.examples.map(q=>`<button>${q}</button>`).join("");
+  const personas=Array.isArray(p.personas)?p.personas:[];
+  const examples=Array.isArray(p.examples)?p.examples:[];
+  TENANT=p.tenant||""; $("#co").textContent=p.company?"· "+p.company:"";
+  if(personas.length){
+    $("#who").innerHTML="Asking as: "+personas.map((x,i)=>
+      `<button data-scopes="${(x.scopes||[]).join(",")}" class="${i===0?'on':''}">${x.label||"unnamed"}</button>`).join("");
+    scopes=(personas[0].scopes||[]).join(",");
+  }else{
+    $("#who").innerHTML="Asking as: <span>none configured</span>";
+    scopes="";
+  }
+  $("#ex").innerHTML=examples.map(q=>`<button>${q}</button>`).join("");
 }
 $("#who").addEventListener("click",e=>{if(e.target.tagName!=="BUTTON")return;
   [...$("#who").querySelectorAll("button")].forEach(b=>b.classList.remove("on"));
@@ -116,13 +123,15 @@ function show(id){requestAnimationFrame(()=>$(id).classList.add("show"));}
 
 async function run(){
   const q=$("#q").value.trim(); if(!q)return;
+  const principalScopes=scopes.split(",").map(s=>s.trim()).filter(Boolean);
+  if(!TENANT || !principalScopes.length){$("#spin").textContent="Configure tenant and scopes before running.";return;}
   $("#pipe").style.display="none";$("#answer").classList.remove("show");$("#answer").innerHTML="";
   $("#meta").innerHTML="";
   ["s-dense","s-sparse","s-fuse","s-final"].forEach(i=>$("#"+i).classList.remove("show"));
   $("#spin").textContent="running the pipeline (first run loads models, ~10s)…";
   try{
     const r=await fetch("/trace",{method:"POST",headers:{"content-type":"application/json"},
-      body:JSON.stringify({question:q,principal_scopes:scopes.split(","),tenant_id:TENANT})});
+      body:JSON.stringify({question:q,principal_scopes:principalScopes,tenant_id:TENANT})});
     const d=await r.json();
     $("#spin").textContent="";
     if(d.error){$("#spin").textContent=d.error;return;}

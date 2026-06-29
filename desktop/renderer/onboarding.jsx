@@ -11,7 +11,6 @@ const OB_EXT_DEFAULTS = ['.md', '.markdown', '.txt', '.js', '.ts', '.py', '.json
 const OB_MAXBYTES = 2 * 1024 * 1024;       // skip files > 2 MB
 const OB_MAXFILES_DEFAULT = 5000;
 const OB_MAXFILES_FULL = 200000;
-const OB_FULL_ROOT = 'C:\\';
 
 const OB_SCAN_TIERS = [
   { id: 'lite',     label: 'Lite',     sub: 'One folder' },
@@ -79,22 +78,34 @@ function OB_SourceCard({ icon, title, description, enabled, onToggle, disabled, 
   );
 }
 
+function OB_Field({ id, label, value, onChange, placeholder, autoComplete }) {
+  return (
+    <label htmlFor={id} style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 5 }}>
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-muted)' }}>{label}</span>
+      <input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete={autoComplete || 'off'}
+        style={{ minWidth: 0, height: 34, border: '1px solid var(--border)', background: 'var(--surface-raised)', color: 'var(--text-body)', borderRadius: 'var(--radius-sm)', padding: '0 9px', fontFamily: 'var(--font-mono)', fontSize: 11 }}
+      />
+    </label>
+  );
+}
+
 function OB_Onboarding({ onDone }) {
   const [vaultPath, setVaultPath]     = React.useState('');
   const [vaultErr, setVaultErr]       = React.useState('');
+  const [owner, setOwner]             = React.useState('');
+  const [tenant, setTenant]           = React.useState('');
+  const [scope, setScope]             = React.useState('');
+  const [identityErr, setIdentityErr] = React.useState('');
   const [hooksClaude, setHooksClaude] = React.useState(false);
-  const [scanFiles, setScanFiles]     = React.useState(true);   // Standard tier on by default
-  const [scanTier, setScanTier]       = React.useState('standard');
+  const [scanFiles, setScanFiles]     = React.useState(false);
+  const [scanTier, setScanTier]       = React.useState('');
   const [openWizards, setOpenWizards] = React.useState(false);
   const [saving, setSaving]           = React.useState(false);
-
-  // Pre-fill vault from defaultVault() (feature-detected).
-  React.useEffect(() => {
-    if (!window.lore?.defaultVault) return;
-    (async () => {
-      try { const dv = await window.lore.defaultVault(); if (dv) setVaultPath(dv); } catch { /* non-fatal */ }
-    })();
-  }, []);
 
   const pickVault = async () => {
     setVaultErr('');
@@ -109,41 +120,50 @@ function OB_Onboarding({ onDone }) {
   const buildCfg = () => {
     const isFull = scanFiles && scanTier === 'full';
     return {
-      saga: 'My Knowledge',
-      tier: scanFiles ? scanTier : 'standard',
+      saga: null,
+      tier: scanFiles ? (scanTier || null) : null,
       full: isFull,
       promptHistory: isFull,
-      roots: isFull ? [OB_FULL_ROOT] : (vaultPath ? [vaultPath] : []),
+      roots: vaultPath ? [vaultPath] : [],
       excludes: OB_EXCLUDE_DEFAULTS.slice(),
       extensions: OB_EXT_DEFAULTS,
       maxFiles: isFull ? OB_MAXFILES_FULL : OB_MAXFILES_DEFAULT,
       maxBytes: OB_MAXBYTES,
-      scope: 'private',
-      owner: 'you',
-      tenant: 'solo',
-      sync: !isFull,
+      scope: scope.trim() || null,
+      owner: owner.trim() || null,
+      tenant: tenant.trim() || null,
+      sync: false,
       onboardedAt: new Date().toISOString(),
     };
   };
 
-  // Skip: zero-config defaults (solo/private/you, detected vault, Standard tier, sync).
-  // Passes no flags → handleOnboardingDone starts the scrape automatically.
+  // Skip keeps everything unset. No scan starts unless the user explicitly enables one.
   const handleSkip = async () => {
     setSaving(true);
     const cfg = buildCfg();
     if (window.lore?.config?.set) { try { await window.lore.config.set(cfg); } catch { /* non-fatal */ } }
     setSaving(false);
-    onDone(cfg);
+    onDone(cfg, { scan: false });
   };
 
   // Finish: persist chosen vault + selected backfill options, run selected backfills, then onDone.
   // Passes { scan, openWizards } so handleOnboardingDone skips the scrape if scan=false.
   const handleFinish = async () => {
+    setVaultErr('');
+    setIdentityErr('');
+    if (scanFiles && !vaultPath) {
+      setVaultErr('Choose a vault before scanning files.');
+      return;
+    }
+    if (hooksClaude && !scope.trim()) {
+      setIdentityErr('Claude Code capture needs a scope. Add one or turn off the hook for now.');
+      return;
+    }
     setSaving(true);
     const cfg = buildCfg();
     if (window.lore?.config?.set) { try { await window.lore.config.set(cfg); } catch { /* non-fatal */ } }
-    if (hooksClaude && window.lore?.hooks?.install) {
-      try { await window.lore.hooks.install({ tool: 'claude', scope: 'private' }); } catch { /* non-fatal */ }
+    if (hooksClaude && cfg.scope && window.lore?.hooks?.install) {
+      try { await window.lore.hooks.install({ tool: 'claude', scope: cfg.scope }); } catch { /* non-fatal */ }
     }
     setSaving(false);
     onDone(cfg, { scan: scanFiles, openWizards });
@@ -178,13 +198,26 @@ function OB_Onboarding({ onDone }) {
                 {vaultPath ? (
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--brand-fg)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{vaultPath}</span>
                 ) : (
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>detecting default…</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>none selected</span>
                 )}
               </div>
               {vaultErr && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--clay-400)' }}>{vaultErr}</span>}
               <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>
-                Skipping uses the detected default. You can change this anytime in Settings.
+                Skipping leaves the vault unset. You can configure it later in Settings.
               </div>
+            </div>
+          </div>
+
+          <div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>Identity</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '14px 16px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
+                <OB_Field id="ob-owner" label="Owner" value={owner} onChange={(v) => { setOwner(v); setIdentityErr(''); }} placeholder="none" />
+                <OB_Field id="ob-tenant" label="Tenant" value={tenant} onChange={(v) => { setTenant(v); setIdentityErr(''); }} placeholder="none" />
+                <OB_Field id="ob-scope" label="Scope" value={scope} onChange={(v) => { setScope(v); setIdentityErr(''); }} placeholder="none" />
+              </div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.5 }}>Leave these blank to keep identity unset. Ask, Graph, Hooks, and Import need tenant + scope later.</div>
+              {identityErr && <div role="alert" style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--clay-400)', lineHeight: 1.5 }}>{identityErr}</div>}
             </div>
           </div>
 
@@ -210,7 +243,11 @@ function OB_Onboarding({ onDone }) {
                 title="Scan my files & folders"
                 description="Index your vault so Lore can answer questions about your work."
                 enabled={scanFiles}
-                onToggle={() => setScanFiles((v) => !v)}
+                onToggle={() => setScanFiles((v) => {
+                  const next = !v;
+                  if (next && !scanTier) setScanTier('standard');
+                  return next;
+                })}
               >
                 <OB_TierChips tier={scanTier} onTier={setScanTier} />
               </OB_SourceCard>

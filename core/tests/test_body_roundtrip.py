@@ -48,7 +48,13 @@ def test_body_sha256_matches():
     assert row[0] == expected, f"body_sha256 mismatch: got {row[0]}, want {expected}"
 
 
-def test_notes_404_for_missing():
-    """GET /notes/<nonexistent> must return 404."""
+def test_notes_requires_tenant_when_missing():
+    """GET /notes/<id> without a tenant must not assume one."""
     r = client.get("/notes/definitely-does-not-exist-xyz")
+    assert r.status_code == 422
+
+
+def test_notes_404_for_missing_with_tenant():
+    """GET /notes/<nonexistent> with a tenant must return 404."""
+    r = client.get("/notes/definitely-does-not-exist-xyz", params={"tenant": "body-rt-tenant"})
     assert r.status_code == 404

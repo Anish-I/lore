@@ -12,8 +12,7 @@ const mcpInstaller = require('./mcp-installer');
 const BACKEND_PORT = 8099;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
 const CORE_DIR = path.join(__dirname, '..', 'core');
-const DEFAULT_VAULT = process.env.LORE_VAULT
-  || (fs.existsSync(path.join(__dirname, '..', 'sample-vault')) ? path.join(__dirname, '..', 'sample-vault') : null);
+const ENV_VAULT_ROOT = process.env.LORE_VAULT || null;
 
 let win = null;
 let backendProc = null;
@@ -24,7 +23,8 @@ let upkeepInterval = null;
 // Fires a background /upkeep/run every 30 minutes when auto-mode is on.
 const UPKEEP_INTERVAL_MS = 30 * 60 * 1000;
 
-function startUpkeepInterval(tenant = 'solo') {
+function startUpkeepInterval(tenant) {
+  if (!tenant) return;
   if (upkeepInterval) { clearInterval(upkeepInterval); upkeepInterval = null; }
   upkeepInterval = setInterval(async () => {
     try {
@@ -48,7 +48,7 @@ function stopUpkeepInterval() {
 // root. File IPC (note:read, note:write) is restricted to these roots so the
 // renderer cannot request arbitrary absolute paths on the machine.
 const allowedRoots = new Set();
-if (DEFAULT_VAULT) allowedRoots.add(path.normalize(DEFAULT_VAULT));
+if (ENV_VAULT_ROOT) allowedRoots.add(path.normalize(ENV_VAULT_ROOT));
 
 function registerRoot(p) {
   if (p) allowedRoots.add(path.normalize(p));
@@ -100,7 +100,7 @@ async function ensureBackend() {
   const py = process.platform === 'win32' ? 'python' : 'python3';
   backendProc = spawn(py, ['-m', 'uvicorn', 'lore.api:app', '--port', String(BACKEND_PORT)], {
     cwd: CORE_DIR,
-    env: { ...process.env, VAULT_PROFILE: process.env.VAULT_PROFILE || 'solo' },
+    env: { ...process.env },
     stdio: 'ignore',
     windowsHide: true,
   });
@@ -119,14 +119,11 @@ function scopeOf(filePath) {
     const head = fs.readFileSync(filePath, 'utf8').slice(0, 600);
     const fm = head.match(/^---\s*[\r\n]([\s\S]*?)[\r\n]---/);
     if (fm) {
-      const m = fm[1].match(/^scope:\s*([a-zA-Z]+)/m);
-      if (m) {
-        const s = m[1].toLowerCase();
-        if (['private', 'team', 'enterprise'].includes(s)) return s;
-      }
+      const m = fm[1].match(/^scope:\s*(.+)$/m);
+      if (m) return String(m[1]).trim().replace(/^['"]|['"]$/g, '') || null;
     }
   } catch { /* ignore */ }
-  return 'private';
+  return null;
 }
 
 function buildTree(root, depth = 0) {
@@ -173,8 +170,6 @@ function startWatch(root) {
 }
 
 // ---------- IPC: vault + notes ----------
-ipcMain.handle('vault:default', () => DEFAULT_VAULT);
-
 ipcMain.handle('vault:pick', async () => {
   const r = await dialog.showOpenDialog(win, { title: 'Open a Lore vault', properties: ['openDirectory'] });
   if (r.canceled || !r.filePaths.length) return null;
@@ -253,8 +248,9 @@ const IMPORT_TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.js', '.ts', '.py'
 
 function importRoot() {
   const cfg = loadConfig() || {};
-  const vault = (Array.isArray(cfg.roots) && cfg.roots[0]) || DEFAULT_VAULT;
+  const vault = (Array.isArray(cfg.roots) && cfg.roots[0]) || ENV_VAULT_ROOT;
   if (!vault) return null;
+  if (!cfg.scope || !cfg.owner || !cfg.tenant) return { error: 'Configure scope, owner, and tenant before importing.' };
   const dir = path.join(vault, 'Imported');
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
   return { vault, dir, cfg };
@@ -283,6 +279,7 @@ function importWalkDir(srcDir, destDir, summary) {
 async function runImport(paths) {
   const r = importRoot();
   if (!r) return { ok: false, error: 'No vault configured' };
+  if (r.error) return { ok: false, error: r.error };
   const os = require('os');
   const { execFileSync } = require('child_process');
   const summary = { copied: 0, skipped: 0, errors: 0 };
@@ -306,7 +303,7 @@ async function runImport(paths) {
     try {
       await runScrape({
         roots: [r.dir], excludes: [], extensions: undefined, maxFiles: 5000, maxBytes: 4 * 1024 * 1024,
-        scope: r.cfg.scope || 'private', owner: r.cfg.owner || 'you', tenant: r.cfg.tenant || 'solo',
+        scope: r.cfg.scope, owner: r.cfg.owner, tenant: r.cfg.tenant,
         full: false, promptHistory: false,
         onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
       });
@@ -326,7 +323,7 @@ ipcMain.handle('import:pick', async () => {
 // ---------- IPC: wizards (installable knowledge bases / "app store") ----------
 function vaultRoot() {
   const cfg = loadConfig() || {};
-  return (Array.isArray(cfg.roots) && cfg.roots[0]) || DEFAULT_VAULT;
+  return (Array.isArray(cfg.roots) && cfg.roots[0]) || ENV_VAULT_ROOT;
 }
 function loadCatalog() {
   try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'wizards-catalog.json'), 'utf8')); }
@@ -349,18 +346,19 @@ ipcMain.handle('wizards:install', async (_e, id) => {
   if (!w) return { ok: false, error: 'Wizard not found' };
   const root = vaultRoot();
   if (!root) return { ok: false, error: 'No vault configured' };
+  const cfg = loadConfig() || {};
+  if (!w.scope || !cfg.owner || !cfg.tenant) return { ok: false, error: 'Configure wizard scope, owner, and tenant before installing.' };
   const dir = path.join(root, 'Wizards', safeName(w.name));
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
   for (const n of (w.notes || [])) {
-    const fm = `---\nscope: ${w.scope || 'team'}\ntags: [${(w.topics || []).join(', ')}]\nwizard: ${w.name}\n---\n\n`;
+    const fm = `---\nscope: ${w.scope}\ntags: [${(w.topics || []).join(', ')}]\nwizard: ${w.name}\n---\n\n`;
     try { fs.writeFileSync(path.join(dir, safeName(n.title) + '.md'), fm + (n.body || ''), 'utf8'); } catch { /* ignore */ }
   }
   registerRoot(dir);
-  const cfg = loadConfig() || {};
   try {
     await runScrape({
       roots: [dir], excludes: [], extensions: undefined, maxFiles: 500, maxBytes: 2 * 1024 * 1024,
-      scope: w.scope || 'team', owner: 'wizard', tenant: cfg.tenant || 'solo', full: false, promptHistory: false,
+      scope: w.scope, owner: cfg.owner, tenant: cfg.tenant, full: false, promptHistory: false,
       onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
     });
   } catch { /* ignore */ }
@@ -390,9 +388,10 @@ ipcMain.handle('wizards:rate', (_e, { id, stars }) => {
 ipcMain.handle('hooks:detect', () => installer.detectTools());
 
 ipcMain.handle('hooks:install', (_e, opts) => {
-  const { tool = 'claude', ...rest } = opts || {};
+  const { tool, ...rest } = opts || {};
   let result;
-  if (tool === 'claude')  result = installer.installClaude(rest);
+  if (!tool) result = { ok: false, reason: 'Tool is required' };
+  else if (tool === 'claude')  result = installer.installClaude(rest);
   else if (tool === 'codex')   result = installer.installCodex();
   else if (tool === 'copilot') result = installer.installCopilot();
   else result = { ok: false, reason: `Unknown tool: ${tool}` };
@@ -402,9 +401,10 @@ ipcMain.handle('hooks:install', (_e, opts) => {
   return result;
 });
 
-ipcMain.handle('hooks:uninstall', (_e, tool = 'claude') => {
+ipcMain.handle('hooks:uninstall', (_e, tool) => {
   let result;
-  if (tool === 'claude') result = installer.uninstallClaude();
+  if (!tool) result = { ok: false, reason: 'Tool is required' };
+  else if (tool === 'claude') result = installer.uninstallClaude();
   else result = { ok: false, reason: `Uninstall not supported for: ${tool}` };
 
   if (win && !win.isDestroyed()) win.webContents.send('hooks:update', installer.detectTools());
@@ -436,7 +436,10 @@ ipcMain.handle('mcp:uninstall', () => mcpInstaller.uninstallMcp());
 
 ipcMain.handle('notes:get', async (_e, id) => {
   try {
-    const r = await fetch(`${BACKEND_URL}/notes/${encodeURIComponent(id)}`);
+    const cfg = loadConfig() || {};
+    if (!cfg.tenant) return { error: 'tenant is not configured' };
+    const qs = `?tenant=${encodeURIComponent(cfg.tenant)}`;
+    const r = await fetch(`${BACKEND_URL}/notes/${encodeURIComponent(id)}${qs}`);
     return r.json();
   } catch (e) {
     return { error: String(e) };
@@ -447,10 +450,12 @@ ipcMain.handle('notes:get', async (_e, id) => {
 // caller and handler share the same structured shape.
 ipcMain.handle('search', async (_e, { query, scopes, k }) => {
   try {
+    const cfg = loadConfig() || {};
+    if (!cfg.tenant) return { error: 'tenant is not configured' };
     const r = await fetch(`${BACKEND_URL}/search`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ query, scopes, k }),
+      body: JSON.stringify({ query, scopes, k, tenant_id: cfg.tenant }),
     });
     return r.json();
   } catch (e) {
@@ -461,7 +466,8 @@ ipcMain.handle('search', async (_e, { query, scopes, k }) => {
 // ---------- IPC: upkeep ----------
 
 ipcMain.handle('upkeep:run', async (_e, opts) => {
-  const { tenant = 'solo', scope } = opts || {};
+  const { tenant, scope } = opts || {};
+  if (!tenant) return { error: 'tenant is required' };
   try {
     const r = await fetch(`${BACKEND_URL}/upkeep/run`, {
       method: 'POST',
@@ -492,15 +498,21 @@ ipcMain.handle('upkeep:set-auto', (_e, on) => {
   const cfg = loadConfig() || {};
   cfg.upkeepAuto = !!on;
   saveConfig(cfg);
-  if (on) startUpkeepInterval(cfg.tenant || 'solo');
+  if (on) startUpkeepInterval(cfg.tenant);
   else     stopUpkeepInterval();
   return { ok: true, upkeepAuto: cfg.upkeepAuto };
 });
 
 // ---------- IPC: graph ----------
 // Fetches /graph from the backend in main-process (avoids CORS from renderer).
-ipcMain.handle('graph:get', async (_e, scopes) => {
-  const qs = scopes ? `?scopes=${encodeURIComponent(scopes)}` : '';
+ipcMain.handle('graph:get', async (_e, opts) => {
+  const cfg = loadConfig() || {};
+  const scopes = Array.isArray(opts) ? opts.join(',') : (opts && opts.scopes ? opts.scopes : '');
+  const tenant = (opts && opts.tenant) || cfg.tenant || '';
+  const params = new URLSearchParams();
+  if (tenant) params.set('tenant', tenant);
+  if (scopes) params.set('scopes', Array.isArray(scopes) ? scopes.join(',') : scopes);
+  const qs = params.toString() ? `?${params.toString()}` : '';
   const r = await fetch(`${BACKEND_URL}/graph${qs}`);
   if (!r.ok) throw new Error(`backend /graph returned ${r.status}`);
   return r.json();
@@ -508,7 +520,7 @@ ipcMain.handle('graph:get', async (_e, scopes) => {
 
 // ---------- window ----------
 async function createWindow() {
-  win = new BrowserWindow({
+  const windowOptions = {
     width: 1440, height: 900, minWidth: 1040, minHeight: 640,
     backgroundColor: '#101116', show: false,
     title: 'Lore',
@@ -517,7 +529,12 @@ async function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
+  };
+  if (process.platform === 'darwin') {
+    windowOptions.titleBarStyle = 'hiddenInset';
+    windowOptions.trafficLightPosition = { x: 16, y: 16 };
+  }
+  win = new BrowserWindow(windowOptions);
   win.removeMenu();
   // Diagnostic: capture renderer console warnings/errors + crashes to a log file.
   const rlog = path.join(app.getPath('userData'), 'lore-renderer.log');
@@ -531,10 +548,8 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  // Upkeep self-maintenance is ON by default — Lore folds re-ingested date/session notes
-  // into topics on its own (the user must explicitly set upkeepAuto:false to opt out).
   const cfg = loadConfig();
-  if (!cfg || cfg.upkeepAuto !== false) startUpkeepInterval((cfg && cfg.tenant) || 'solo');
+  if (cfg && cfg.upkeepAuto === true && cfg.tenant) startUpkeepInterval(cfg.tenant);
 
   await ensureBackend(); // best-effort; renderer shows a banner if it's not reachable
   await createWindow();

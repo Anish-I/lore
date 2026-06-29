@@ -146,7 +146,18 @@ function WizardStore({ onChanged }) {
 
 function BucketsView({ buckets, onAsk, onOpen, onChanged }) {
   const [tab, setTab] = React.useState('all');
-  const shown = tab === 'all' ? buckets : buckets.filter((b) => tab === 'mine' ? b.scope === 'private' : b.scope === tab);
+  const scopes = React.useMemo(() => {
+    const out = [], seen = new Set();
+    for (const b of buckets || []) {
+      const s = b.scope ? String(b.scope).trim() : '';
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); out.push(s); }
+    }
+    return out;
+  }, [buckets]);
+  const shown = tab === 'all' ? buckets : buckets.filter((b) => b.scope === tab);
+  const tabs = [{ value: 'all', label: 'All', count: buckets.length }, ...scopes.map((s) => ({ value: s, label: s }))];
   return (
     <div style={bkS.wrap}>
       <div style={bkS.head}>
@@ -164,12 +175,7 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged }) {
       </div>
       <div style={bkS.body}>
         <div style={{ marginBottom: 18 }}>
-          <BkTabs value={tab} onChange={setTab} tabs={[
-            { value: 'all', label: 'All', count: buckets.length },
-            { value: 'team', label: 'Team' },
-            { value: 'enterprise', label: 'Enterprise' },
-            { value: 'mine', label: 'Private' },
-          ]} />
+          <BkTabs value={tab} onChange={setTab} tabs={tabs} />
         </div>
         <div style={bkS.grid}>
           {shown.map((b) => <BucketCard key={b.id} b={b} onOpen={() => onOpen && onOpen(b)} />)}

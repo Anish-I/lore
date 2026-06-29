@@ -2,21 +2,21 @@
 
 Usage:
     lore capture --session <id> --title <title> [--text <text>] \\
-                 [--scope private] [--owner me] [--tenant solo] [--url http://localhost:8099]
+                 --scope <scope> --owner <owner> --tenant <tenant> [--url http://localhost:8099]
 
-    lore ask "<question>" [--scope private] [--tenant solo] [--url http://localhost:8099]
+    lore ask "<question>" --scope <scope> --tenant <tenant> [--url http://localhost:8099]
 
-    lore search "<query>" [--scope private] [--tenant solo] [--k 10] [--url http://localhost:8099]
+    lore search "<query>" --scope <scope> --tenant <tenant> [--k 10] [--url http://localhost:8099]
 
-    lore graph [--scope private] [--tenant solo] [--url http://localhost:8099]
+    lore graph --scope <scope> --tenant <tenant> [--url http://localhost:8099]
 
     If --text is omitted for capture, text is read from stdin.
 
 Examples:
-    echo "my notes" | lore capture --session proj-abc --title "Project ABC notes"
-    lore ask "what is the Kalshi bot?" --scope private
-    lore search "RAG pipeline" --scope private
-    lore graph --scope private
+    echo "my notes" | lore capture --session proj-abc --title "Project ABC notes" --scope <scope> --owner <owner> --tenant <tenant>
+    lore ask "what is the Kalshi bot?" --scope <scope> --tenant <tenant>
+    lore search "RAG pipeline" --scope <scope> --tenant <tenant>
+    lore graph --scope <scope> --tenant <tenant>
 """
 import argparse, json, socket, sys
 import urllib.request, urllib.error
@@ -164,32 +164,32 @@ def main() -> None:
                      help="Human-readable title for the captured note")
     cap.add_argument("--text", default=None,
                      help="Text to index; reads stdin if omitted")
-    cap.add_argument("--scope", default="private",
-                     help="ACL scope visible to (default: private)")
-    cap.add_argument("--owner", default="me",
-                     help="Owner identifier (default: me)")
-    cap.add_argument("--tenant", default="solo",
-                     help="Tenant namespace (default: solo)")
+    cap.add_argument("--scope", required=True,
+                     help="ACL scope visible to the caller")
+    cap.add_argument("--owner", required=True,
+                     help="Owner identifier")
+    cap.add_argument("--tenant", required=True,
+                     help="Tenant namespace")
     cap.add_argument("--url", default=DEFAULT_URL,
                      help=f"Lore API base URL (default: {DEFAULT_URL})")
 
     # --- ask ---
     ask = sub.add_parser("ask", help="Ask a question against the Lore knowledge base")
     ask.add_argument("question", help="Natural language question")
-    ask.add_argument("--scope", default="private",
-                     help="ACL scope to query (default: private)")
-    ask.add_argument("--tenant", default="solo",
-                     help="Tenant namespace (default: solo)")
+    ask.add_argument("--scope", required=True,
+                     help="ACL scope to query")
+    ask.add_argument("--tenant", required=True,
+                     help="Tenant namespace")
     ask.add_argument("--url", default=DEFAULT_URL,
                      help=f"Lore API base URL (default: {DEFAULT_URL})")
 
     # --- search ---
     srch = sub.add_parser("search", help="Search the Lore knowledge base")
     srch.add_argument("query", help="Search query")
-    srch.add_argument("--scope", default="private",
-                      help="ACL scope to search (default: private)")
-    srch.add_argument("--tenant", default="solo",
-                      help="Tenant namespace (default: solo)")
+    srch.add_argument("--scope", required=True,
+                      help="ACL scope to search")
+    srch.add_argument("--tenant", required=True,
+                      help="Tenant namespace")
     srch.add_argument("--k", type=int, default=10,
                       help="Number of results to return (default: 10)")
     srch.add_argument("--url", default=DEFAULT_URL,
@@ -197,10 +197,10 @@ def main() -> None:
 
     # --- graph ---
     grph = sub.add_parser("graph", help="Print knowledge graph node/edge counts")
-    grph.add_argument("--scope", default="private",
-                      help="ACL scope to query (default: private)")
-    grph.add_argument("--tenant", default="solo",
-                      help="Tenant namespace (default: solo)")
+    grph.add_argument("--scope", required=True,
+                      help="ACL scope to query")
+    grph.add_argument("--tenant", required=True,
+                      help="Tenant namespace")
     grph.add_argument("--url", default=DEFAULT_URL,
                       help=f"Lore API base URL (default: {DEFAULT_URL})")
 

@@ -5,6 +5,18 @@
 const grNS = window.VaultDesignSystem_ffbf58;
 const { Icon: GrIcon, ScopeTag: GrScope, Button: GrButton } = grNS;
 const GR_SCOPE_VAR = { team: '--jade-500', enterprise: '--azure-500', private: '--obsidian-400' };
+function grScopeKey(scope) { return scope == null ? '' : String(scope).trim(); }
+function grScopeList(nodes) {
+  const out = [], seen = new Set();
+  for (const n of nodes || []) {
+    const s = grScopeKey(n.scope);
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); out.push(s); }
+  }
+  return out.sort((a, b) => a.localeCompare(b));
+}
+function grScopeVar(scope) { return GR_SCOPE_VAR[scope] || '--brand-fg'; }
 // Daily-thread / journal notes named by date — hidden by default so topics dominate the graph.
 const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 
@@ -19,10 +31,18 @@ function GraphView({ graph, onOpen }) {
   const hoverRef = React.useRef(null);
   const dragRef = React.useRef(null);
   const drawRef = React.useRef(null);
-  const filtersRef = React.useRef({ team: true, enterprise: true, private: true });
+  const filtersRef = React.useRef({});
   const selRef = React.useRef(null);
 
-  const [filters, setFilters] = React.useState({ team: true, enterprise: true, private: true });
+  const graphScopes = React.useMemo(() => grScopeList(graph.nodes), [graph]);
+  const [filters, setFilters] = React.useState({});
+  React.useEffect(() => {
+    setFilters((prev) => {
+      const next = {};
+      for (const s of graphScopes) next[s] = prev[s] !== false;
+      return next;
+    });
+  }, [graphScopes.join('\u0000')]);
   const [sel, setSel] = React.useState(null);
   // Version-control date scrubber: show only notes created on/before `cutoff` (by updated_at).
   const dateBounds = React.useMemo(() => {
@@ -53,6 +73,7 @@ function GraphView({ graph, onOpen }) {
       palRef.current = {
         team: v('--jade-500', '#3fb27f'), enterprise: v('--azure-500', '#4a90d9'),
         private: v('--obsidian-400', '#8b8f9a'),
+        custom: v('--brand-fg', '#c9a24b'),
         edge: v('--border-strong', '#2a2d34'), edgeLit: v('--brand-fg', '#c9a24b'),
         text: v('--text-muted', '#9aa0aa'), textStrong: v('--text-strong', '#f0f0f2'),
         brand: v('--brand-fg', '#c9a24b'),
@@ -80,7 +101,9 @@ function GraphView({ graph, onOpen }) {
     };
 
     const visible = (n) => {
-      if (!n || filtersRef.current[n.scope] === false) return false;
+      if (!n) return false;
+      const sc = grScopeKey(n.scope);
+      if (sc && filtersRef.current[sc] === false) return false;
       if (GR_DATE_RE.test(n.label || '')) return false;           // date notes are folded into topics → never shown
       const t = Date.parse(n.updated);
       if (!isNaN(t) && t > cutoffRef.current) return false;        // version control: hide notes created after the cutoff
@@ -121,7 +144,7 @@ function GraphView({ graph, onOpen }) {
         const near = !focus || nb.has(n.id) || n.id === focus;
         ctx.globalAlpha = near ? 1 : 0.22;
         ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 6.283185);
-        ctx.fillStyle = pal[n.scope] || pal.private;
+        ctx.fillStyle = pal[n.scope] || pal.custom || pal.private;
         ctx.fill();
         if (n.id === selRef.current) {
           ctx.lineWidth = 2 / t.k; ctx.strokeStyle = pal.brand; ctx.stroke();
@@ -283,9 +306,9 @@ function GraphView({ graph, onOpen }) {
       </div>
 
       <div style={{ position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8, alignItems: 'center' }}>
-        {['team', 'enterprise', 'private'].map((k) => (
-          <button key={k} onClick={() => setFilters((f) => ({ ...f, [k]: !f[k] }))} style={pill(filters[k])}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: `var(${GR_SCOPE_VAR[k]})` }} />{k}
+        {graphScopes.map((k) => (
+          <button key={k} onClick={() => setFilters((f) => ({ ...f, [k]: f[k] === false }))} style={pill(filters[k] !== false)}>
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: `var(${grScopeVar(k)})` }} />{k}
           </button>
         ))}
         <div title="Scrub the graph by note creation date (version control) — drag to see knowledge as of any date" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-raised)' }}>
