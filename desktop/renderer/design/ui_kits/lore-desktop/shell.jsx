@@ -189,7 +189,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         </div>
         <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', alignItems: 'center', gap: 7 }}>
           <Icon name="eye-off" size={12} style={{ color: 'var(--text-faint)' }} />
-          <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.4 }}>Your personal vault is hidden while viewing a Wizard.</span>
+          <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.4 }}>Your personal library is hidden while viewing a Wizard.</span>
         </div>
       </div>
     );

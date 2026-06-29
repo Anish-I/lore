@@ -40,7 +40,7 @@ $ lore ask "what did I decide about the kalshi bot?"
 - **🪝 Lore Hooks** — one-click auto-capture from Claude Code / Codex / Copilot straight into your graph
   (redacted, debounced, fully local) so your AI work becomes searchable knowledge.
 - **🧙 Wizards (installable knowledge bases)** — an app-store of curated KBs you can install, rate, and
-  sync into your vault.
+  sync into your library.
 - **🔌 MCP server + CLI** — expose your Lore to any AI tool (`lore_ask`, `lore_search`, `lore_graph`) and
   query it from the terminal (`lore ask`, `lore search`).
 - **👥 Permissioned by design** — every note carries a scope (`private` / `team` / `enterprise`); retrieval

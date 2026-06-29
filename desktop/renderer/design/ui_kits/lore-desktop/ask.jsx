@@ -98,7 +98,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
           <div style={{ padding: '24px 6px' }}>
             <img src="design/assets/sprites/lore-familiar.png" alt="" aria-hidden="true"
               style={{ display: 'block', width: 132, height: 132, margin: '0 auto 10px', objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))', pointerEvents: 'none', userSelect: 'none' }} />
-            <p style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)', margin: '0 0 4px', textAlign: 'center' }}>Ask across your vaults.</p>
+            <p style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)', margin: '0 0 4px', textAlign: 'center' }}>Ask across your libraries.</p>
             <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '0 0 16px', lineHeight: 1.5, textAlign: 'center' }}>Answers are drawn only from notes in your scope, and every claim is cited.</p>
             {!identityReady && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, marginBottom: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface-inset)', textAlign: 'left' }}>

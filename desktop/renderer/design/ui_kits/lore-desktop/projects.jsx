@@ -79,7 +79,7 @@ function ProjectsView({ projects, groups, onOpen }) {
                 </span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>{g.name}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{g.members} members · {g.vaults} vaults</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{g.members} members · {g.vaults} libraries</div>
                 </div>
                 <PrScope scope={g.scope} />
                 <PrButton variant="ghost" iconTrailing="chevron-right">Open</PrButton>

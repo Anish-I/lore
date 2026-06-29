@@ -1,5 +1,5 @@
 /* global React */
-// Lore desktop — Buckets: shared knowledge collections pooled across vaults
+// Lore desktop - Buckets: shared knowledge collections pooled across libraries
 const bkNS = window.VaultDesignSystem_ffbf58;
 const { Icon: BkIcon, Card: BkCard, ScopeTag: BkScope, Avatar: BkAvatar, Badge: BkBadge, Button: BkButton, Tabs: BkTabs } = bkNS;
 
@@ -123,7 +123,7 @@ function WizardStore({ onChanged }) {
   return (
     <div style={{ marginTop: 28 }}>
       <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' }}>Discover knowledge bases & tools</h2>
-      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 12px' }}>{catalog.length.toLocaleString()} available — curated knowledge bases + tools sourced from the web. Install to add into your vault.</p>
+      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 12px' }}>{catalog.length.toLocaleString()} available — curated knowledge bases + tools sourced from the web. Install to add into your library.</p>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: '1 1 220px', minWidth: 200, padding: '0 10px', height: 32, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
           <BkIcon name="search" size={14} style={{ color: 'var(--text-faint)' }} />

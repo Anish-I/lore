@@ -7,6 +7,7 @@ const BACKEND = 'http://localhost:8099';
 contextBridge.exposeInMainWorld('lore', {
   // --- filesystem (main process) ---
   pickVault:      ()           => ipcRenderer.invoke('vault:pick'),
+  createVault:    (opts)       => ipcRenderer.invoke('vault:create', opts || {}),
   readTree:       (root)       => ipcRenderer.invoke('vault:tree', root),
   readNote:       (path)       => ipcRenderer.invoke('note:read', path),
   writeNote:      (path, text) => ipcRenderer.invoke('note:write', { path, text }),

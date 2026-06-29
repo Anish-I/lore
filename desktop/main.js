@@ -170,14 +170,68 @@ function startWatch(root) {
 }
 
 // ---------- IPC: vault + notes ----------
+function safeVaultName(name, fallback = 'Lore Library') {
+  return String(name || fallback)
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80) || fallback;
+}
+
+function defaultVaultParent() {
+  return path.join(app.getPath('documents'), 'Lore Libraries');
+}
+
+function uniqueVaultRoot(parent, baseName) {
+  let root = path.join(parent, baseName);
+  if (!fs.existsSync(root)) return root;
+  for (let i = 2; i < 1000; i++) {
+    root = path.join(parent, `${baseName} ${i}`);
+    if (!fs.existsSync(root)) return root;
+  }
+  return path.join(parent, `${baseName} ${Date.now()}`);
+}
+
+function finishVaultCreate(root, parent) {
+  try {
+    const stat = fs.existsSync(root) ? fs.statSync(root) : null;
+    if (stat && !stat.isDirectory()) return { ok: false, error: 'A file already exists at that path.' };
+    fs.mkdirSync(root, { recursive: true });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+  registerRoot(root);
+  startWatch(root);
+  const tree = buildTree(root);
+  return { ok: true, root, name: path.basename(root), parent, tree, indexed: countNotes(tree) };
+}
+
 ipcMain.handle('vault:pick', async () => {
-  const r = await dialog.showOpenDialog(win, { title: 'Open a Lore vault', properties: ['openDirectory'] });
+  const r = await dialog.showOpenDialog(win, { title: 'Open a Lore library', properties: ['openDirectory'] });
   if (r.canceled || !r.filePaths.length) return null;
   const root = r.filePaths[0];
   registerRoot(root);   // path-guard: allow reads/writes inside this vault
   startWatch(root);
   const tree = buildTree(root);
   return { root, name: path.basename(root), tree, indexed: countNotes(tree) };
+});
+
+ipcMain.handle('vault:create', async (_e, opts) => {
+  const name = safeVaultName(opts && opts.name);
+  if (opts && opts.autoPlace) {
+    const parent = defaultVaultParent();
+    const root = uniqueVaultRoot(parent, name);
+    return finishVaultCreate(root, parent);
+  }
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Choose where to create your Lore library',
+    buttonLabel: 'Create library here',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (r.canceled || !r.filePaths.length) return null;
+  const parent = r.filePaths[0];
+  const root = path.join(parent, name);
+  return finishVaultCreate(root, parent);
 });
 
 ipcMain.handle('vault:tree', (_e, root) => {
@@ -278,7 +332,7 @@ function importWalkDir(srcDir, destDir, summary) {
 
 async function runImport(paths) {
   const r = importRoot();
-  if (!r) return { ok: false, error: 'No vault configured' };
+  if (!r) return { ok: false, error: 'No library configured' };
   if (r.error) return { ok: false, error: r.error };
   const os = require('os');
   const { execFileSync } = require('child_process');
@@ -345,7 +399,7 @@ ipcMain.handle('wizards:install', async (_e, id) => {
   const w = (loadCatalog().wizards || []).find((x) => x.id === id);
   if (!w) return { ok: false, error: 'Wizard not found' };
   const root = vaultRoot();
-  if (!root) return { ok: false, error: 'No vault configured' };
+  if (!root) return { ok: false, error: 'No library configured' };
   const cfg = loadConfig() || {};
   if (!w.scope || !cfg.owner || !cfg.tenant) return { ok: false, error: 'Configure wizard scope, owner, and tenant before installing.' };
   const dir = path.join(root, 'Wizards', safeName(w.name));
@@ -551,7 +605,9 @@ app.whenReady().then(async () => {
   const cfg = loadConfig();
   if (cfg && cfg.upkeepAuto === true && cfg.tenant) startUpkeepInterval(cfg.tenant);
 
-  await ensureBackend(); // best-effort; renderer shows a banner if it's not reachable
+  // Best-effort: the renderer can operate locally and shows a banner if backend
+  // search is unavailable, so startup should never block the window.
+  ensureBackend().catch((e) => console.error('backend startup error', e));
   await createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

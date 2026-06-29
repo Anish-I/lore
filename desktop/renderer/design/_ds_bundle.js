@@ -2010,7 +2010,7 @@ function AskPanel({
       color: 'var(--text-body)',
       margin: '0 0 4px'
     }
-  }, "Ask across your vaults."), /*#__PURE__*/React.createElement("p", {
+  }, "Ask across your libraries."), /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
       color: 'var(--text-subtle)',
@@ -2141,7 +2141,7 @@ window.LoreAskPanel = AskPanel;
 // ui_kits/lore-desktop/buckets.jsx
 try { (() => {
 /* global React */
-// Lore desktop — Buckets: shared knowledge collections pooled across vaults
+// Lore desktop - Buckets: shared knowledge collections pooled across libraries
 const bkNS = window.VaultDesignSystem_ffbf58;
 const {
   Icon: BkIcon,
@@ -3058,7 +3058,7 @@ function ProjectsView({
       color: 'var(--text-faint)',
       marginTop: 2
     }
-  }, g.members, " members \xB7 ", g.vaults, " vaults")), /*#__PURE__*/React.createElement(PrScope, {
+  }, g.members, " members \xB7 ", g.vaults, " libraries")), /*#__PURE__*/React.createElement(PrScope, {
     scope: g.scope
   }), /*#__PURE__*/React.createElement(PrButton, {
     variant: "ghost",
@@ -3526,7 +3526,7 @@ function SettingsView({
     }
   }, s.sync.provider)), /*#__PURE__*/React.createElement(Row, {
     label: "Encryption",
-    hint: "Vaults are encrypted at rest."
+    hint: "Libraries are encrypted at rest."
   }, /*#__PURE__*/React.createElement(StBadge, {
     tone: "success",
     dot: true

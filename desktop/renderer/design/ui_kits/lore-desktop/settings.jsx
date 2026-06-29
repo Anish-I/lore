@@ -37,6 +37,24 @@ function Row({ label, hint, children, last }) {
   );
 }
 
+function normalizeMcpStatus(st) {
+  if (!st) return 'not configured';
+  if (typeof st === 'string') return st;
+  if (st.installed) return 'installed';
+  if (st.detected) return 'detected';
+  return 'not configured';
+}
+
+function stText(value, fallback = 'None') {
+  if (value == null || value === '') return fallback;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (value && (Object.prototype.hasOwnProperty.call(value, 'detected') || Object.prototype.hasOwnProperty.call(value, 'installed'))) {
+    return normalizeMcpStatus(value);
+  }
+  if (value && value.error) return String(value.error);
+  try { return JSON.stringify(value); } catch { return fallback; }
+}
+
 function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
   const s = {
     account: {},
@@ -66,14 +84,14 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
   React.useEffect(() => {
     if (window.lore && window.lore.mcp && window.lore.mcp.detect) {
       window.lore.mcp.detect()
-        .then((st) => setMcpStatus(st || 'not configured'))
+        .then((st) => setMcpStatus(normalizeMcpStatus(st)))
         .catch(() => setMcpStatus('not configured'));
     } else {
       setMcpStatus('not configured');
     }
     if (window.lore && window.lore.upkeep && window.lore.upkeep.status) {
       window.lore.upkeep.status()
-        .then((st) => { if (st) setUpkeepStatusLine(String(st)); })
+        .then((st) => { if (st) setUpkeepStatusLine(stText(st, '')); })
         .catch(() => {});
     }
     if (window.lore && window.lore.config && window.lore.config.get) {
@@ -123,7 +141,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
       const res = await window.lore.upkeep.run({ tenant: cfg.tenant, scope: cfg.scope || undefined });
       setUpkeepResult(res || {});
       if (window.lore.upkeep.status) {
-        window.lore.upkeep.status().then((st) => { if (st) setUpkeepStatusLine(String(st)); }).catch(() => {});
+        window.lore.upkeep.status().then((st) => { if (st) setUpkeepStatusLine(stText(st, '')); }).catch(() => {});
       }
     } catch (e) {
       setUpkeepResult({ error: String((e && e.message) || e) });
@@ -144,12 +162,12 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
 
   const stMcpIsActive = mcpStatus === 'installed';
   const stMcpTone = mcpStatus === 'installed' ? 'success' : mcpStatus === 'detected' ? 'info' : 'neutral';
-  const stMcpLabel = mcpStatus === 'checking' ? 'checking…' : mcpStatus;
+  const stMcpLabel = mcpStatus === 'checking' ? 'checking…' : stText(mcpStatus, 'not configured');
   const identityReady = Boolean(cfg && cfg.tenant && cfg.scope);
-  const ownerLabel = (cfg && cfg.owner) || 'No identity configured';
-  const tenantLabel = (cfg && cfg.tenant) || 'No tenant';
-  const scopeLabel = (cfg && cfg.scope) || '';
-  const displayNone = (v) => v || 'None';
+  const ownerLabel = stText(cfg && cfg.owner, 'No identity configured');
+  const tenantLabel = stText(cfg && cfg.tenant, 'No tenant');
+  const scopeLabel = stText(cfg && cfg.scope, '');
+  const displayNone = (v) => stText(v, 'None');
 
   return (
     <div style={stS.wrap}>
@@ -197,7 +215,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
           <Row label="Provider">
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{displayNone(s.sync.provider)}</span>
           </Row>
-          <Row label="Encryption" hint="Vaults are encrypted at rest.">
+          <Row label="Encryption" hint="Libraries are encrypted at rest.">
             <StBadge tone={s.sync.encrypted ? 'success' : 'neutral'} dot={s.sync.encrypted}>{s.sync.encrypted ? 'enabled' : 'not configured'}</StBadge>
           </Row>
           <Row label="Last sync" last>
@@ -298,7 +316,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
                 </span>
               )}
               {upkeepResult && upkeepResult.error && (
-                <span style={{ color: 'var(--clay-400)' }}>Error: {upkeepResult.error}</span>
+                <span style={{ color: 'var(--clay-400)' }}>Error: {stText(upkeepResult.error, 'Unknown error')}</span>
               )}
               {!upkeepResult && upkeepStatusLine && (
                 <span>{upkeepStatusLine}</span>

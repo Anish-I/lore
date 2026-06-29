@@ -287,7 +287,7 @@ function App() {
   const allNotes = React.useMemo(() => flatten(tree), [tree]);
   const noteScopes = React.useMemo(() => uniqScopes(collectTreeScopes(tree)), [tree]);
 
-  // Knowledge bases = the vault's top-level folders. Selecting them filters BOTH the file tree and the graph.
+  // Knowledge bases = the library's top-level folders. Selecting them filters BOTH the file tree and the graph.
   const bases = React.useMemo(() => tree.filter((n) => n.kind === 'folder').map((n) => n.name), [tree]);
   const baseOf = React.useCallback((p) => {
     if (!treeData || !p) return null;
@@ -407,7 +407,7 @@ function App() {
   React.useEffect(() => {
     (async () => {
       try { const p = await window.lore.presets(); setPresets(p); setBackendOk(true); } catch { setBackendOk(false); }
-      // Resolve only explicitly configured roots. No bundled/sample vault is assumed.
+      // Resolve only explicitly configured roots. No bundled/sample library is assumed.
       let existingCfg = null;
       try { existingCfg = window.lore?.config?.get ? await window.lore.config.get() : null; } catch { /* none */ }
       setAppConfig(existingCfg || null);
@@ -419,7 +419,8 @@ function App() {
         try { if (await loadTree(root)) { loadedRoot = true; break; } } catch { /* try next */ }
       }
       if (window.lore.onVaultChanged) window.lore.onVaultChanged(() => { if (treeData) loadTree(treeData.root); });
-      if (!existingCfg || !loadedRoot) setShowOnboarding(true);
+      const needsSetupRefresh = !existingCfg || Number(existingCfg.setupVersion || 0) < 5;
+      if (needsSetupRefresh || !loadedRoot) setShowOnboarding(true);
     })();
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen((o) => !o); }
@@ -429,16 +430,44 @@ function App() {
     return () => { clearInterval(timer.current); window.removeEventListener('keydown', onKey); };
   }, []); // eslint-disable-line
 
+  const applyVaultTree = React.useCallback(async (td) => {
+    if (!td || !td.root) return;
+    try {
+      if (window.lore?.config?.set) {
+        const nextCfg = await window.lore.config.set({ roots: [td.root] });
+        setAppConfig(nextCfg || appConfig);
+      }
+    } catch { /* non-fatal */ }
+    setTreeData(td);
+    setKbFilter([]);
+    setTabs([]);
+    setNotes({});
+    setDrafts({});
+    const f = firstNote(td.tree);
+    if (f) openNote(f.id);
+    else setActiveId(null);
+  }, [appConfig, openNote]);
+
   const openVault = async () => {
     const td = await window.lore.pickVault();
-    if (td) {
-      try {
-        if (window.lore?.config?.set) {
-          const nextCfg = await window.lore.config.set({ roots: [td.root] });
-          setAppConfig(nextCfg || appConfig);
-        }
-      } catch { /* non-fatal */ }
-      setTreeData(td); setTabs([]); setNotes({}); setDrafts({}); const f = firstNote(td.tree); if (f) openNote(f.id); else setActiveId(null);
+    if (td) await applyVaultTree(td);
+  };
+
+  const createLoreVault = async () => {
+    if (!window.lore?.createVault) {
+      updateProgress({ phase: 'done', done: 0, total: 0, current: 'Library creation is not available.', errors: 1 });
+      return;
+    }
+    try {
+      const td = await window.lore.createVault({ autoPlace: true });
+      if (!td) return;
+      if (td.ok === false) {
+        updateProgress({ phase: 'done', done: 0, total: 0, current: td.error || 'Could not create the library.', errors: 1 });
+        return;
+      }
+      await applyVaultTree(td);
+    } catch (e) {
+      updateProgress({ phase: 'done', done: 0, total: 0, current: String((e && e.message) || e), errors: 1 });
     }
   };
 
@@ -465,6 +494,7 @@ function App() {
     }
     if (cfg.roots && cfg.roots[0]) { try { await loadTree(cfg.roots[0]); } catch { /* non-fatal */ } }
     if (flags.openWizards) setView('buckets');
+    if (flags.openImport) setShowImportModal(true);
   }, [loadTree, updateProgress]);
 
   // Load real graph data when graph view is active and identity is configured.
@@ -528,7 +558,7 @@ function App() {
     setMessages((m) => [...m, { role: 'user', text: q }, { role: 'answer', shown: [], streaming: true }]);
     const scopes = sourceScopes(persona.scopes, askSource);
     if (!tenant || !scopes.length) {
-      setMessages((m) => { const c = m.slice(); c[c.length - 1] = { role: 'answer', shown: [{ x: 'Configure a tenant and scope before asking Lore. Open Settings or setup to finish identity.' }], streaming: false }; return c; });
+      setMessages((m) => { const c = m.slice(); c[c.length - 1] = { role: 'answer', shown: [{ x: 'Finish setup with an account, library, and purpose before asking Lore.' }], streaming: false }; return c; });
       setAsking(false); return;
     }
     let trace;
@@ -569,7 +599,7 @@ function App() {
   const activeNote = activeTab && activeTab.kind === 'note' ? notes[activeId] : null;
   const editorNote = activeNote && { ...activeNote, raw: drafts[activeId], onEdit: setDraft };
   const activeBucket = activeTab && activeTab.kind === 'bucket' ? activeTab.bucket : null;
-  const workspace = { name: treeData ? treeData.name : 'No vault', scope: (appConfig && appConfig.scope) || null, indexedLabel: treeData ? `${treeData.indexed} notes` : 'open a vault' };
+  const workspace = { name: treeData ? treeData.name : 'No library', scope: (appConfig && appConfig.scope) || null, indexedLabel: treeData ? `${treeData.indexed} notes` : 'open a library' };
   const progressCount = progressCountText(progressState);
 
   // The open note's connections (from the knowledge graph edges) — shown in the ContextPane.
@@ -615,11 +645,14 @@ function App() {
       ) : (
         <React.Fragment>
           <D.Icon name="folder-open" size={34} style={{ color: 'var(--text-faint)' }} />
-          <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, color: 'var(--text-body)' }}>Open a vault to start.</div>
-          <D.Button variant="primary" icon="folder" onClick={openVault}>Open vault folder…</D.Button>
-          {Onboarding && (
-            <D.Button variant="ghost" icon="settings" onClick={() => setShowOnboarding(true)}>Set up…</D.Button>
-          )}
+          <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, color: 'var(--text-body)' }}>Open a library to start.</div>
+          <div style={{ display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
+            <D.Button variant="primary" icon="sparkles" onClick={createLoreVault}>Let Lore choose path</D.Button>
+            <D.Button variant="secondary" icon="folder" onClick={openVault}>Open library folder...</D.Button>
+            {Onboarding && (
+              <D.Button variant="ghost" icon="settings" onClick={() => setShowOnboarding(true)}>Set up…</D.Button>
+            )}
+          </div>
         </React.Fragment>
       )}
     </div>
@@ -631,12 +664,12 @@ function App() {
     return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: 'var(--surface-canvas)', color: 'var(--text-subtle)' }}>
       <img src="design/assets/sprites/node-orb.png" alt="" style={{ width: 56, height: 56, opacity: 0.7 }} onError={(e) => { e.target.style.display = 'none'; }} />
-      <div style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)' }}>{loading ? 'Loading graph…' : needsIdentity ? 'Identity is not configured yet.' : 'No graph nodes yet.'}</div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', maxWidth: 360, textAlign: 'center', lineHeight: 1.5 }}>{loading ? 'Fetching nodes and edges…' : needsIdentity ? 'Set a tenant and scope so Lore knows which index to query.' : hasVault ? 'Import or index notes to build the knowledge graph.' : 'Open a vault, then import or index notes.'}</div>
+      <div style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)' }}>{loading ? 'Loading graph…' : needsIdentity ? 'Setup is not complete yet.' : 'No graph nodes yet.'}</div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', maxWidth: 360, textAlign: 'center', lineHeight: 1.5 }}>{loading ? 'Fetching nodes and edges…' : needsIdentity ? 'Choose an account and purpose so Lore knows which local index to query.' : hasVault ? 'Import or index notes to build the knowledge graph.' : 'Open a library, then import or index notes.'}</div>
       {!loading && (
         <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
-          {needsIdentity && <D.Button variant="primary" icon="settings" onClick={() => setShowOnboarding(true)}>Configure identity</D.Button>}
-          {!hasVault && <D.Button variant={needsIdentity ? 'secondary' : 'primary'} icon="folder-open" onClick={openVault}>Open vault</D.Button>}
+          {needsIdentity && <D.Button variant="primary" icon="settings" onClick={() => setShowOnboarding(true)}>Finish setup</D.Button>}
+          {!hasVault && <D.Button variant={needsIdentity ? 'secondary' : 'primary'} icon="folder-open" onClick={openVault}>Open library</D.Button>}
           {hasVault && !needsIdentity && <D.Button variant="secondary" icon="upload" onClick={() => setShowImportModal(true)}>Import notes</D.Button>}
         </div>
       )}
@@ -741,7 +774,7 @@ function App() {
 
       <div style={{ height: 'var(--statusbar-height)', display: 'flex', alignItems: 'center', gap: 14, padding: '0 12px', background: 'var(--surface-base)', borderTop: '1px solid var(--border-subtle)', flexShrink: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
         <button onClick={openVault} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border)', background: 'var(--surface-inset)', color: 'var(--text-muted)', borderRadius: 'var(--radius-sm)', padding: '2px 8px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-          <D.Icon name="folder-open" size={12} />{treeData ? treeData.name : 'Open vault…'}
+          <D.Icon name="folder-open" size={12} />{treeData ? treeData.name : 'Open library...'}
         </button>
         <button onClick={() => setSearchOpen(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', borderRadius: 'var(--radius-sm)', padding: '2px 8px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
           <D.Icon name="search" size={12} />search <D.Kbd>⌘K</D.Kbd>
@@ -752,7 +785,7 @@ function App() {
         </span>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <D.Icon name={identityReady ? 'key-round' : 'alert-circle'} size={12} style={{ color: identityReady ? 'var(--brand-fg)' : 'var(--text-faint)' }} />
-          {identityReady ? `${tenant} · ${(persona.scopes || []).join(', ')}` : 'identity not configured'}
+          {identityReady ? `${tenant} · ${(persona.scopes || []).join(', ')}` : 'setup incomplete'}
         </span>
         <div style={{ flex: 1 }} />
         <span>{tabs.length} tab{tabs.length === 1 ? '' : 's'}</span>
