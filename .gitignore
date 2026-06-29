@@ -38,3 +38,8 @@ desktop/dist/
 
 # test artifacts
 desktop/e2e-shot-*.png
+client_secret_*.json
+*google_oauth_client*.json
+
+# superpowers SDD scratch (ledger, briefs, diffs)
+.superpowers/

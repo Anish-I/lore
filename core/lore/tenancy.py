@@ -8,6 +8,9 @@ stage.  `private` scope is structurally non-syncable: the zero-knowledge invaria
 _SYNCABLE_SCOPE_TYPES = frozenset(("team", "enterprise"))
 
 _SCHEMA = [
+    """create table if not exists users (
+         id text primary key, google_sub text unique, email text, name text,
+         created_at timestamptz default now())""",
     "create table if not exists orgs (id text primary key, name text)",
     "create table if not exists teams (id text primary key, org_id text, name text)",
     """create table if not exists memberships (

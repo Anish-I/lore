@@ -1,0 +1,115 @@
+// Google OAuth desktop "loopback" flow (PKCE) for the Lore Electron app.
+//
+// Opens the system browser to Google's consent screen, runs a one-shot localhost
+// HTTP server to catch the redirect, exchanges the auth code for tokens, and
+// returns the Google **id_token** — which the renderer/main then POSTs to the Lore
+// server (`/auth/google`) to obtain a Lore session JWT.
+//
+// No external deps: Node http/https/crypto + Electron shell.openExternal.
+'use strict';
+const http = require('http');
+const https = require('https');
+const crypto = require('crypto');
+const { URL, URLSearchParams } = require('url');
+
+function b64url(buf) {
+  return buf.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// PKCE: a high-entropy verifier and its S256 challenge. Exported for unit testing.
+function generatePkce() {
+  const verifier = b64url(crypto.randomBytes(32));
+  const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
+  return { verifier, challenge };
+}
+
+function buildAuthUrl(clientCfg, redirectUri, challenge, state) {
+  const u = new URL(clientCfg.auth_uri || 'https://accounts.google.com/o/oauth2/auth');
+  u.search = new URLSearchParams({
+    client_id: clientCfg.client_id,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile',
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    state,
+    access_type: 'offline',
+    prompt: 'select_account',
+  }).toString();
+  return u.toString();
+}
+
+// Exchange the authorization code for tokens at Google's token endpoint.
+function exchangeCode(clientCfg, code, verifier, redirectUri) {
+  return new Promise((resolve, reject) => {
+    const body = new URLSearchParams({
+      code,
+      client_id: clientCfg.client_id,
+      client_secret: clientCfg.client_secret || '',
+      code_verifier: verifier,
+      grant_type: 'authorization_code',
+      redirect_uri: redirectUri,
+    }).toString();
+    const tokenUrl = new URL(clientCfg.token_uri || 'https://oauth2.googleapis.com/token');
+    const req = https.request(
+      { method: 'POST', hostname: tokenUrl.hostname, path: tokenUrl.pathname,
+        headers: { 'content-type': 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } },
+      (res) => {
+        let data = '';
+        res.on('data', (c) => (data += c));
+        res.on('end', () => {
+          try {
+            const json = JSON.parse(data);
+            if (res.statusCode !== 200 || json.error) {
+              return reject(new Error(`token exchange failed: ${json.error_description || json.error || res.statusCode}`));
+            }
+            resolve(json); // { id_token, access_token, refresh_token?, expires_in }
+          } catch (e) { reject(e); }
+        });
+      });
+    req.on('error', reject);
+    req.write(body);
+    req.end();
+  });
+}
+
+// Run the full loopback flow. `openExternal(url)` opens the system browser
+// (pass Electron's shell.openExternal). Resolves to the token response.
+function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
+  const { verifier, challenge } = generatePkce();
+  const state = b64url(crypto.randomBytes(16));
+
+  return new Promise((resolve, reject) => {
+    // Ephemeral loopback port — Google allows any port for installed-app redirects.
+    const server = http.createServer(async (req, res) => {
+      try {
+        const reqUrl = new URL(req.url, `http://127.0.0.1:${server.address().port}`);
+        if (reqUrl.pathname !== '/callback') { res.writeHead(404); res.end(); return; }
+        const err = reqUrl.searchParams.get('error');
+        const code = reqUrl.searchParams.get('code');
+        const gotState = reqUrl.searchParams.get('state');
+        res.writeHead(200, { 'content-type': 'text/html' });
+        res.end('<html><body style="font-family:sans-serif;text-align:center;margin-top:80px">'
+              + '<h2>Lore sign-in complete</h2><p>You can close this tab and return to Lore.</p></body></html>');
+        cleanup();
+        if (err) return reject(new Error(`Google returned error: ${err}`));
+        if (gotState !== state) return reject(new Error('state mismatch (possible CSRF)'));
+        if (!code) return reject(new Error('no authorization code in callback'));
+        const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
+        const tokens = await exchangeCode(clientCfg, code, verifier, redirectUri);
+        resolve(tokens);
+      } catch (e) { cleanup(); reject(e); }
+    });
+
+    const timer = setTimeout(() => { cleanup(); reject(new Error('sign-in timed out')); }, timeoutMs);
+    function cleanup() { clearTimeout(timer); try { server.close(); } catch { /* ignore */ } }
+
+    server.on('error', (e) => { cleanup(); reject(e); });
+    server.listen(0, '127.0.0.1', () => {
+      const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
+      openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state));
+    });
+  });
+}
+
+module.exports = { generatePkce, buildAuthUrl, exchangeCode, runLoopbackFlow };

@@ -1,13 +1,14 @@
 // Lore desktop — Electron main process.
 // Owns the OS: file explorer (fs), spawns the Python `lore` retrieval backend,
 // and serves IPC for the renderer's window.lore bridge.
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 const { runScrape } = require('./scraper');
 const installer    = require('./hooks-installer');
 const mcpInstaller = require('./mcp-installer');
+const googleOauth  = require('./lib/google-oauth');
 
 const BACKEND_PORT = 8099;
 const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
@@ -322,6 +323,66 @@ ipcMain.handle('import:pick', async () => {
   if (r.canceled || !r.filePaths.length) return { ok: true, copied: 0, skipped: 0, errors: 0 };
   return runImport(r.filePaths);
 });
+
+// ---------- IPC: Google OAuth (desktop loopback) + Lore session ----------
+// The Google client config (gitignored) lives at <repo>/secrets/google_oauth_client.json.
+function loadGoogleClient() {
+  const p = process.env.GOOGLE_OAUTH_CLIENT_FILE
+    || path.join(__dirname, '..', 'secrets', 'google_oauth_client.json');
+  const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+  return data.installed || data.web || data;
+}
+
+// Lore session JWT is stored encrypted (Electron safeStorage) in userData.
+function authStorePath() { return path.join(app.getPath('userData'), 'lore-auth.bin'); }
+function saveSession(obj) {
+  const json = Buffer.from(JSON.stringify(obj), 'utf8');
+  const enc = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(json.toString('utf8')) : json;
+  fs.writeFileSync(authStorePath(), enc);
+}
+function loadSession() {
+  try {
+    const raw = fs.readFileSync(authStorePath());
+    const json = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8');
+    return JSON.parse(json);
+  } catch { return null; }
+}
+function clearSession() { try { fs.unlinkSync(authStorePath()); } catch { /* ignore */ } }
+
+// Sign in: run the loopback flow → get Google id_token → exchange at the Lore
+// server for a session JWT → store it. Returns { ok, user_id, email, scopes } or { ok:false, reason }.
+ipcMain.handle('auth:login', async () => {
+  try {
+    const clientCfg = loadGoogleClient();
+    const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url));
+    if (!tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
+    const r = await fetch(`${BACKEND_URL}/auth/google`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id_token: tokens.id_token }),
+    });
+    const body = await r.json();
+    if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
+    saveSession({ token: body.token, user_id: body.user_id, email: body.email, scopes: body.scopes });
+    return { ok: true, user_id: body.user_id, email: body.email, scopes: body.scopes };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+});
+
+// Current session: validates the stored JWT against the server. Returns the user or null.
+ipcMain.handle('auth:status', async () => {
+  const sess = loadSession();
+  if (!sess || !sess.token) return null;
+  try {
+    const r = await fetch(`${BACKEND_URL}/auth/me`, { headers: { Authorization: `Bearer ${sess.token}` } });
+    if (!r.ok) return null;
+    const me = await r.json();
+    return { user_id: me.user_id, email: sess.email, scopes: me.scopes };
+  } catch { return null; }
+});
+
+ipcMain.handle('auth:logout', () => { clearSession(); return { ok: true }; });
 
 // ---------- IPC: wizards (installable knowledge bases / "app store") ----------
 function vaultRoot() {

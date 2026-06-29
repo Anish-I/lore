@@ -4,7 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi","uvicorn","qdrant-client","voyageai","psycopg[binary]",
-  "watchdog","markdown-it-py","tiktoken","python-dotenv","pydantic","mcp<2"
+  "watchdog","markdown-it-py","tiktoken","python-dotenv","pydantic","mcp<2",
+  "pyjwt","google-auth"
 ]
 [project.scripts]
 lore = "lore.cli:main"

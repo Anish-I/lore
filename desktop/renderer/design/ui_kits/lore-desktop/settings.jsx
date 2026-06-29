@@ -49,6 +49,11 @@ function SettingsView({ settings }) {
   const [mcpActivating, setMcpActivating] = React.useState(false);
   const [copiedKey, setCopiedKey] = React.useState(''); // which snippet was copied
 
+  // Google account / auth state
+  const [authUser, setAuthUser] = React.useState(null);   // {user_id, email, scopes} | null
+  const [authBusy, setAuthBusy] = React.useState(false);
+  const [authError, setAuthError] = React.useState('');
+
   // Data upkeep state
   const [upkeepAuto, setUpkeepAuto] = React.useState(false);
   const [upkeepRunning, setUpkeepRunning] = React.useState(false);
@@ -68,7 +73,26 @@ function SettingsView({ settings }) {
         .then((st) => { if (st) setUpkeepStatusLine(String(st)); })
         .catch(() => {});
     }
+    if (window.lore && window.lore.auth && window.lore.auth.status) {
+      window.lore.auth.status().then((u) => setAuthUser(u || null)).catch(() => {});
+    }
   }, []);
+
+  const stSignIn = async () => {
+    if (!window.lore || !window.lore.auth) return;
+    setAuthBusy(true); setAuthError('');
+    try {
+      const r = await window.lore.auth.login();
+      if (r && r.ok) setAuthUser({ user_id: r.user_id, email: r.email, scopes: r.scopes });
+      else setAuthError((r && r.reason) || 'sign-in failed');
+    } catch (e) { setAuthError(String((e && e.message) || e)); }
+    setAuthBusy(false);
+  };
+
+  const stSignOut = async () => {
+    if (window.lore && window.lore.auth) { try { await window.lore.auth.logout(); } catch { /* ignore */ } }
+    setAuthUser(null);
+  };
 
   const stCopy = (text, key) => {
     if (!navigator.clipboard) return;
@@ -139,6 +163,17 @@ function SettingsView({ settings }) {
             <StBadge tone="neutral">{s.account.role}</StBadge>
             <StButton variant="secondary" size="sm">Edit profile</StButton>
           </div>
+          <Row label="Google sign-in" hint={authUser ? `Signed in — ${(authUser.scopes && authUser.scopes.length) || 0} team scope(s)` : 'Sign in to sync team/enterprise notes and ask across your team.'}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {authUser
+                ? <>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-muted)' }}>{authUser.email}</span>
+                    <StButton variant="secondary" size="sm" onClick={stSignOut}>Sign out</StButton>
+                  </>
+                : <StButton variant="primary" size="sm" onClick={stSignIn} disabled={authBusy}>{authBusy ? 'Opening browser…' : 'Sign in with Google'}</StButton>}
+            </div>
+          </Row>
+          {authError && <div style={{ padding: '0 16px 10px', color: 'var(--clay-400)', fontSize: 12 }}>{authError}</div>}
           <Row label="Default note scope" hint="New notes start with this permission." last>
             <div style={{ display: 'flex', gap: 6 }}>
               {['private', 'team', 'enterprise'].map((sc) => (

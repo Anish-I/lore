@@ -77,6 +77,16 @@ contextBridge.exposeInMainWorld('lore', {
     return () => ipcRenderer.removeListener('hooks:update', handler);
   },
 
+  // --- auth (Google OAuth desktop loopback → Lore session) ---
+  // login()  → opens the browser for Google sign-in; resolves {ok, user_id, email, scopes} or {ok:false, reason}
+  // status() → current signed-in user {user_id, email, scopes} or null
+  // logout() → clears the stored session
+  auth: {
+    login:  () => ipcRenderer.invoke('auth:login'),
+    status: () => ipcRenderer.invoke('auth:status'),
+    logout: () => ipcRenderer.invoke('auth:logout'),
+  },
+
   // --- MCP server ---
   // detect()    → { detected, installed, configPath }
   // install()   → { ok, backupPath, configPath, reason? }

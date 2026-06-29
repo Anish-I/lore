@@ -1,6 +1,6 @@
 import datetime, hashlib, os
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from . import db, qdrant_store
@@ -11,9 +11,11 @@ from .index import index_note, index_document
 from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
+from . import auth, tenancy
 
 app = FastAPI(title="Lore Core")
 _conn = db.connect(); db.bootstrap_schema(_conn)
+tenancy.bootstrap_tenancy(_conn)  # users/orgs/teams/memberships for multi-tenant auth
 
 # Model selection: Voyage if an API key is set, else REAL local models (fastembed),
 # and only Fake if explicitly forced (VAULT_FAKE=1) for fast unit tests.
@@ -47,6 +49,47 @@ PROFILES = {
                  "root cause of incident PROJ-1037","how do we handle database connection limits?"]},
 }
 PROFILE = os.environ.get("VAULT_PROFILE", "solo")
+
+
+# --- Google OAuth (desktop loopback) + Lore session JWT --------------------
+
+class GoogleLoginReq(BaseModel):
+    id_token: str
+
+
+@app.post("/auth/google")
+def auth_google(req: GoogleLoginReq):
+    """Exchange a Google ID token (from the desktop loopback flow) for a Lore session JWT.
+
+    Body: {id_token}. Returns {token, user_id, email, scopes}. 401 on bad identity.
+    The Google ID token is cryptographically verified (signature + audience); scopes
+    come from membership, never from the client.
+    """
+    try:
+        return auth.login_with_google(_conn, req.id_token)
+    except auth.AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+def require_user(authorization: Optional[str] = Header(default=None)) -> str:
+    """FastAPI dependency for protected endpoints: validate the `Authorization: Bearer
+    <lore-jwt>` header and return the authenticated user_id. 401 if missing/invalid.
+    Authorization (which scopes the user may read) is re-derived from membership by the
+    endpoint via tenancy.authorize_scopes — never trusted from the token."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="missing bearer token")
+    token = authorization.split(None, 1)[1].strip()
+    try:
+        claims = auth.verify_session_jwt(token)
+    except auth.AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    return claims["sub"]
+
+
+@app.get("/auth/me")
+def auth_me(user_id: str = Depends(require_user)):
+    """Return the authenticated user's id + their authorized team scopes (from membership)."""
+    return {"user_id": user_id, "scopes": tenancy.authorized_team_scope_ids(_conn, user_id)}
 
 class ReindexReq(BaseModel):
     path: str; owner_id: str = "alice"; scope_id: str = "alice-private"; tenant_id: str = "t1"
