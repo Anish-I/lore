@@ -56,7 +56,10 @@ def codex_call(prompt: str, timeout: int = 180) -> str:
     if model:
         args += ["-m", model]
     args.append(prompt)
-    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    # text + utf-8/replace: codex emits unicode (arrows, em-dashes); the Windows locale
+    # codec (cp1252) would crash on those bytes mid-stream.
+    proc = subprocess.run(args, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace", timeout=timeout)
     out = proc.stdout or ""
     if proc.returncode != 0 and not out.strip():
         raise ProviderError(f"codex exec failed (exit {proc.returncode}): {(proc.stderr or '').strip()[:200]}")
@@ -75,7 +78,8 @@ def claude_call(prompt: str, timeout: int = 180) -> str:
         raise ProviderError("Claude CLI not found (install Claude Code or set CLAUDE_BIN)")
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
     out = subprocess.run(
-        [binp, "-p", prompt], capture_output=True, text=True, timeout=timeout, env=env,
+        [binp, "-p", prompt], capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=timeout, env=env,
     ).stdout or ""
     return out.strip()
 
