@@ -25,6 +25,79 @@ function MemberStack({ members }) {
 
 function ProjectsView({ projects, groups, onOpen }) {
   const [tab, setTab] = React.useState('projects');
+  const [sagaInput, setSagaInput] = React.useState(false);
+  const [sagaName, setSagaName] = React.useState('');
+  const [sagaStatus, setSagaStatus] = React.useState('');
+  const [localSagas, setLocalSagas] = React.useState([]);
+  const [grpInput, setGrpInput] = React.useState(false);
+  const [grpName, setGrpName] = React.useState('');
+  const [grpStatus, setGrpStatus] = React.useState('');
+  const [localGroups, setLocalGroups] = React.useState([]);
+
+  const getVaultRoot = async () => {
+    try {
+      const cfg = window.lore && window.lore.config && await window.lore.config.get();
+      return (cfg && Array.isArray(cfg.roots) && cfg.roots[0]) || null;
+    } catch (e) { return null; }
+  };
+
+  const inpStyle = {
+    padding: '5px 9px', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-sm)',
+    background: 'var(--surface-inset)', color: 'var(--text-strong)',
+    fontFamily: 'var(--font-sans)', fontSize: 13, outline: 'none', minWidth: 180,
+  };
+
+  // Track the active library root; if it changes, drop stale optimistic items so they
+  // don't leak across library switches (Codex review).
+  const rootRef = React.useRef(null);
+  const syncRoot = (root) => {
+    if (rootRef.current !== null && rootRef.current !== root) {
+      setLocalSagas([]); setLocalGroups([]);
+    }
+    rootRef.current = root;
+  };
+
+  const handleNewSaga = async () => {
+    const name = sagaName.trim();
+    if (!name) return;
+    setSagaStatus('Creating…');
+    try {
+      const root = await getVaultRoot();
+      if (!root) { setSagaStatus('Open a library first.'); return; }
+      syncRoot(root);
+      const sep = root.includes('/') ? '/' : '\\';
+      const path = root.replace(/[\\/]+$/, '') + sep + name + sep + '_index.md';
+      const res = await window.lore.writeNote(path, '---\ntype: saga\n---\n\n# ' + name + '\n\n');
+      if (!res || res.ok === false) { setSagaStatus('Error: ' + ((res && res.error) || 'could not create saga')); return; }
+      setLocalSagas((prev) => prev.some((s) => s.id === path) ? prev
+        : [...prev, { id: path, name, desc: '', scope: 'private', members: ['you'], notes: 0, updated: 'just now' }]);
+      setSagaName(''); setSagaInput(false); setSagaStatus('');
+    } catch (e) { setSagaStatus('Error: ' + ((e && e.message) || String(e))); }
+  };
+
+  const handleNewGroup = async () => {
+    const name = grpName.trim();
+    if (!name) return;
+    setGrpStatus('Creating…');
+    try {
+      const root = await getVaultRoot();
+      if (!root) { setGrpStatus('Open a library first.'); return; }
+      syncRoot(root);
+      const sep = root.includes('/') ? '/' : '\\';
+      const path = root.replace(/[\\/]+$/, '') + sep + name + sep + '_index.md';
+      const res = await window.lore.writeNote(path, '---\ntype: group\n---\n\n# ' + name + '\n\n');
+      if (!res || res.ok === false) { setGrpStatus('Error: ' + ((res && res.error) || 'could not create group')); return; }
+      setLocalGroups((prev) => prev.some((g) => g.id === path) ? prev
+        : [...prev, { id: path, name, scope: 'team', members: 1, vaults: 1 }]);
+      setGrpName(''); setGrpInput(false); setGrpStatus('');
+    } catch (e) { setGrpStatus('Error: ' + ((e && e.message) || String(e))); }
+  };
+
+  // Dedupe by id in case a tree-derived prop and an optimistic local item coincide.
+  const _byId = (arr) => { const m = new Map(); for (const x of arr) m.set(x.id, x); return [...m.values()]; };
+  const allProjects = _byId([...projects, ...localSagas]);
+  const allGroups = _byId([...groups, ...localGroups]);
+
   return (
     <div style={prS.wrap}>
       <div style={prS.head}>
@@ -35,19 +108,47 @@ function ProjectsView({ projects, groups, onOpen }) {
           <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' }}>Focused workspaces that gather notes, people, and an Ask thread.</p>
         </div>
         <div style={{ flex: 1 }} />
-        <PrButton variant="primary" icon="plus">New saga</PrButton>
+        {tab === 'projects' && !sagaInput && (
+          <PrButton variant="primary" icon="plus" onClick={() => { setSagaInput(true); setSagaName(''); setSagaStatus(''); }}>New saga</PrButton>
+        )}
+        {tab === 'projects' && sagaInput && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input autoFocus value={sagaName} onChange={(e) => setSagaName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleNewSaga(); if (e.key === 'Escape') setSagaInput(false); }}
+              placeholder="Saga name…" style={inpStyle} />
+            <PrButton variant="primary" size="sm" onClick={handleNewSaga}>Create</PrButton>
+            <PrButton variant="ghost" size="sm" onClick={() => setSagaInput(false)}>Cancel</PrButton>
+          </div>
+        )}
+        {tab === 'groups' && !grpInput && (
+          <PrButton variant="primary" icon="plus" onClick={() => { setGrpInput(true); setGrpName(''); setGrpStatus(''); }}>Add group</PrButton>
+        )}
+        {tab === 'groups' && grpInput && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input autoFocus value={grpName} onChange={(e) => setGrpName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleNewGroup(); if (e.key === 'Escape') setGrpInput(false); }}
+              placeholder="Group name…" style={inpStyle} />
+            <PrButton variant="primary" size="sm" onClick={handleNewGroup}>Create</PrButton>
+            <PrButton variant="ghost" size="sm" onClick={() => setGrpInput(false)}>Cancel</PrButton>
+          </div>
+        )}
       </div>
+      {(sagaStatus || grpStatus) && (
+        <div style={{ padding: '4px 28px', fontSize: 12, color: 'var(--clay-400)', fontFamily: 'var(--font-mono)' }}>
+          {sagaStatus || grpStatus}
+        </div>
+      )}
       <div style={prS.body}>
         <div style={{ marginBottom: 18 }}>
           <PrTabs value={tab} onChange={setTab} tabs={[
-            { value: 'projects', label: 'Sagas', count: projects.length },
-            { value: 'groups', label: 'Groups', count: groups.length },
+            { value: 'projects', label: 'Sagas', count: allProjects.length },
+            { value: 'groups', label: 'Groups', count: allGroups.length },
           ]} />
         </div>
 
         {tab === 'projects' && (
           <div style={prS.grid}>
-            {projects.map((p) => (
+            {allProjects.map((p) => (
               <Card key={p.id} interactive onClick={() => onOpen && onOpen(p)} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                   <span style={{ width: 30, height: 30, borderRadius: 'var(--radius-sm)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)' }}>
@@ -72,7 +173,7 @@ function ProjectsView({ projects, groups, onOpen }) {
 
         {tab === 'groups' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {groups.map((g) => (
+            {allGroups.map((g) => (
               <Card key={g.id} interactive style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
                 <span style={{ width: 36, height: 36, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: g.scope === 'enterprise' ? 'var(--scope-ent-bg)' : 'var(--scope-team-bg)' }}>
                   <PrIcon name={g.scope === 'enterprise' ? 'building-2' : 'users'} size={18} style={{ color: g.scope === 'enterprise' ? 'var(--scope-ent-fg)' : 'var(--scope-team-fg)' }} />
@@ -85,6 +186,13 @@ function ProjectsView({ projects, groups, onOpen }) {
                 <PrButton variant="ghost" iconTrailing="chevron-right">Open</PrButton>
               </Card>
             ))}
+            {allGroups.length === 0 && (
+              <div style={{ padding: '32px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <PrIcon name="users" size={28} style={{ color: 'var(--text-faint)', opacity: 0.5 }} />
+                <span style={{ fontSize: 13, color: 'var(--text-subtle)' }}>No groups yet.</span>
+                <PrButton variant="secondary" icon="plus" onClick={() => { setGrpInput(true); setGrpName(''); setGrpStatus(''); }}>Add group</PrButton>
+              </div>
+            )}
           </div>
         )}
       </div>

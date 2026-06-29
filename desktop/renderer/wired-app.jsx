@@ -434,7 +434,9 @@ function App() {
     if (!td || !td.root) return;
     try {
       if (window.lore?.config?.set) {
-        const nextCfg = await window.lore.config.set({ roots: [td.root] });
+        const patch = { roots: [td.root] };
+        if (td.tenant) patch.tenant = td.tenant;
+        const nextCfg = await window.lore.config.set(patch);
         setAppConfig(nextCfg || appConfig);
       }
     } catch { /* non-fatal */ }

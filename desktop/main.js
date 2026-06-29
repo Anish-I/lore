@@ -204,8 +204,55 @@ function finishVaultCreate(root, parent) {
   }
   registerRoot(root);
   startWatch(root);
+
+  // Generate a fresh tenant id scoped to this new library so its graph starts empty.
+  const libName = path.basename(root);
+  const slug = libName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'lib';
+  const suffix = require('crypto').randomBytes(3).toString('hex'); // 6 lowercase hex chars
+  const tenant = `lib-${slug}-${suffix}`;
+
+  // Seed a Home note so the library opens with useful content rather than an empty sidebar.
+  const homePath = path.join(root, 'Home.md');
+  const homeContent = `---
+scope: private
+---
+
+# Welcome to Lore
+
+Lore is your personal knowledge OS — a local-first place to capture, connect, and query everything you know.
+
+## Libraries
+
+A **Library** is a folder on your machine. Every note inside it lives as a plain Markdown file, owned by you. You are in **${libName}** right now. Create more libraries for different contexts (work, personal, research).
+
+## Sagas
+
+**Sagas** are projects — long-running threads of work with their own notes, timelines, and goals. Open the Projects panel from the left rail to create and track them.
+
+## Wizards
+
+**Wizards** are installable knowledge bases — curated note packs on topics like productivity, coding, health, and more. Browse the Wizards catalog (the star icon) to install one with a single click.
+
+## Ask
+
+Press **Ctrl+Enter** (or **Cmd+Enter** on Mac) to open the Ask panel. Type a question and Lore searches your indexed notes, then synthesises an answer grounded in your own writing. The more you capture, the better the answers.
+
+## Knowledge Graph
+
+The **Graph** view (the node icon on the left rail) shows how your notes connect — shared topics, tags, and references surface as edges. Click any node to jump to the note.
+
+## Capture Hooks
+
+Install **Lore Hooks** from Settings → Hooks to auto-capture Claude Code sessions, Codex runs, and Copilot sessions into this library — one click, no copy-paste.
+
+---
+
+Start by renaming this note or creating a new one with the **New note** button.
+`;
+  try { fs.writeFileSync(homePath, homeContent, 'utf8'); } catch { /* non-fatal: library still opens */ }
+
   const tree = buildTree(root);
-  return { ok: true, root, name: path.basename(root), parent, tree, indexed: countNotes(tree) };
+  return { ok: true, root, name: libName, parent, tree, indexed: countNotes(tree), tenant };
 }
 
 ipcMain.handle('vault:pick', async () => {
@@ -256,6 +303,7 @@ ipcMain.handle('note:read', (_e, p) => {
 ipcMain.handle('note:write', (_e, { path: p, text }) => {
   try {
     pathGuard(p);
+    fs.mkdirSync(path.dirname(p), { recursive: true });  // create parent dirs (e.g. new saga/group folder)
     fs.writeFileSync(p, text, 'utf8');
     return { ok: true };
   } catch (e) {
@@ -598,6 +646,30 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
   } catch (e) {
     return { error: String(e) };
   }
+});
+
+// ---------- IPC: enrichment LLM providers (codex sub / claude sub / byok) ----------
+ipcMain.handle('enrich:providers', async () => {
+  try {
+    const r = await fetch(`${BACKEND_URL}/enrich/providers`);
+    return await r.json();   // { codex, claude, byok }
+  } catch (e) { return { codex: false, claude: false, byok: false, error: String(e) }; }
+});
+
+ipcMain.handle('enrich:run', async (_e, opts) => {
+  const { tenant, limit, provider } = opts || {};
+  if (!tenant) return { error: 'tenant is required' };
+  try {
+    const r = await fetch(`${BACKEND_URL}/enrich`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ tenant, limit: limit || 8, provider }),
+    });
+    const result = await r.json();
+    if (win && !win.isDestroyed())
+      win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'enrichment complete', errors: 0, summary: result });
+    return result;
+  } catch (e) { return { error: String(e) }; }
 });
 
 ipcMain.handle('upkeep:status', async () => {

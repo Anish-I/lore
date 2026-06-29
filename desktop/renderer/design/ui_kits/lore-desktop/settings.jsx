@@ -86,6 +86,12 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
   const [upkeepResult, setUpkeepResult] = React.useState(null); // {dateNotes, topics, folded} | {error}
   const [upkeepStatusLine, setUpkeepStatusLine] = React.useState('');
 
+  // AI provider (graph enrichment): codex sub / claude sub / byok
+  const [providers, setProviders] = React.useState(null); // { codex, claude, byok } | null
+  const [llmProvider, setLlmProvider] = React.useState((config && config.llmProvider) || 'codex');
+  const [enrichRunning, setEnrichRunning] = React.useState(false);
+  const [enrichResult, setEnrichResult] = React.useState(null);
+
   React.useEffect(() => {
     if (window.lore && window.lore.mcp && window.lore.mcp.detect) {
       window.lore.mcp.detect()
@@ -93,6 +99,9 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
         .catch(() => setMcpStatus('not configured'));
     } else {
       setMcpStatus('not configured');
+    }
+    if (window.lore && window.lore.enrich && window.lore.enrich.providers) {
+      window.lore.enrich.providers().then((p) => setProviders(p || null)).catch(() => {});
     }
     if (window.lore && window.lore.upkeep && window.lore.upkeep.status) {
       window.lore.upkeep.status()
@@ -179,6 +188,30 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
       window.lore.upkeep.setAuto(v).catch(() => {});
     }
   };
+
+  const stPickProvider = (p) => {
+    setLlmProvider(p);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      window.lore.config.set({ llmProvider: p }).catch(() => {});
+    }
+  };
+
+  const stRunEnrich = async () => {
+    if (!window.lore || !window.lore.enrich || !window.lore.enrich.run) return;
+    if (!cfg || !cfg.tenant) { setEnrichResult({ error: 'tenant is not configured' }); return; }
+    setEnrichRunning(true); setEnrichResult(null);
+    try {
+      const res = await window.lore.enrich.run({ tenant: cfg.tenant, limit: 8, provider: llmProvider });
+      setEnrichResult(res || {});
+    } catch (e) { setEnrichResult({ error: String((e && e.message) || e) }); }
+    setEnrichRunning(false);
+  };
+
+  const ST_PROVIDERS = [
+    { id: 'codex',  label: 'Codex subscription',  hint: 'Uses your Codex CLI login. No API key.', install: 'npm i -g @openai/codex   # then: codex login' },
+    { id: 'claude', label: 'Claude subscription',  hint: 'Uses your Claude Code CLI login. No API key.', install: 'npm i -g @anthropic-ai/claude-code   # then: claude (sign in)' },
+    { id: 'byok',   label: 'Bring your own key',   hint: 'Any OpenAI-compatible key (Together default).', install: 'set LORE_LLM_API_KEY=...   (optionally LORE_LLM_BASE_URL / LORE_LLM_MODEL)' },
+  ];
 
   const ST_CLI_INSTALL = 'pip install -e ./core';
   const ST_CLI_SAMPLE = `lore ask "<question>" --scope ${(cfg && cfg.scope) || '<scope>'} --tenant ${(cfg && cfg.tenant) || '<tenant>'}`;
@@ -318,6 +351,58 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
           <div style={{ padding: '10px 16px 14px', background: 'var(--surface-inset)', borderTop: '1px solid var(--divider)' }}>
             <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{ST_MCP_JSON}</pre>
           </div>
+        </Section>
+
+        {/* ── AI provider (graph enrichment) ── */}
+        <Section icon="sparkles" title="AI provider">
+          <div style={{ padding: '4px 16px 10px', fontSize: 12, color: 'var(--text-subtle)', lineHeight: 1.5 }}>
+            Lore enriches your knowledge graph by inferring relationships from your notes. Pick how it runs —
+            your existing Codex/Claude subscription (no key), or your own API key.
+          </div>
+          {ST_PROVIDERS.map((p, i) => {
+            const avail = providers ? !!providers[p.id] : null;   // null while loading
+            const selected = llmProvider === p.id;
+            return (
+              <Row key={p.id} label={p.label} hint={p.hint} last={i === ST_PROVIDERS.length - 1}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <StBadge tone={avail === null ? 'neutral' : avail ? 'success' : 'neutral'} dot>
+                    {avail === null ? 'checking…' : avail ? 'detected' : 'not found'}
+                  </StBadge>
+                  <StButton variant={selected ? 'primary' : 'secondary'} size="sm" onClick={() => stPickProvider(p.id)}>
+                    {selected ? 'Selected' : 'Use'}
+                  </StButton>
+                </div>
+              </Row>
+            );
+          })}
+          {(() => {
+            const sel = ST_PROVIDERS.find((p) => p.id === llmProvider);
+            const avail = providers ? !!providers[llmProvider] : null;
+            return (
+              <div style={{ padding: '10px 16px 14px', background: 'var(--surface-inset)', borderTop: '1px solid var(--divider)' }}>
+                {avail === false && sel && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                    {sel.label} isn’t set up yet. Install / sign in:
+                    <pre style={{ margin: '6px 0 0', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'pre-wrap' }}>{sel.install}</pre>
+                  </div>
+                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  {enrichRunning && <StIcon name="loader" size={14} style={{ color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite' }} />}
+                  <StButton variant="secondary" size="sm" icon="sparkles" onClick={stRunEnrich} disabled={enrichRunning || !identityReady || avail === false}>
+                    {enrichRunning ? 'Enriching…' : 'Enrich 8 notes (test)'}
+                  </StButton>
+                  {enrichResult && !enrichResult.error && (
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-muted)' }}>
+                      +{enrichResult.edges ?? 0} edges from {enrichResult.notesProcessed ?? 0} notes
+                    </span>
+                  )}
+                  {enrichResult && enrichResult.error && (
+                    <span style={{ fontSize: 11.5, color: 'var(--clay-400)' }}>{stText(enrichResult.error, 'error')}</span>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </Section>
 
         {/* ── Data upkeep ── */}

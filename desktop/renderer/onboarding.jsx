@@ -23,9 +23,9 @@ const OB_AI_CHOICES = [
 ];
 
 const OB_APP_CHOICES = [
-  { id: 'github', icon: 'git-pull-request', title: 'GitHub', description: 'Repos, issues, PRs.' },
-  { id: 'drive', icon: 'folder', title: 'Drive', description: 'Docs and folders.' },
-  { id: 'slack', icon: 'messages-square', title: 'Slack', description: 'Threads and decisions.' },
+  { id: 'github', icon: 'git-pull-request', title: 'GitHub', description: 'Repos, issues, PRs.', comingSoon: true },
+  { id: 'drive', icon: 'folder', title: 'Drive', description: 'Docs and folders.', comingSoon: true },
+  { id: 'slack', icon: 'messages-square', title: 'Slack', description: 'Threads and decisions.', comingSoon: true },
 ];
 
 const OB_STEPS = [
@@ -556,6 +556,12 @@ function OB_Onboarding({ onDone }) {
               <span style={{ position: 'absolute', top: 2, left: backfillClaude ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: backfillClaude ? 'var(--text-onbrand)' : 'var(--text-faint)', transition: 'left 150ms var(--ease-out)' }} />
             </span>
           </button>
+          {backfillClaude && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)', fontSize: 12, color: 'var(--text-subtle)' }}>
+              <OB_Icon name="info" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} />
+              <span>Claude Code capture + prompt backfill will be set up when you finish.</span>
+            </div>
+          )}
         </div>
       );
     }
@@ -566,12 +572,17 @@ function OB_Onboarding({ onDone }) {
           {OB_APP_CHOICES.map((item) => (
             <OB_Choice
               key={item.id}
-              selected={selectedApps.includes(item.id)}
+              selected={!item.comingSoon && selectedApps.includes(item.id)}
               icon={item.icon}
               title={item.title}
               description={item.description}
-              onClick={() => toggleListValue(setSelectedApps, item.id)}
-            />
+              disabled={item.comingSoon}
+              onClick={item.comingSoon ? undefined : () => toggleListValue(setSelectedApps, item.id)}
+            >
+              {item.comingSoon && (
+                <span style={{ display: 'inline-block', marginTop: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}>Coming soon</span>
+              )}
+            </OB_Choice>
           ))}
         </div>
         <OB_DropTarget

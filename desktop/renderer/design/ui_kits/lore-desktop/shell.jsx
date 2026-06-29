@@ -234,6 +234,29 @@ function TreeNode({ node, activeNote, onOpen, onToggle }) {
 
 function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
+
+  // "Add group" inline form state — hooks must run before any early return.
+  const [grpInput, setGrpInput] = React.useState(false);
+  const [grpName, setGrpName] = React.useState('');
+  const [grpStatus, setGrpStatus] = React.useState('');
+
+  const handleAddGroup = async () => {
+    const name = grpName.trim();
+    if (!name) return;
+    setGrpStatus('Creating…');
+    try {
+      const cfg = window.lore && window.lore.config && await window.lore.config.get();
+      const root = (cfg && Array.isArray(cfg.roots) && cfg.roots[0]) || null;
+      if (!root) { setGrpStatus('Open a library first.'); return; }
+      const sep = root.includes('/') ? '/' : '\\';
+      const path = root.replace(/[\\/]+$/, '') + sep + name + sep + '_index.md';
+      const res = await window.lore.writeNote(path, '---\ntype: group\n---\n\n# ' + name + '\n\n');
+      if (!res || res.ok === false) { setGrpStatus('Error: ' + ((res && res.error) || 'could not create group')); return; }
+      setGrpName(''); setGrpInput(false); setGrpStatus('');
+      // vault:changed is already wired in wired-app.jsx → auto-refreshes tree + bases chips
+    } catch (e) { setGrpStatus('Error: ' + ((e && e.message) || String(e))); }
+  };
+
   // While viewing a Wizard, the sidebar shows the Wizard — NOT your personal files (scope isolation).
   if (wizard) {
     return (
@@ -286,26 +309,42 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         {workspace.scope && <ScopeTag scope={workspace.scope} size="sm" showLabel={false} />}
         <IconButton icon="plus" label="New note" size="sm" onClick={onCreateNote} />
       </div>
-      {bases && bases.length > 0 && (
-        <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
+      <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             <Icon name="layers" size={11} style={{ color: 'var(--text-faint)' }} />
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Knowledge bases {allActive ? '· all' : `· ${kbFilter.length} selected`}</span>
             <HelpHint size={13} tip="Switch to one base, or click several to combine them. Filters the file tree AND the knowledge graph." />
+            <button onClick={() => { setGrpInput(true); setGrpName(''); setGrpStatus(''); }} title="Add a group / knowledge base"
+              style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1, flexShrink: 0 }}>+</button>
           </div>
-          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-            <button onClick={onClearBases} style={{ ...kbChip(allActive), borderColor: allActive ? 'var(--jade-500)' : 'var(--border)', background: allActive ? 'var(--surface-raised)' : 'var(--surface-inset)', color: allActive ? 'var(--jade-400)' : 'var(--text-muted)', fontWeight: 600 }}>All</button>
-            {bases.map((b) => {
-              const sc = baseScopes && baseScopes[b];
-              return (
-                <button key={b} onClick={() => onToggleBase(b)} style={kbChip(kbFilter && kbFilter.includes(b), sc)}>
-                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: sc ? SH_scopeColor(sc) : 'var(--text-faint)', flexShrink: 0 }} />{b}
-                </button>
-              );
-            })}
-          </div>
+          {grpInput && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <input autoFocus value={grpName} onChange={(e) => setGrpName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddGroup(); if (e.key === 'Escape') setGrpInput(false); }}
+                placeholder="Group name…"
+                style={{ flex: 1, padding: '4px 8px', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 12, outline: 'none' }} />
+              <button onClick={handleAddGroup} style={{ padding: '4px 9px', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-sm)', background: 'var(--brand-soft-bg)', color: 'var(--brand-fg)', fontFamily: 'var(--font-sans)', fontSize: 11, cursor: 'pointer' }}>Add</button>
+              <button onClick={() => setGrpInput(false)} style={{ padding: '4px 9px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'transparent', color: 'var(--text-faint)', fontFamily: 'var(--font-sans)', fontSize: 11, cursor: 'pointer' }}>Cancel</button>
+            </div>
+          )}
+          {grpStatus && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--clay-400)', marginBottom: 4 }}>{grpStatus}</div>}
+          {bases && bases.length > 0 && (
+            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+              <button onClick={onClearBases} style={{ ...kbChip(allActive), borderColor: allActive ? 'var(--jade-500)' : 'var(--border)', background: allActive ? 'var(--surface-raised)' : 'var(--surface-inset)', color: allActive ? 'var(--jade-400)' : 'var(--text-muted)', fontWeight: 600 }}>All</button>
+              {bases.map((b) => {
+                const sc = baseScopes && baseScopes[b];
+                return (
+                  <button key={b} onClick={() => onToggleBase(b)} style={kbChip(kbFilter && kbFilter.includes(b), sc)}>
+                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: sc ? SH_scopeColor(sc) : 'var(--text-faint)', flexShrink: 0 }} />{b}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {(!bases || bases.length === 0) && !grpInput && (
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', padding: '2px 0' }}>No groups yet — click + to add one.</div>
+          )}
         </div>
-      )}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
         {tree.map((n) => (
           <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle} />

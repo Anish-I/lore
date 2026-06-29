@@ -107,6 +107,14 @@ contextBridge.exposeInMainWorld('lore', {
   // search(query, scopes, k) → backend POST /search response (or {error})
   search: (query, scopes, k) => ipcRenderer.invoke('search', { query, scopes, k }),
 
+  // --- enrichment LLM providers (codex sub / claude sub / byok) ---
+  // providers() → { codex:bool, claude:bool, byok:bool } availability
+  // run(opts)   → POST /enrich {tenant, limit, provider} (small batch test or full run)
+  enrich: {
+    providers: ()     => ipcRenderer.invoke('enrich:providers'),
+    run:       (opts) => ipcRenderer.invoke('enrich:run', opts || {}),
+  },
+
   // --- upkeep ---
   // run(opts?)    → triggers backend /upkeep/run; fires scrapeProgress 'done' when complete
   // status()      → backend GET /upkeep/status response
