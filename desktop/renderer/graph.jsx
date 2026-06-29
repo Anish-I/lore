@@ -60,15 +60,24 @@ function GraphView({ graph, onOpen }) {
     };
     readPalette();
 
+    // ---- semantic edge kind → color map ----
+    const EDGE_KIND_COLORS = {
+      depends_on: '#5b8def', supersedes: '#a36bd6', causes: '#e0883a',
+      supports: '#3fa85f', contradicts: '#d6504f', implements: '#3fa89a', relates_to: '#888888',
+    };
+    const STRUCTURAL_KINDS = new Set(['link', 'folder', 'tag', 'topic']);
+
     // ---- data (d3 mutates node objects in place) ----
     const nodes = graph.nodes.map((n) => ({
       ...n, deg: n.links || 0,
-      r: Math.max(2.4, Math.min(9, 2.4 + Math.sqrt(n.links || 0) * 0.9)),
+      // importance (0–1) adds up to 4px to the base radius; min 2.4, max 11.
+      r: Math.max(2.4, Math.min(11, 2.4 + Math.sqrt(n.links || 0) * 0.9 + (n.importance || 0) * 4)),
     }));
     const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
     const links = graph.edges
       .filter(([a, b]) => byId[a] && byId[b])
-      .map(([a, b, kind]) => ({ source: a, target: b, kind: kind || 'link' }));
+      // 4th element is confidence weight; default 0.9 when absent (older data or structural).
+      .map(([a, b, kind, w]) => ({ source: a, target: b, kind: kind || 'link', weight: w != null ? w : 0.9 }));
     dataRef.current = { nodes, links, byId };
 
     const dpr = () => window.devicePixelRatio || 1;
@@ -102,15 +111,18 @@ function GraphView({ graph, onOpen }) {
       ctx.clearRect(0, 0, cv.width, cv.height);
       ctx.setTransform(dpr() * t.k, 0, 0, dpr() * t.k, dpr() * t.x, dpr() * t.y);
 
-      // edges
+      // edges — semantic kinds get typed color + confidence-scaled opacity/width
       for (const l of ls) {
         const a = l.source, b = l.target;
         if (a.x == null || !visible(a) || !visible(b)) continue;
         const lit = focus && (a.id === focus || b.id === focus);
+        const isStructural = STRUCTURAL_KINDS.has(l.kind);
+        const kindColor = isStructural ? pal.edge : (EDGE_KIND_COLORS[l.kind] || '#888888');
+        const conf = l.weight != null ? l.weight : 0.9;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
-        ctx.strokeStyle = lit ? pal.edgeLit : pal.edge;
-        ctx.globalAlpha = focus ? (lit ? 0.85 : 0.08) : 0.42;
-        ctx.lineWidth = (lit ? 1.3 : 0.7) / t.k;
+        ctx.strokeStyle = lit ? pal.edgeLit : kindColor;
+        ctx.globalAlpha = focus ? (lit ? 0.85 : 0.08) : (isStructural ? 0.42 : Math.max(0.15, conf * 0.85));
+        ctx.lineWidth = (lit ? 1.3 : (isStructural ? 0.7 : 0.5 + conf * 0.9)) / t.k;
         ctx.stroke();
       }
       ctx.globalAlpha = 1;

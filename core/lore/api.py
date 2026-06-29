@@ -198,7 +198,7 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     # Fetch all nodes visible to the caller (ACL: scope_id must be in allowed set).
     # This is the server-side filter — no post-filtering is performed after this point.
     rows = _conn.execute(
-        """select id, title, scope_id, owner_id, updated_at, source_path
+        """select id, title, scope_id, owner_id, updated_at, source_path, importance
            from notes
            where tenant_id=%s and scope_id = any(%s)""",
         (active_tenant, allowed),
@@ -209,19 +209,19 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     # Fetch all edges for this tenant (cheap — edges table is small relative to notes).
     # We then filter to only edges where both endpoints are in the visible node set.
     edge_rows = _conn.execute(
-        "select src_note_id, dst_note_id, kind from edges where tenant_id=%s",
+        "select src_note_id, dst_note_id, kind, weight from edges where tenant_id=%s",
         (active_tenant,),
     ).fetchall()
 
     # ACL edge filter: both endpoints must be visible.
     filtered_edges = [
-        (src, dst, kind) for src, dst, kind in edge_rows
+        (src, dst, kind, weight) for src, dst, kind, weight in edge_rows
         if src in node_ids and dst in node_ids
     ]
 
     # Compute per-node degree in the filtered graph (used for cap ordering and UI).
     degree = {nid: 0 for nid in node_ids}
-    for src, dst, _ in filtered_edges:
+    for src, dst, _, _w in filtered_edges:
         degree[src] = degree.get(src, 0) + 1
         degree[dst] = degree.get(dst, 0) + 1
 
@@ -229,11 +229,11 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     MAX_NODES = 1500
     if len(node_ids) > MAX_NODES:
         top_ids = set(sorted(node_ids, key=lambda nid: degree.get(nid, 0), reverse=True)[:MAX_NODES])
-        filtered_edges = [(src, dst, kind) for src, dst, kind in filtered_edges
+        filtered_edges = [(src, dst, kind, w) for src, dst, kind, w in filtered_edges
                          if src in top_ids and dst in top_ids]
         # Recompute degree after cap so `links` field is accurate.
         degree = {nid: 0 for nid in top_ids}
-        for src, dst, _ in filtered_edges:
+        for src, dst, _, _w in filtered_edges:
             degree[src] = degree.get(src, 0) + 1
             degree[dst] = degree.get(dst, 0) + 1
     else:
@@ -242,7 +242,7 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     row_by_id = {r[0]: r for r in rows}
     nodes = []
     for nid in top_ids:
-        nid_, title, scope_id, owner_id, updated_at, source_path = row_by_id[nid]
+        nid_, title, scope_id, owner_id, updated_at, source_path, importance = row_by_id[nid]
         nodes.append({
             "id": nid_,
             "label": title or nid_,
@@ -251,11 +251,12 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
             "path": source_path,
             "links": degree.get(nid_, 0),
             "updated": updated_at.isoformat() if updated_at else None,
+            "importance": importance or 0,
         })
 
     return {
         "nodes": nodes,
-        "edges": [[src, dst, kind] for src, dst, kind in filtered_edges],
+        "edges": [[src, dst, kind, round(weight or 0, 2)] for src, dst, kind, weight in filtered_edges],
     }
 
 class CaptureReq(BaseModel):
