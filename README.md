@@ -14,6 +14,7 @@ keys, nothing leaves your machine.
 ![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)
 ![Electron](https://img.shields.io/badge/desktop-Electron-47848F?logo=electron&logoColor=white)
 ![Local-first](https://img.shields.io/badge/local--first-no%20cloud-22c55e)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 ![Status](https://img.shields.io/badge/stage-active%20development-orange)
 
 ```
@@ -112,5 +113,5 @@ See `docs/superpowers/specs/` for the design spec and `docs/BACKLOG.md` for the 
 
 ## 📜 License
 
-© 2026 — All rights reserved. Free for personal use; broader freeware/open distribution is planned.
-Until a license file lands here, treat this as source-available, not open source.
+Licensed under the **[Apache License 2.0](LICENSE)** — free to use, modify, and distribute, with an
+explicit patent grant. © 2026 Anish Ivaturi.
