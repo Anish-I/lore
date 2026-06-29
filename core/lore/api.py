@@ -456,6 +456,23 @@ def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     _upkeep_last_stats = stats
     return stats
 
+
+class EnrichReq(BaseModel):
+    tenant: str = "solo"
+    limit: int = 40
+    force: bool = False
+
+
+@app.post("/enrich")
+def enrich(req: EnrichReq):
+    """Optional cloud-LLM relation enrichment: infer typed relations from descriptive prose,
+    constrained to existing note titles, origin='llm', never overwriting stronger heuristic edges.
+    Requires TOGETHER_API_KEY. Body: {tenant, limit?, force?}. Returns {notesProcessed, edges, skipped}."""
+    from .llm_relations import enrich_relations
+    if not os.environ.get("TOGETHER_API_KEY"):
+        raise HTTPException(status_code=400, detail="TOGETHER_API_KEY not set on the backend")
+    return enrich_relations(_conn, req.tenant, limit=max(1, min(req.limit, 200)), force=req.force)
+
 @app.get("/upkeep/status")
 def upkeep_status():
     """Return last upkeep run timestamp and stats.
