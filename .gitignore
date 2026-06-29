@@ -19,6 +19,7 @@ __pycache__/
 # data stores & runtime state
 .qdrant/
 .pgdata/
+.pgdata-mac-test/
 data/
 logs/
 *.log

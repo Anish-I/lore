@@ -33,7 +33,7 @@ def extractive_answer(question, chunks) -> str:
     if not chunks:
         return "No relevant knowledge found in your scope."
     lines = [f"- {c['text'].strip()[:200]}  [{c['title']}]" for c in chunks[:4]]
-    return "Based on your vault:\n" + "\n".join(lines)
+    return "Based on your library:\n" + "\n".join(lines)
 
 def answer(question, chunks, model=None):
     """Try the local LLM (optionally a caller-chosen model); fall back to extractive. Returns (text, engine)."""

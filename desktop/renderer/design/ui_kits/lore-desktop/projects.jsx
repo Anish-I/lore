@@ -79,7 +79,7 @@ function ProjectsView({ projects, groups, onOpen }) {
                 </span>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>{g.name}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{g.members} members · {g.vaults} vaults</div>
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{g.members} members · {g.vaults} libraries</div>
                 </div>
                 <PrScope scope={g.scope} />
                 <PrButton variant="ghost" iconTrailing="chevron-right">Open</PrButton>
@@ -93,18 +93,36 @@ function ProjectsView({ projects, groups, onOpen }) {
 }
 
 const SCOPE_FILL = { team: 'var(--jade-500)', enterprise: 'var(--azure-500)', private: 'var(--obsidian-400)' };
+function prScopeFill(scope) { return SCOPE_FILL[scope] || 'var(--brand-fg)'; }
 
 function GraphView({ graph, onOpen }) {
   const [hover, setHover] = React.useState(null);
   const [sel, setSel] = React.useState(graph.nodes[0] ? graph.nodes[0].id : null);
-  const [filters, setFilters] = React.useState({ team: true, enterprise: true, private: true });
+  const scopes = React.useMemo(() => {
+    const out = [], seen = new Set();
+    for (const n of graph.nodes || []) {
+      const s = n.scope ? String(n.scope).trim() : '';
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); out.push(s); }
+    }
+    return out;
+  }, [graph]);
+  const [filters, setFilters] = React.useState({});
+  React.useEffect(() => {
+    setFilters((prev) => {
+      const next = {};
+      for (const s of scopes) next[s] = prev[s] !== false;
+      return next;
+    });
+  }, [scopes.join('\u0000')]);
   const byId = Object.fromEntries(graph.nodes.map((n) => [n.id, n]));
   const neighbors = React.useMemo(() => {
     const s = new Set();
     if (sel) graph.edges.forEach(([a, b]) => { if (a === sel) s.add(b); if (b === sel) s.add(a); });
     return s;
   }, [sel, graph]);
-  const visible = (id) => byId[id] && filters[byId[id].scope];
+  const visible = (id) => byId[id] && (!byId[id].scope || filters[byId[id].scope] !== false);
   const focus = hover || sel;
   const selNode = sel && byId[sel];
 
@@ -115,14 +133,14 @@ function GraphView({ graph, onOpen }) {
         <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' }}>{graph.nodes.length} notes · {graph.edges.length} links in your scope</p>
       </div>
       <div style={{ position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8 }}>
-        {['team', 'enterprise', 'private'].map((k) => (
-          <button key={k} onClick={() => setFilters((f) => ({ ...f, [k]: !f[k] }))} style={{
+        {scopes.map((k) => (
+          <button key={k} onClick={() => setFilters((f) => ({ ...f, [k]: f[k] === false }))} style={{
             display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', cursor: 'pointer',
             border: '1px solid var(--border)', borderRadius: 'var(--radius-full)',
-            background: filters[k] ? 'var(--surface-raised)' : 'transparent',
-            opacity: filters[k] ? 1 : 0.45, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)',
+            background: filters[k] !== false ? 'var(--surface-raised)' : 'transparent',
+            opacity: filters[k] !== false ? 1 : 0.45, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)',
           }}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: SCOPE_FILL[k] }} />{k}
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: prScopeFill(k) }} />{k}
           </button>
         ))}
       </div>
@@ -146,7 +164,7 @@ function GraphView({ graph, onOpen }) {
               onMouseEnter={() => setHover(n.id)} onMouseLeave={() => setHover(null)}
               onClick={() => setSel(n.id)} onDoubleClick={() => onOpen && onOpen(n.id)}>
               {sel === n.id && <circle cx={n.x} cy={n.y} r={n.r / 4 + 3.4} fill="none" stroke="var(--brand-bg)" strokeWidth={0.6} />}
-              <circle cx={n.x} cy={n.y} r={n.r / 4 + 1.6} fill={SCOPE_FILL[n.scope]} stroke="var(--surface-canvas)" strokeWidth={0.5}
+              <circle cx={n.x} cy={n.y} r={n.r / 4 + 1.6} fill={prScopeFill(n.scope)} stroke="var(--surface-canvas)" strokeWidth={0.5}
                 opacity={dim ? 0.4 : 1} />
               <text x={n.x} y={n.y + n.r / 4 + 4.6} textAnchor="middle"
                 style={{ fontFamily: 'var(--font-sans)', fontSize: 2.5, fontWeight: lit ? 600 : 500, fill: lit ? 'var(--text-strong)' : 'var(--text-muted)', opacity: dim ? 0.5 : 1 }}>{n.label}</text>

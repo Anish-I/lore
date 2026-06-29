@@ -1,6 +1,6 @@
 /* global React */
 // Lore desktop — WIRED root app. Real file tree, note content, presets, Ask.
-// + multi-tab editor (notes & buckets), quick-switcher search, Ask source (me/team/both).
+// + multi-tab editor (notes & buckets), quick-switcher search, Ask source scopes.
 const M = window.LoreMock;
 
 function toggleFolder(tree, id) {
@@ -20,12 +20,42 @@ function flatten(tree, acc = []) {
 }
 function firstNote(tree) { return flatten(tree)[0] || null; }
 
+function cleanScope(scope) {
+  return scope == null ? '' : String(scope).trim();
+}
+
+function uniqScopes(values = []) {
+  const out = [];
+  const seen = new Set();
+  const list = Array.isArray(values) ? values.flat() : [values];
+  for (const raw of list) {
+    const s = cleanScope(raw);
+    if (!s) continue;
+    const key = s.toLowerCase();
+    if (!seen.has(key)) { seen.add(key); out.push(s); }
+  }
+  return out;
+}
+
+function collectTreeScopes(tree, out = []) {
+  for (const n of tree || []) {
+    if (n.scope) out.push(n.scope);
+    if (n.children) collectTreeScopes(n.children, out);
+  }
+  return out;
+}
+
+function scopeLabel(scope) {
+  const s = cleanScope(scope);
+  return s || 'None';
+}
+
 function parseNote(raw, p) {
-  let scope = 'private', tags = [], body = raw || '';
+  let scope = null, tags = [], body = raw || '';
   const fm = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/);
   if (fm) {
     const meta = fm[1];
-    const sc = meta.match(/^scope:\s*([a-zA-Z]+)/m); if (sc) scope = sc[1].toLowerCase();
+    const sc = meta.match(/^scope:\s*(.+)$/m); if (sc) scope = String(sc[1]).trim().replace(/^['"]|['"]$/g, '') || null;
     const tg = meta.match(/^tags:\s*\[(.*?)\]/m); if (tg) tags = tg[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
     body = body.slice(fm[0].length);
   }
@@ -33,7 +63,7 @@ function parseNote(raw, p) {
   const h1 = body.match(/^#\s+(.+)$/m);
   const title = h1 ? h1[1].trim() : base.replace(/\.md$/i, '');
   const outline = [...body.matchAll(/^#{1,3}\s+(.+)$/gm)].map((m) => m[1].trim());
-  return { id: p, path: base, title, scope, owner: 'you', updated: 'on disk', tags, backlinks: [], outline: outline.length ? outline : [title], body: window.mdToRuns(body), raw };
+  return { id: p, path: base, title, scope, owner: null, updated: 'on disk', tags, backlinks: [], outline: outline.length ? outline : [title], body: window.mdToRuns(body), raw };
 }
 
 function evidenceFromTrace(trace) {
@@ -43,13 +73,16 @@ function evidenceFromTrace(trace) {
   });
 }
 
-// scopes for "ask from me / team / both"
-function sourceScopes(scopes, source) {
-  const mine = scopes.filter((s) => /private/i.test(s));
-  const shared = scopes.filter((s) => !/private/i.test(s));
-  if (source === 'me') return mine.length ? mine : scopes;
-  if (source === 'team') return shared.length ? shared : scopes;
-  return scopes;
+function sourceScopes(scopes = [], source) {
+  const clean = uniqScopes(scopes);
+  if (!source || source === 'all') return clean;
+  const selected = clean.find((s) => s.toLowerCase() === String(source).toLowerCase());
+  return selected ? [selected] : clean;
+}
+
+function sourceLabel(source, scopes = []) {
+  if (!source || source === 'all') return scopes.length > 1 ? `all ${scopes.length} scopes` : (scopes[0] || 'scope');
+  return scopeLabel(source);
 }
 
 function SearchPalette({ notes, onPick, onClose }) {
@@ -96,6 +129,16 @@ function SearchPalette({ notes, onPick, onClose }) {
 // (--sidebar-width / --context-width), so no per-component plumbing is needed.
 function PaneResizer({ side }) {
   const ref = React.useRef(null);
+  const applyWidth = (delta) => {
+    const el = ref.current;
+    const target = side === 'sidebar' ? el?.previousElementSibling : el?.nextElementSibling;
+    if (!target) return;
+    const vName = side === 'sidebar' ? '--sidebar-width' : '--context-width';
+    const min = side === 'sidebar' ? 180 : 220, max = side === 'sidebar' ? 520 : 600;
+    const current = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(vName)) || target.getBoundingClientRect().width;
+    const next = Math.max(min, Math.min(max, current + delta));
+    document.documentElement.style.setProperty(vName, next + 'px');
+  };
   const onDown = (e) => {
     e.preventDefault();
     const el = ref.current;
@@ -117,10 +160,18 @@ function PaneResizer({ side }) {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
     document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
   };
-  return <div ref={ref} onPointerDown={onDown} title="Drag to resize"
-    style={{ width: 6, flexShrink: 0, cursor: 'col-resize', zIndex: 5, background: 'transparent', transition: 'background 120ms' }}
+  const onKeyDown = (e) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const dir = e.key === 'ArrowRight' ? 1 : -1;
+    applyWidth(side === 'sidebar' ? dir * 16 : -dir * 16);
+  };
+  return <div ref={ref} onPointerDown={onDown} onKeyDown={onKeyDown} role="separator" tabIndex={0} aria-orientation="vertical" title="Drag or use arrow keys to resize"
+    style={{ width: 10, flexShrink: 0, cursor: 'col-resize', zIndex: 5, background: 'transparent', transition: 'background 120ms', outline: '2px solid transparent', outlineOffset: -2 }}
     onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--brand-bg)')}
-    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')} />;
+    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+    onFocus={(e) => { e.currentTarget.style.background = 'var(--brand-bg)'; e.currentTarget.style.outlineColor = 'var(--brand-fg)'; }}
+    onBlur={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.outlineColor = 'transparent'; }} />;
 }
 
 // Per-view error boundary — a single view's crash must never blank the whole app.
@@ -146,11 +197,38 @@ class LoreErrorBoundary extends React.Component {
   }
 }
 
+function normalizeProgress(payload) {
+  const p = payload || {};
+  const done = Number(p.done);
+  const total = Number(p.total);
+  const errors = Number(p.errors);
+  return {
+    ...p,
+    phase: p.phase || 'working',
+    done: Number.isFinite(done) ? done : 0,
+    total: Number.isFinite(total) ? total : 0,
+    current: p.current || '',
+    errors: Number.isFinite(errors) ? errors : 0,
+  };
+}
+
+function shouldShowProgress(p) {
+  if (p.phase !== 'done') return true;
+  if (p.errors > 0 || p.done > 0 || p.total > 0) return true;
+  return Boolean(p.current && p.current.toLowerCase() !== 'upkeep complete');
+}
+
+function progressCountText(p) {
+  if (p.total > 0) return `${p.done}/${p.total}`;
+  if (p.done > 0) return String(p.done);
+  return '';
+}
+
 function App() {
   const [theme, setTheme] = React.useState('dark');
   const [view, setView] = React.useState('workspace');
   const [askOpen, setAskOpen] = React.useState(false);
-  const [askSource, setAskSource] = React.useState('both');
+  const [askSource, setAskSource] = React.useState('all');
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [treeData, setTreeData] = React.useState(null);
   const [tabs, setTabs] = React.useState([]);            // [{id,title,kind,bucket?}]
@@ -158,10 +236,11 @@ function App() {
   const [notes, setNotes] = React.useState({});          // path -> parsed note
   const [drafts, setDrafts] = React.useState({});        // path -> raw text
   const [mode, setMode] = React.useState('read');
-  const [scope, setScope] = React.useState('team');
+  const [scope, setScope] = React.useState(null);
   const [messages, setMessages] = React.useState([]);
   const [asking, setAsking] = React.useState(false);
   const [presets, setPresets] = React.useState(null);
+  const [appConfig, setAppConfig] = React.useState(null);
   const [personaIdx, setPersonaIdx] = React.useState(0);
   const [backendOk, setBackendOk] = React.useState(true);
   const [showOnboarding, setShowOnboarding] = React.useState(false);
@@ -175,13 +254,40 @@ function App() {
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
   const timer = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
+  const progressDoneTimerRef = React.useRef(null);
 
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
 
+  const updateProgress = React.useCallback((payload) => {
+    const next = normalizeProgress(payload);
+    if (progressDoneTimerRef.current) {
+      clearTimeout(progressDoneTimerRef.current);
+      progressDoneTimerRef.current = null;
+    }
+    setProgressState(next);
+    if (!shouldShowProgress(next)) {
+      setShowProgress(false);
+      return;
+    }
+    setShowProgress(true);
+    if (next.phase === 'done') {
+      progressDoneTimerRef.current = setTimeout(() => {
+        setShowProgress(false);
+        progressDoneTimerRef.current = null;
+      }, next.errors > 0 ? 6000 : 1800);
+    }
+  }, []);
+
+  React.useEffect(() => () => {
+    if (progressUnsubRef.current) progressUnsubRef.current();
+    if (progressDoneTimerRef.current) clearTimeout(progressDoneTimerRef.current);
+  }, []);
+
   const tree = treeData ? treeData.tree : [];
   const allNotes = React.useMemo(() => flatten(tree), [tree]);
+  const noteScopes = React.useMemo(() => uniqScopes(collectTreeScopes(tree)), [tree]);
 
-  // Knowledge bases = the vault's top-level folders. Selecting them filters BOTH the file tree and the graph.
+  // Knowledge bases = the library's top-level folders. Selecting them filters BOTH the file tree and the graph.
   const bases = React.useMemo(() => tree.filter((n) => n.kind === 'folder').map((n) => n.name), [tree]);
   const baseOf = React.useCallback((p) => {
     if (!treeData || !p) return null;
@@ -216,9 +322,30 @@ function App() {
     }
     return m;
   }, [graphData, baseOf]);
-  const persona = (presets && presets.personas && presets.personas[personaIdx]) || { label: 'You', scopes: ['alice-private', 'eng-team', 'acme-corp'] };
-  const tenant = (presets && presets.tenant) || 'acme';
-  const suggestions = (presets && presets.examples) || ['What do we know about the Acme renewal risk?'];
+  const graphScopes = React.useMemo(() => uniqScopes(graphData ? graphData.nodes.map((n) => n.scope) : []), [graphData]);
+  const presetPersonas = (presets && Array.isArray(presets.personas)) ? presets.personas : [];
+  const configScopes = appConfig && appConfig.scope ? uniqScopes([appConfig.scope]) : [];
+  const currentPersona = presetPersonas[personaIdx] || { label: null, scopes: [] };
+  const personaScopes = uniqScopes(currentPersona.scopes || []);
+  const activeScopes = personaScopes.length ? personaScopes : configScopes;
+  const persona = { ...currentPersona, label: currentPersona.label || null, scopes: activeScopes };
+  const scopeOptions = React.useMemo(() => uniqScopes([...configScopes, ...activeScopes, ...noteScopes, ...graphScopes, scope]), [configScopes.join('\u0000'), activeScopes.join('\u0000'), noteScopes.join('\u0000'), graphScopes.join('\u0000'), scope]);
+  const askSourceOptions = React.useMemo(() => {
+    const scopes = persona.scopes || [];
+    return [
+      { value: 'all', label: scopes.length > 1 ? `All (${scopes.length})` : 'Configured scope', icon: 'layers' },
+      ...scopes.map((s) => ({ value: s, label: scopeLabel(s), icon: 'tag' })),
+    ];
+  }, [(persona.scopes || []).join('\u0000')]);
+  const tenant = (appConfig && appConfig.tenant) || (presets && presets.tenant) || null;
+  const identityReady = Boolean(tenant && persona.scopes && persona.scopes.length);
+  const suggestions = (presets && Array.isArray(presets.examples)) ? presets.examples : [];
+
+  React.useEffect(() => {
+    if (askSource !== 'all' && !(persona.scopes || []).some((s) => s.toLowerCase() === String(askSource).toLowerCase())) {
+      setAskSource('all');
+    }
+  }, [askSource, (persona.scopes || []).join('\u0000')]);
 
   const loadNote = React.useCallback(async (id) => {
     if (notes[id]) return notes[id];
@@ -270,24 +397,30 @@ function App() {
 
   const loadTree = React.useCallback(async (root) => {
     const td = await window.lore.readTree(root);
-    if (td) { setTreeData(td); const f = firstNote(td.tree); if (f) openNote(f.id); }
+    if (!td) return false;
+    setTreeData(td);
+    const f = firstNote(td.tree);
+    if (f) openNote(f.id);
+    return true;
   }, [openNote]);
 
   React.useEffect(() => {
     (async () => {
       try { const p = await window.lore.presets(); setPresets(p); setBackendOk(true); } catch { setBackendOk(false); }
-      // Resolve the vault root: prefer the CONFIGURED vault (e.g. your Obsidian folder) so the
-      // workspace tree, node-clicks and saves all operate on your real .md files. Falls back to
-      // the bundled default. loadTree() registers the root with the main-process path-guard.
+      // Resolve only explicitly configured roots. No bundled/sample library is assumed.
       let existingCfg = null;
       try { existingCfg = window.lore?.config?.get ? await window.lore.config.get() : null; } catch { /* none */ }
-      let autoRoot = (existingCfg && Array.isArray(existingCfg.roots) && existingCfg.roots[0]) || null;
-      if (!autoRoot) { try { autoRoot = await window.lore.defaultVault(); } catch { /* none */ } }
-      if (autoRoot) { try { await loadTree(autoRoot); } catch { /* none */ } }
+      setAppConfig(existingCfg || null);
+      const rootsToTry = [];
+      const configuredRoot = (existingCfg && Array.isArray(existingCfg.roots) && existingCfg.roots[0]) || null;
+      if (configuredRoot) rootsToTry.push(configuredRoot);
+      let loadedRoot = false;
+      for (const root of rootsToTry) {
+        try { if (await loadTree(root)) { loadedRoot = true; break; } } catch { /* try next */ }
+      }
       if (window.lore.onVaultChanged) window.lore.onVaultChanged(() => { if (treeData) loadTree(treeData.root); });
-      // first-run: show the Welcome modal instead of silently auto-configuring.
-      // The Welcome's Skip button performs the same zero-config path in one click.
-      if (!existingCfg) setShowOnboarding(true);
+      const needsSetupRefresh = !existingCfg || Number(existingCfg.setupVersion || 0) < 5;
+      if (needsSetupRefresh || !loadedRoot) setShowOnboarding(true);
     })();
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen((o) => !o); }
@@ -297,42 +430,87 @@ function App() {
     return () => { clearInterval(timer.current); window.removeEventListener('keydown', onKey); };
   }, []); // eslint-disable-line
 
+  const applyVaultTree = React.useCallback(async (td) => {
+    if (!td || !td.root) return;
+    try {
+      if (window.lore?.config?.set) {
+        const nextCfg = await window.lore.config.set({ roots: [td.root] });
+        setAppConfig(nextCfg || appConfig);
+      }
+    } catch { /* non-fatal */ }
+    setTreeData(td);
+    setKbFilter([]);
+    setTabs([]);
+    setNotes({});
+    setDrafts({});
+    const f = firstNote(td.tree);
+    if (f) openNote(f.id);
+    else setActiveId(null);
+  }, [appConfig, openNote]);
+
   const openVault = async () => {
     const td = await window.lore.pickVault();
-    if (td) { setTreeData(td); setTabs([]); setNotes({}); setDrafts({}); const f = firstNote(td.tree); if (f) openNote(f.id); else setActiveId(null); }
+    if (td) await applyVaultTree(td);
+  };
+
+  const createLoreVault = async () => {
+    if (!window.lore?.createVault) {
+      updateProgress({ phase: 'done', done: 0, total: 0, current: 'Library creation is not available.', errors: 1 });
+      return;
+    }
+    try {
+      const td = await window.lore.createVault({ autoPlace: true });
+      if (!td) return;
+      if (td.ok === false) {
+        updateProgress({ phase: 'done', done: 0, total: 0, current: td.error || 'Could not create the library.', errors: 1 });
+        return;
+      }
+      await applyVaultTree(td);
+    } catch (e) {
+      updateProgress({ phase: 'done', done: 0, total: 0, current: String((e && e.message) || e), errors: 1 });
+    }
   };
 
   // flags: { scan?: boolean, openWizards?: boolean }
-  // Skip passes no flags → scan defaults to true (zero-config scrape). Finish passes explicit values.
   const handleOnboardingDone = React.useCallback(async (cfg, flags = {}) => {
     setShowOnboarding(false);
-    const shouldScrape = flags.scan !== false;
-    if (shouldScrape && window.lore?.startScrape) {
-      try { await window.lore.startScrape(cfg); } catch { /* non-fatal */ }
+    setAppConfig(cfg || null);
+    const shouldScrape = flags.scan === true;
+    if (progressUnsubRef.current) {
+      progressUnsubRef.current();
+      progressUnsubRef.current = null;
     }
-    if (window.lore?.scrapeProgress) {
+    if (shouldScrape && window.lore?.scrapeProgress) {
       if (progressUnsubRef.current) progressUnsubRef.current();
       const unsub = window.lore.scrapeProgress((p) => {
-        setProgressState(p); setShowProgress(true);
-        if (p.phase === 'done') { if (progressUnsubRef.current) { progressUnsubRef.current(); progressUnsubRef.current = null; } }
+        const next = normalizeProgress(p);
+        updateProgress(next);
+        if (next.phase === 'done') { if (progressUnsubRef.current) { progressUnsubRef.current(); progressUnsubRef.current = null; } }
       });
       progressUnsubRef.current = unsub;
     }
+    if (shouldScrape && window.lore?.startScrape) {
+      try { await window.lore.startScrape(cfg); } catch { updateProgress({ phase: 'done', done: 0, total: 0, current: 'scan failed', errors: 1 }); }
+    }
     if (cfg.roots && cfg.roots[0]) { try { await loadTree(cfg.roots[0]); } catch { /* non-fatal */ } }
     if (flags.openWizards) setView('buckets');
-  }, [loadTree]);
+    if (flags.openImport) setShowImportModal(true);
+  }, [loadTree, updateProgress]);
 
-  // Load real graph data when graph view is active or persona changes
+  // Load real graph data when graph view is active and identity is configured.
   React.useEffect(() => {
     if (view !== 'graph' || !window.lore?.graph) return;
     setGraphLoading(true);
-    const scopes = (presets && presets.personas && presets.personas[personaIdx])
-      ? presets.personas[personaIdx].scopes
-      : ['alice-private', 'eng-team', 'acme-corp'];
-    window.lore.graph(scopes).then((g) => {
+    const scopes = persona.scopes || [];
+    if (!identityReady) {
+      setGraphData({ nodes: [], edges: [] });
+      setGraphLoading(false);
+      return;
+    }
+    window.lore.graph({ tenant, scopes }).then((g) => {
       setGraphData(g); setGraphLoading(false);
     }).catch(() => setGraphLoading(false));
-  }, [view, personaIdx, presets, graphNonce]);
+  }, [view, tenant, identityReady, (persona.scopes || []).join('\u0000'), graphNonce]);
 
   // After an import: refresh the graph and the file tree so new nodes/files show up.
   const reloadAfterImport = React.useCallback(() => {
@@ -344,11 +522,12 @@ function App() {
     const ts = Date.now().toString(36).slice(-5);
     const sep = treeData.root.includes('/') ? '/' : '\\';
     const path = treeData.root.replace(/[\\/]+$/, '') + sep + 'Untitled ' + ts + '.md';
-    const content = '---\nscope: private\n---\n\n# New note\n\n';
+    const noteScope = scope || (appConfig && appConfig.scope);
+    const content = `${noteScope ? `---\nscope: ${noteScope}\n---\n\n` : ''}# New note\n\n`;
     try { await window.lore.writeNote(path, content); } catch { return; }
     await openNote(path);
     setMode('edit');
-  }, [treeData, openNote]);
+  }, [treeData, openNote, scope, appConfig]);
 
   const onImport = React.useCallback(() => {
     setShowImportModal(true);
@@ -378,6 +557,10 @@ function App() {
     setAskOpen(true); setAsking(true);
     setMessages((m) => [...m, { role: 'user', text: q }, { role: 'answer', shown: [], streaming: true }]);
     const scopes = sourceScopes(persona.scopes, askSource);
+    if (!tenant || !scopes.length) {
+      setMessages((m) => { const c = m.slice(); c[c.length - 1] = { role: 'answer', shown: [{ x: 'Finish setup with an account, library, and purpose before asking Lore.' }], streaming: false }; return c; });
+      setAsking(false); return;
+    }
     let trace;
     try { trace = await window.lore.ask(q, scopes, tenant, model); }
     catch (e) {
@@ -387,7 +570,8 @@ function App() {
     const words = String(trace.answer || 'No notes in your scope mention this yet.').split(/(\s+)/).filter(Boolean).map((w) => ({ x: w }));
     const evidence = evidenceFromTrace(trace);
     const sources = (trace.final || []).length;
-    const scopesLabel = `${askSource} · ${sources} chunks · ${(trace.scopes_asked || scopes).join(', ')}`;
+    const scopesAsked = trace.scopes_asked || scopes;
+    const scopesLabel = `${sourceLabel(askSource, scopes)} · ${sources} chunks · ${scopesAsked.join(', ')}`;
     let i = 0;
     clearInterval(timer.current);
     timer.current = setInterval(() => {
@@ -415,7 +599,8 @@ function App() {
   const activeNote = activeTab && activeTab.kind === 'note' ? notes[activeId] : null;
   const editorNote = activeNote && { ...activeNote, raw: drafts[activeId], onEdit: setDraft };
   const activeBucket = activeTab && activeTab.kind === 'bucket' ? activeTab.bucket : null;
-  const workspace = { name: treeData ? treeData.name : 'No vault', scope: (presets && presets.tenant === 'solo') ? 'private' : 'team', indexedLabel: treeData ? `${treeData.indexed} notes` : 'open a vault' };
+  const workspace = { name: treeData ? treeData.name : 'No library', scope: (appConfig && appConfig.scope) || null, indexedLabel: treeData ? `${treeData.indexed} notes` : 'open a library' };
+  const progressCount = progressCountText(progressState);
 
   // The open note's connections (from the knowledge graph edges) — shown in the ContextPane.
   const connections = React.useMemo(() => {
@@ -442,7 +627,7 @@ function App() {
     `What are the open risks or gaps in ${b.name}?`,
   ].slice(0, 4) : suggestions;
   const askSuggestions = activeBucket ? bucketQuestions(activeBucket) : suggestions;
-  const askPanel = <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={() => setAskOpen(false)} source={askSource} onSource={setAskSource} />;
+  const askPanel = <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={() => setAskOpen(false)} source={askSource} onSource={setAskSource} sourceOptions={askSourceOptions} identityReady={identityReady} onSetup={() => { setView('settings'); setShowOnboarding(true); }} />;
 
   const EmptyEditor = () => {
     const [draftQ, setDraftQ] = React.useState('');
@@ -464,7 +649,7 @@ function App() {
                 value={draftQ}
                 onChange={(e) => setDraftQ(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') submitAsk(); }}
-                placeholder="Ask your vault anything…"
+                placeholder="Ask your library anything…"
                 style={{ flex: 1, padding: '10px 14px', borderRadius: 8, border: '1.5px solid var(--border-subtle)', background: 'var(--surface-raised)', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 14, outline: 'none' }}
               />
               <D.Button variant="primary" icon="sparkles" onClick={submitAsk}>Ask</D.Button>
@@ -477,29 +662,43 @@ function App() {
         ) : (
           <React.Fragment>
             <D.Icon name="folder-open" size={34} style={{ color: 'var(--text-faint)' }} />
-            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, color: 'var(--text-body)' }}>Open a vault to start.</div>
-            <D.Button variant="primary" icon="folder" onClick={openVault}>Open vault folder…</D.Button>
-            {Onboarding && (
-              <D.Button variant="ghost" icon="settings" onClick={() => setShowOnboarding(true)}>Set up…</D.Button>
-            )}
+            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 18, color: 'var(--text-body)' }}>Open a library to start.</div>
+            <div style={{ display: 'flex', gap: 8, marginTop: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
+              <D.Button variant="primary" icon="sparkles" onClick={createLoreVault}>Let Lore choose path</D.Button>
+              <D.Button variant="secondary" icon="folder" onClick={openVault}>Open library folder...</D.Button>
+              {Onboarding && (
+                <D.Button variant="ghost" icon="settings" onClick={() => setShowOnboarding(true)}>Set up…</D.Button>
+              )}
+            </div>
           </React.Fragment>
         )}
       </div>
     );
   };
 
-  const GraphEmptyState = ({ loading }) => (
+  const GraphEmptyState = ({ loading }) => {
+    const needsIdentity = !loading && !identityReady;
+    const hasVault = Boolean(treeData);
+    return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: 'var(--surface-canvas)', color: 'var(--text-subtle)' }}>
       <img src="design/assets/sprites/node-orb.png" alt="" style={{ width: 56, height: 56, opacity: 0.7 }} onError={(e) => { e.target.style.display = 'none'; }} />
-      <div style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)' }}>{loading ? 'Loading graph…' : 'No notes in your scope yet.'}</div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)' }}>{loading ? 'Fetching nodes and edges…' : 'Index some notes to see the knowledge graph.'}</div>
+      <div style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)' }}>{loading ? 'Loading graph…' : needsIdentity ? 'Setup is not complete yet.' : 'No graph nodes yet.'}</div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', maxWidth: 360, textAlign: 'center', lineHeight: 1.5 }}>{loading ? 'Fetching nodes and edges…' : needsIdentity ? 'Choose an account and purpose so Lore knows which local index to query.' : hasVault ? 'Import or index notes to build the knowledge graph.' : 'Open a library, then import or index notes.'}</div>
+      {!loading && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
+          {needsIdentity && <D.Button variant="primary" icon="settings" onClick={() => setShowOnboarding(true)}>Finish setup</D.Button>}
+          {!hasVault && <D.Button variant={needsIdentity ? 'secondary' : 'primary'} icon="folder-open" onClick={openVault}>Open library</D.Button>}
+          {hasVault && !needsIdentity && <D.Button variant="secondary" icon="upload" onClick={() => setShowImportModal(true)}>Import notes</D.Button>}
+        </div>
+      )}
     </div>
-  );
+    );
+  };
 
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-sunken)' }}
       onDragOver={(e) => { e.preventDefault(); }} onDrop={onDropImport}>
-      <Titlebar theme={theme} onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')} onAsk={() => setAskOpen(true)} onSettings={() => setView('settings')} onProfile={() => setView('settings')} onImport={onImport} />
+      <Titlebar theme={theme} onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')} onSearch={() => setSearchOpen(true)} onAsk={() => setAskOpen(true)} onSettings={() => setView('settings')} onProfile={() => setView('settings')} onImport={onImport} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         <Rail view={view} askOpen={askOpen}
           onView={(v) => { if (v === 'search') setSearchOpen(true); else setView(v); }}
@@ -514,7 +713,7 @@ function App() {
             {activeBucket
               ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onOpen={() => setAskOpen(true)} />
               : (editorNote
-                ? <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} />
+                ? <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
                 : <EmptyEditor />)}
             {!askOpen && editorNote && <PaneResizer side="context" />}
             {askOpen ? askPanel : (editorNote && <ContextPane note={editorNote} connections={connections} onOpenNote={openNote} onAsk={() => setAskOpen(true)} />)}
@@ -544,8 +743,8 @@ function App() {
           </React.Fragment>
         )}
         {view === 'buckets' && (<React.Fragment><BucketsView buckets={M.buckets} onAsk={() => setAskOpen(true)} onOpen={openBucket} onChanged={reloadAfterImport} />{askOpen && askPanel}</React.Fragment>)}
-        {view === 'settings' && <SettingsView settings={M.settings} />}
-        {view === 'hooks' && HooksView && <HooksView />}
+        {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onOpenSetup={() => setShowOnboarding(true)} />}
+        {view === 'hooks' && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} onOpenSetup={() => setShowOnboarding(true)} />}
         </LoreErrorBoundary>
 
         {searchOpen && <SearchPalette notes={allNotes} onPick={openNote} onClose={() => setSearchOpen(false)} />}
@@ -553,12 +752,13 @@ function App() {
         {showProgress && (
           <div style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 30, background: 'var(--surface-overlay)', borderBottom: '1px solid var(--border)', padding: '6px 14px', display: 'flex', alignItems: 'center', gap: 10, fontFamily: 'var(--font-mono)', fontSize: 11, backdropFilter: 'blur(4px)' }}>
             <span style={{ color: 'var(--brand-fg)', textTransform: 'uppercase', letterSpacing: '0.05em', fontSize: 10 }}>{progressState.phase}</span>
-            <span style={{ color: 'var(--text-muted)' }}>{progressState.done}/{progressState.total || '?'}</span>
+            {progressCount && <span style={{ color: 'var(--text-muted)' }}>{progressCount}</span>}
             <span style={{ flex: 1, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{progressState.current}</span>
             {progressState.errors > 0 && <span style={{ color: 'var(--clay-400)' }}>{progressState.errors} error{progressState.errors !== 1 ? 's' : ''}</span>}
-            {progressState.phase === 'done' && <span style={{ color: 'var(--jade-400)' }}>Done</span>}
             {progressState.phase === 'done' && (
-              <button onClick={() => setShowProgress(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '0 4px' }}>dismiss</button>
+              <button onClick={() => setShowProgress(false)} title="Dismiss" aria-label="Dismiss progress" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', padding: 4 }}>
+                <D.Icon name="x" size={12} />
+              </button>
             )}
           </div>
         )}
@@ -592,14 +792,18 @@ function App() {
 
       <div style={{ height: 'var(--statusbar-height)', display: 'flex', alignItems: 'center', gap: 14, padding: '0 12px', background: 'var(--surface-base)', borderTop: '1px solid var(--border-subtle)', flexShrink: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
         <button onClick={openVault} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border)', background: 'var(--surface-inset)', color: 'var(--text-muted)', borderRadius: 'var(--radius-sm)', padding: '2px 8px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-          <D.Icon name="folder-open" size={12} />{treeData ? treeData.name : 'Open vault…'}
+          <D.Icon name="folder-open" size={12} />{treeData ? treeData.name : 'Open library...'}
         </button>
         <button onClick={() => setSearchOpen(true)} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-muted)', borderRadius: 'var(--radius-sm)', padding: '2px 8px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 }}>
           <D.Icon name="search" size={12} />search <D.Kbd>⌘K</D.Kbd>
         </button>
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
           <D.Icon name="circle-dot" size={12} style={{ color: backendOk ? 'var(--jade-400)' : 'var(--clay-400)' }} />
-          {backendOk ? `${tenant} · backend ready` : 'backend offline (:8099)'}
+          {backendOk ? 'backend ready' : 'backend offline (:8099)'}
+        </span>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+          <D.Icon name={identityReady ? 'key-round' : 'alert-circle'} size={12} style={{ color: identityReady ? 'var(--brand-fg)' : 'var(--text-faint)' }} />
+          {identityReady ? `${tenant} · ${(persona.scopes || []).join(', ')}` : 'setup incomplete'}
         </span>
         <div style={{ flex: 1 }} />
         <span>{tabs.length} tab{tabs.length === 1 ? '' : 's'}</span>

@@ -50,29 +50,29 @@ function Evidence({ rows }) {
   );
 }
 
-function SourceToggle({ value, onChange }) {
-  const opts = [
-    { id: 'me', label: 'Me', icon: 'lock' },
-    { id: 'team', label: 'Team', icon: 'users' },
-    { id: 'both', label: 'Both', icon: 'layers' },
-  ];
+function SourceToggle({ value, onChange, options }) {
+  const opts = (options && options.length ? options : [{ value: 'all', label: 'All', icon: 'layers' }]).map((o) => ({
+    id: o.value || o.id,
+    label: o.label || o.value || o.id,
+    icon: o.icon || 'tag',
+  }));
   return (
-    <div style={{ display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', padding: 2, gap: 2 }}>
+    <div style={{ display: 'flex', minWidth: 0, maxWidth: 190, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', padding: 2, gap: 2, overflow: 'hidden' }}>
       {opts.map((o) => (
-        <button key={o.id} onClick={() => onChange(o.id)} title={`Ask from ${o.label.toLowerCase()}`} style={{
-          display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 9px', cursor: 'pointer', border: 'none',
+        <button key={o.id} onClick={() => onChange(o.id)} title={`Ask from ${o.label}`} style={{
+          minWidth: 0, display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', cursor: 'pointer', border: 'none',
           borderRadius: 'var(--radius-full)', fontFamily: 'var(--font-mono)', fontSize: 10.5,
           background: value === o.id ? 'var(--brand-soft-bg)' : 'transparent',
           color: value === o.id ? 'var(--brand-fg)' : 'var(--text-faint)', fontWeight: value === o.id ? 600 : 400,
         }}>
-          <AkIcon name={o.icon} size={11} />{o.label}
+          <AkIcon name={o.icon} size={11} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.label}</span>
         </button>
       ))}
     </div>
   );
 }
 
-function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource }) {
+function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource, sourceOptions, identityReady, onSetup }) {
   const [draft, setDraft] = React.useState('');
   const [model, setModel] = React.useState('gemma4:e4b (local)');
   const [showCites, setShowCites] = React.useState(true);
@@ -80,7 +80,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
   const akSel = { width: '100%', marginTop: 4, padding: '5px 7px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-strong)', fontFamily: 'var(--font-mono)', fontSize: 11.5, outline: 'none' };
   const scrollRef = React.useRef(null);
   React.useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, asking]);
-  const send = (q) => { const v = (q ?? draft).trim(); if (!v || asking) return; setDraft(''); onSend(v, model.split(' ')[0]); };
+  const send = (q) => { const v = (q ?? draft).trim(); if (!v || asking || !identityReady) return; setDraft(''); onSend(v, model.split(' ')[0]); };
 
   return (
     <div style={akS.panel}>
@@ -89,7 +89,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
           <AkIcon name="sparkles" size={14} style={{ color: 'var(--brand-fg)' }} />
         </span>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>Ask Lore</span>
-        <SourceToggle value={source || 'both'} onChange={onSource || (() => {})} />
+        <SourceToggle value={source || 'all'} onChange={onSource || (() => {})} options={sourceOptions} />
         <AkIconBtn icon="x" label="Close Ask" size="sm" onClick={onClose} />
       </div>
 
@@ -98,14 +98,21 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
           <div style={{ padding: '24px 6px' }}>
             <img src="design/assets/sprites/lore-familiar.png" alt="" aria-hidden="true"
               style={{ display: 'block', width: 132, height: 132, margin: '0 auto 10px', objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))', pointerEvents: 'none', userSelect: 'none' }} />
-            <p style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)', margin: '0 0 4px', textAlign: 'center' }}>Ask across your vaults.</p>
+            <p style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)', margin: '0 0 4px', textAlign: 'center' }}>Ask across your libraries.</p>
             <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '0 0 16px', lineHeight: 1.5, textAlign: 'center' }}>Answers are drawn only from notes in your scope, and every claim is cited.</p>
+            {!identityReady && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: 12, marginBottom: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface-inset)', textAlign: 'left' }}>
+                <AkIcon name="alert-circle" size={15} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} />
+                <span style={{ flex: 1, fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.45 }}>Set a tenant and scope before asking Lore.</span>
+                <button onClick={onSetup} style={{ border: '1px solid var(--border)', background: 'var(--surface-raised)', color: 'var(--text-body)', borderRadius: 'var(--radius-sm)', padding: '5px 9px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 }}>Configure</button>
+              </div>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               {suggestions.map((s) => (
-                <button key={s} onClick={() => send(s)} style={{
+                <button key={s} onClick={() => send(s)} disabled={!identityReady || asking} style={{
                   textAlign: 'left', display: 'flex', alignItems: 'center', gap: 9, padding: '9px 11px',
                   border: '1px solid var(--border)', background: 'var(--surface-base)', borderRadius: 'var(--radius-sm)',
-                  color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 13, cursor: 'pointer',
+                  color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 13, cursor: identityReady ? 'pointer' : 'not-allowed', opacity: identityReady ? 1 : 0.5,
                 }}>
                   <AkIcon name="corner-down-right" size={14} style={{ color: 'var(--text-faint)' }} />{s}
                 </button>
@@ -136,19 +143,20 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
           <textarea
             value={draft} onChange={(e) => setDraft(e.target.value)} rows={2}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
-            placeholder="Ask anything about your knowledge…"
+            aria-label="Ask Lore question"
+            placeholder={identityReady ? 'Ask anything about your knowledge…' : 'Configure tenant and scope to ask Lore…'}
             style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-sans)', fontSize: 14, lineHeight: 1.5, color: 'var(--text-strong)' }}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, position: 'relative' }}>
             <button onClick={() => setCog((c) => !c)} title="Model, scope & citations" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>
-              <AkIcon name="sliders-horizontal" size={12} />{model.split(' ')[0]} · {source || 'both'}{showCites ? ' · cites' : ''}
+              <AkIcon name="sliders-horizontal" size={12} />{model.split(' ')[0]} · {source || 'all'}{showCites ? ' · cites' : ''}
             </button>
             <div style={{ flex: 1 }} />
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}><AkKbd>↵</AkKbd> send</span>
-            <button onClick={() => send()} disabled={asking} style={{
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30,
-              border: 'none', borderRadius: 'var(--radius-sm)', cursor: asking ? 'default' : 'pointer',
-              background: 'var(--brand-bg)', color: 'var(--text-onbrand)', opacity: asking ? 0.5 : 1,
+            <button onClick={() => send()} disabled={asking || !identityReady || !draft.trim()} aria-label="Send question" style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 44, height: 44,
+              border: 'none', borderRadius: 'var(--radius-sm)', cursor: asking || !identityReady || !draft.trim() ? 'not-allowed' : 'pointer',
+              background: 'var(--brand-bg)', color: 'var(--text-onbrand)', opacity: asking || !identityReady || !draft.trim() ? 0.5 : 1,
             }}><AkIcon name="arrow-up" size={16} /></button>
 
             {cog && (
@@ -159,8 +167,8 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
                   </select>
                 </label>
                 <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }}>Scope
-                  <select value={source || 'both'} onChange={(e) => onSource && onSource(e.target.value)} style={akSel}>
-                    {[['both', 'Me + Team'], ['me', 'Me (private)'], ['team', 'Team / shared']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  <select value={source || 'all'} onChange={(e) => onSource && onSource(e.target.value)} style={akSel}>
+                    {(sourceOptions && sourceOptions.length ? sourceOptions : [{ value: 'all', label: 'All configured' }]).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
                   </select>
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--text-body)', cursor: 'pointer' }}>

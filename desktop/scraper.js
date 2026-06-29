@@ -258,7 +258,7 @@ async function runScrape({
   extensions,
   maxFiles      = 50_000,
   maxBytes      = 1_000_000,
-  scope         = 'private',
+  scope         = null,
   owner         = null,
   tenant        = null,
   full          = false,
@@ -292,6 +292,17 @@ async function runScrape({
     safeRoots.push(r);
   }
   if (!safeRoots.length && !promptHistory) return summary;
+
+  const missingIdentity = [];
+  if (!scope) missingIdentity.push('scope');
+  if (!owner) missingIdentity.push('owner');
+  if (!tenant) missingIdentity.push('tenant');
+  if (missingIdentity.length) {
+    summary.errors++;
+    summary.errorDetails.push(`Missing required ${missingIdentity.join(', ')}; scrape not started.`);
+    onProgress({ phase: 'done', done: 0, total: 0, current: '', errors: summary.errors });
+    return summary;
+  }
 
   // --- Phase: walk ---
   if (safeRoots.length) {

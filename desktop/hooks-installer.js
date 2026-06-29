@@ -121,9 +121,8 @@ function materializeHookFiles() {
 //   5. NEVER removes or modifies non-Lore entries (obsidian, gemma4, etc.).
 //
 // @param {object} [opts]
-// @param {string} [opts.scope]  - Lore scope hint (informational; not written to settings).
 // @returns {{ ok: boolean, reason?: string }}
-function installClaude({ scope = 'private' } = {}) { // eslint-disable-line no-unused-vars
+function installClaude() {
   try {
     materializeHookFiles();
   } catch (e) {

@@ -103,7 +103,7 @@ function BucketBody({ bucket: b, onOpen }) {
   );
 }
 
-function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode, onOpen, scope, onScope }) {
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
   if (bucket) {
     return (
       <div style={edS.center}>
@@ -118,7 +118,9 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode,
       <div style={edS.toolbar}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{note.path || (note.title + '.md')}</span>
         <div style={{ flex: 1 }} />
-        <ScopePicker value={scope} onChange={onScope} />
+        {scopeOptions && scopeOptions.length > 0
+          ? <ScopePicker value={scope} onChange={onScope} options={scopeOptions} />
+          : <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>No scope configured</span>}
         <div style={{ display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 2, gap: 2 }}>
           {['read', 'edit'].map((m) => (
             <button key={m} onClick={() => onMode(m)} style={{

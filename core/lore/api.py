@@ -34,21 +34,10 @@ def get_reranker():
 def get_sparse_embedder():
     return None if _FAKE else LocalSparseEmbedder()
 
-PROFILES = {
-  # Solo personal workspace (default): one identity, your own knowledge.
-  "solo": {"tenant": "solo", "company": "My Lore", "personas": [
-      {"label": "You", "scopes": ["private","team","enterprise"]}],
-    "examples": ["what was I working on with the Kalshi bot?","summarize the Wingman architecture",
-                 "what decisions did I make about the agent hub?","find my notes on the accident case"]},
-  "acme": {"tenant": "acme", "company": "Acme (demo)", "personas": [
-      {"label": "Alice", "scopes": ["alice-private","eng-team","acme-corp"]},
-      {"label": "Bob", "scopes": ["bob-private","eng-team","acme-corp"]},
-      {"label": "New hire", "scopes": ["eng-team","acme-corp"]},
-      {"label": "Admin (all)", "scopes": ["alice-private","bob-private","eng-team","acme-corp"]}],
-    "examples": ["what do we know about Project Phoenix?","why is the Acme renewal at risk?",
-                 "root cause of incident PROJ-1037","how do we handle database connection limits?"]},
-}
-PROFILE = os.environ.get("VAULT_PROFILE", "solo")
+EMPTY_PROFILE = {"tenant": None, "company": None, "personas": [], "examples": []}
+
+def active_profile():
+    return EMPTY_PROFILE
 
 
 # --- Google OAuth (desktop loopback) + Lore session JWT --------------------
@@ -92,9 +81,15 @@ def auth_me(user_id: str = Depends(require_user)):
     return {"user_id": user_id, "scopes": tenancy.authorized_team_scope_ids(_conn, user_id)}
 
 class ReindexReq(BaseModel):
-    path: str; owner_id: str = "alice"; scope_id: str = "alice-private"; tenant_id: str = "t1"
+    path: str
+    owner_id: str
+    scope_id: str
+    tenant_id: str
 class AskReq(BaseModel):
-    question: str; principal_scopes: list[str]; tenant_id: str = "t1"; model: Optional[str] = None
+    question: str
+    principal_scopes: list[str]
+    tenant_id: str
+    model: Optional[str] = None
 
 class IngestReq(BaseModel):
     source_id: str
@@ -103,7 +98,7 @@ class IngestReq(BaseModel):
     scope: str
     owner: str
     tenant: str
-    source_type: str = "note"
+    source_type: Optional[str] = None
     content_hash: Optional[str] = None
 
 @app.post("/reindex")
@@ -163,16 +158,16 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
 
 @app.get("/presets")
 def presets():
-    return PROFILES.get(PROFILE, PROFILES["acme"])
+    return active_profile()
 
 @app.get("/graph")
 def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     """Return the knowledge graph for a tenant filtered by ACL scope.
 
     Query params:
-        tenant: tenant_id to query (default: active VAULT_PROFILE tenant).
+        tenant: tenant_id to query. No tenant is assumed when omitted.
         scopes: comma-separated list of scope_ids the viewer can see
-                (default: union of all scopes across all personas in the active profile).
+                (no scopes are assumed when omitted).
 
     Response:
         {
@@ -186,14 +181,17 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
         - Node `links` counts degree AFTER scope filtering.
         - Node list is capped at 1500 (most-connected first); edges follow.
     """
-    profile = PROFILES.get(PROFILE, PROFILES["acme"])
-    active_tenant = tenant or profile["tenant"]
+    profile = active_profile()
+    active_tenant = tenant or profile.get("tenant")
+    if not active_tenant:
+        return {"nodes": [], "edges": []}
 
     if scopes:
         allowed = [s.strip() for s in scopes.split(",") if s.strip()]
     else:
-        # Default: all scopes visible to any persona in this profile.
-        allowed = list({s for p in profile["personas"] for s in p["scopes"]})
+        allowed = list({s for p in profile.get("personas", []) for s in p.get("scopes", [])})
+    if not allowed:
+        return {"nodes": [], "edges": []}
 
     # Fetch all nodes visible to the caller (ACL: scope_id must be in allowed set).
     # This is the server-side filter — no post-filtering is performed after this point.
@@ -266,7 +264,7 @@ class CaptureReq(BaseModel):
     scope: str
     owner: str
     tenant: str
-    mode: str = "default"  # reserved for future routing (e.g. "private", "team"); unused in M1
+    mode: Optional[str] = None  # reserved for future routing; unused in M1
 
 def _session_note_id(session_id: str) -> str:
     """Stable note_id derived from session_id (SHA-1, first 16 hex chars)."""
@@ -323,16 +321,20 @@ def capture_status(session_id: str):
     }
 
 @app.delete("/capture")
-def capture_delete(source_type: str = "claude-session", tenant: Optional[str] = None):
+def capture_delete(source_type: Optional[str] = None, tenant: Optional[str] = None):
     """Privacy purge: delete all notes of the given source_type within a tenant.
 
     Removes matching notes from Postgres (chunks cascade), their outgoing/incoming
     edges, and their Qdrant vector points.
 
-    Query params: source_type (default: claude-session), tenant (default: active profile)
+    Query params: source_type (required), tenant (required)
     Returns: {deleted: n}
     """
-    active_tenant = tenant or PROFILES.get(PROFILE, PROFILES["acme"])["tenant"]
+    active_tenant = tenant or active_profile().get("tenant")
+    if not active_tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    if not source_type:
+        raise HTTPException(status_code=422, detail="source_type is required")
     rows = _conn.execute(
         "select id from notes where source_type=%s and tenant_id=%s",
         (source_type, active_tenant),
@@ -353,7 +355,7 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
     """Retrieve a note's metadata and original body by ID.
 
     Query params:
-        tenant: tenant_id to read from (default: active VAULT_PROFILE tenant).
+        tenant: tenant_id to read from. No tenant is assumed when omitted.
         scopes: comma-separated ACL scopes; when supplied the note must be in one of
                 them or a 404 is returned.  Omit to skip scope filtering.
 
@@ -361,8 +363,9 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
     as stored at index time (lossless; chunk text is NOT a full reconstruction).
     404 if the note does not exist or is not visible to the caller.
     """
-    profile = PROFILES.get(PROFILE, PROFILES["acme"])
-    active_tenant = tenant or profile["tenant"]
+    active_tenant = tenant or active_profile().get("tenant")
+    if not active_tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
 
     q = ("select id, title, scope_id, body, updated_at "
          "from notes where id=%s and tenant_id=%s")
@@ -391,14 +394,14 @@ class SearchReq(BaseModel):
     query: str
     scopes: list[str]
     k: int = 10
-    tenant_id: str = "solo"
+    tenant_id: str
 
 @app.post("/search")
 def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
            sparse=Depends(get_sparse_embedder)):
     """Hybrid-retrieve ranked chunks filtered by the given scopes.
 
-    Body: {query, scopes:[...], k?:int=10, tenant_id?:str='solo'}
+    Body: {query, scopes:[...], tenant_id, k?:int=10}
     Returns: {results:[{note_id, title, scope, heading_path, text, score}]}
 
     scopes is REQUIRED and must not be empty (never defaults to all).

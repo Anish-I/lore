@@ -56,20 +56,22 @@ const HK_STATUS_TONE = {
 };
 
 const HK_CAPTURE_SNIPPET = `# CLI
-lore capture --source mytool --scope private
+lore capture --session <id> --title "<title>" --scope <scope> --owner <owner> --tenant <tenant>
 
 # HTTP
 curl -X POST http://localhost:8099/capture \\
   -H "Content-Type: application/json" \\
-  -d '{"content":"...", "source":"mytool", "scope":"private"}'`;
+  -d '{"session_id":"<id>","title":"<title>","text":"...","scope":"<scope>","owner":"<owner>","tenant":"<tenant>"}'`;
 
-function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg, onToggle, onMode, onScope, last }) {
+function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg, onToggle, onMode, onScope, scopeOptions, identityReady, last }) {
   const known       = HK_KNOWN[id] || {};
   const label       = known.label || name || id;
   const icon        = known.icon  || 'plug';
   const experimental = known.experimental || false;
   const enabled     = cfg.enabled;
   const installing  = cfg.installing;
+  const cannotEnable = experimental || !detected || !identityReady;
+  const scopeSelectOptions = [{ value: '', label: 'none' }, ...(scopeOptions || []).map((s) => ({ value: s, label: s }))];
 
   // Derive badge from live status + statusEntry
   const liveStatus  = statusEntry
@@ -83,19 +85,22 @@ function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg,
         {experimental && (
           <HK_Badge tone="neutral">Experimental — coming soon</HK_Badge>
         )}
+        {!experimental && !identityReady && (
+          <HK_Badge tone="neutral">needs identity</HK_Badge>
+        )}
         <HK_Badge tone={badgeTone} dot={liveStatus === 'capturing'}>{liveStatus}</HK_Badge>
 
         {enabled && !experimental && (
           <React.Fragment>
             <HK_Select
               value={cfg.mode}
-              onChange={onMode}
+              onChange={(e) => onMode(e.target.value)}
               options={['live', 'session-end']}
             />
             <HK_Select
               value={cfg.scope}
-              onChange={onScope}
-              options={['private', 'team', 'enterprise']}
+              onChange={(e) => onScope(e.target.value)}
+              options={scopeSelectOptions}
             />
           </React.Fragment>
         )}
@@ -103,7 +108,7 @@ function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg,
         <HK_Switch
           checked={enabled}
           onChange={(v) => onToggle(v)}
-          disabled={installing}
+          disabled={installing || (!enabled && cannotEnable)}
         />
 
         {(enabled || (statusEntry && statusEntry.installed)) && (
@@ -121,7 +126,7 @@ function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg,
   );
 }
 
-function HooksView() {
+function HooksView({ scopeOptions = [], identityReady = false, onOpenSetup }) {
   // toolMap: id -> detect() entry (or stub)
   const [toolMap, setToolMap]     = React.useState({});
   const [statuses, setStatuses]   = React.useState([]);
@@ -156,12 +161,12 @@ function HooksView() {
         for (const t of (detected || [])) { map[t.id] = t; }
         setToolMap(map);
 
-        // Build initial cfg — default all known tools even if not detected
+        // Build initial cfg for all known tools even if not detected.
         const cfg = {};
         const allIds = Array.from(new Set([...HK_TOOL_ORDER, ...Object.keys(map)]));
         for (const id of allIds) {
           const t = map[id];
-          cfg[id] = { mode: 'session-end', scope: 'private', enabled: !!(t && t.installed), installing: false, error: '' };
+          cfg[id] = { mode: 'session-end', scope: '', enabled: !!(t && t.installed), installing: false, error: '' };
         }
         setToolCfg(cfg);
         setReady(true);
@@ -186,12 +191,17 @@ function HooksView() {
   const patchCfg = (id, patch) => setToolCfg((m) => ({ ...m, [id]: { ...(m[id] || {}), ...patch } }));
 
   const handleToggle = async (id, val) => {
-    const cfg = toolCfg[id] || { mode: 'session-end', scope: 'private' };
+    const cfg = toolCfg[id] || { mode: 'session-end', scope: '' };
     if (val) {
+      if (!identityReady) {
+        patchCfg(id, { enabled: false, installing: false, error: 'Configure tenant and scope before installing hooks.' });
+        if (onOpenSetup) onOpenSetup();
+        return;
+      }
       patchCfg(id, { enabled: true, installing: true, error: '' });
       if (window.lore?.hooks?.install) {
         try {
-          const r = await window.lore.hooks.install(id, { mode: cfg.mode, scope: cfg.scope });
+          const r = await window.lore.hooks.install({ tool: id, mode: cfg.mode, scope: cfg.scope || null });
           if (r && r.ok === false) {
             patchCfg(id, { enabled: false, installing: false, error: r.reason || 'Install failed.' });
           } else {
@@ -271,10 +281,17 @@ function HooksView() {
         {/* Main content */}
         {ready === true && (
           <React.Fragment>
+            {!identityReady && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', marginBottom: 14, background: 'var(--surface-panel)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
+                <HK_Icon name="alert-circle" size={15} style={{ color: 'var(--brand-fg)' }} />
+                <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.45 }}>Hooks need a tenant and scope so captured sessions land in the right index.</div>
+                <HK_Button variant="secondary" size="sm" onClick={onOpenSetup}>Configure</HK_Button>
+              </div>
+            )}
             <HK_Section icon="plug" title="AI tool hooks">
               {allToolIds.map((id, i) => {
                 const tool = toolMap[id] || { id, name: HK_KNOWN[id]?.label || id, description: '', detected: false, installed: false, status: 'detecting' };
-                const cfg  = toolCfg[id] || { mode: 'session-end', scope: 'private', enabled: false, installing: false, error: '' };
+                const cfg  = toolCfg[id] || { mode: 'session-end', scope: '', enabled: false, installing: false, error: '' };
                 const isLast = i === allToolIds.length - 1;
                 return (
                   <HK_ToolRow
@@ -289,6 +306,8 @@ function HooksView() {
                     onToggle={(v) => handleToggle(id, v)}
                     onMode={(v) => patchCfg(id, { mode: v })}
                     onScope={(v) => patchCfg(id, { scope: v })}
+                    scopeOptions={scopeOptions}
+                    identityReady={identityReady}
                     last={isLast}
                   />
                 );
@@ -300,7 +319,7 @@ function HooksView() {
               <HK_Row label="HTTP endpoint" hint="POST JSON to capture any session into Lore. Scoped and indexed like a normal note.">
                 <HK_Badge tone="neutral">localhost:8099</HK_Badge>
               </HK_Row>
-              <HK_Row label="CLI" hint={`lore capture --source <name> --scope <private|team|enterprise>`} last>
+              <HK_Row label="CLI" hint="lore capture requires session, title, scope, owner, and tenant." last>
                 <HK_Button variant="secondary" size="sm" icon={copied ? 'check' : 'copy'} onClick={copySnippet}>
                   {copied ? 'Copied' : 'Copy snippet'}
                 </HK_Button>

@@ -1,5 +1,5 @@
 /* global React */
-// Lore desktop — Buckets: shared knowledge collections pooled across vaults
+// Lore desktop - Buckets: shared knowledge collections pooled across libraries
 const bkNS = window.VaultDesignSystem_ffbf58;
 const { Icon: BkIcon, Card: BkCard, ScopeTag: BkScope, Avatar: BkAvatar, Badge: BkBadge, Button: BkButton, Tabs: BkTabs } = bkNS;
 
@@ -147,7 +147,7 @@ function WizardStore({ onChanged }) {
   return (
     <div style={{ marginTop: 28 }}>
       <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' }}>Discover knowledge bases & tools</h2>
-      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 10px' }}>{catalog.length.toLocaleString()} available — curated knowledge bases + tools sourced from the web. Install to add into your vault.</p>
+      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 10px' }}>{catalog.length.toLocaleString()} available — curated knowledge bases + tools sourced from the web. Install to add into your library.</p>
       <div style={{ marginBottom: 12 }}>
         <BkTabs value={kindTab} onChange={(v) => { setKindTab(v); setCat('all'); setShown(40); }} tabs={storeTabs} />
       </div>
@@ -173,7 +173,18 @@ function WizardStore({ onChanged }) {
 
 function BucketsView({ buckets, onAsk, onOpen, onChanged }) {
   const [tab, setTab] = React.useState('all');
-  const shown = tab === 'all' ? buckets : buckets.filter((b) => tab === 'mine' ? b.scope === 'private' : b.scope === tab);
+  const scopes = React.useMemo(() => {
+    const out = [], seen = new Set();
+    for (const b of buckets || []) {
+      const s = b.scope ? String(b.scope).trim() : '';
+      if (!s) continue;
+      const key = s.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); out.push(s); }
+    }
+    return out;
+  }, [buckets]);
+  const shown = tab === 'all' ? buckets : buckets.filter((b) => b.scope === tab);
+  const tabs = [{ value: 'all', label: 'All', count: buckets.length }, ...scopes.map((s) => ({ value: s, label: s }))];
   return (
     <div style={bkS.wrap}>
       <div style={bkS.head}>
@@ -191,12 +202,7 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged }) {
       </div>
       <div style={bkS.body}>
         <div style={{ marginBottom: 18 }}>
-          <BkTabs value={tab} onChange={setTab} tabs={[
-            { value: 'all', label: 'All', count: buckets.length },
-            { value: 'team', label: 'Team' },
-            { value: 'enterprise', label: 'Enterprise' },
-            { value: 'mine', label: 'Private' },
-          ]} />
+          <BkTabs value={tab} onChange={setTab} tabs={tabs} />
         </div>
         <div style={bkS.grid}>
           {shown.map((b) => <BucketCard key={b.id} b={b} onOpen={() => onOpen && onOpen(b)} />)}

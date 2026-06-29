@@ -1,11 +1,11 @@
 """Lore MCP server — read-only Lore knowledge tools over stdio.
 
 Exposes three tools:
-    lore_ask(question, scopes)     — answer a question from the knowledge base
-    lore_search(query, scopes, k)  — return ranked chunk hits
-    lore_graph(scopes)             — return node/edge counts
+    lore_ask(question, scopes, tenant)     — answer a question from the knowledge base
+    lore_search(query, scopes, tenant, k)  — return ranked chunk hits
+    lore_graph(scopes, tenant)             — return node/edge counts
 
-scopes is REQUIRED on every tool; never defaults to all.
+scopes and tenant are REQUIRED on every tool; never default to all or to a tenant.
 
 Run with:
     python -m lore.mcp_server
@@ -14,6 +14,7 @@ or via the installed script:
 """
 import json
 import socket
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -27,6 +28,10 @@ _BACKEND_DOWN_MSG = (
 _SCOPES_REQUIRED_MSG = (
     "Error: scopes is required and must not be empty — "
     "Lore never defaults to all-scopes access."
+)
+_TENANT_REQUIRED_MSG = (
+    "Error: tenant is required and must not be empty — "
+    "Lore never defaults to a tenant."
 )
 
 
@@ -92,48 +97,71 @@ def _check_scopes(scopes: list[str]) -> str | None:
     return None
 
 
+def _clean_scopes(scopes: list[str]) -> list[str]:
+    return [s.strip() for s in scopes if s and s.strip()]
+
+
+def _check_tenant(tenant: str | None) -> str | None:
+    if not tenant or not tenant.strip():
+        return _TENANT_REQUIRED_MSG
+    return None
+
+
 try:
     from mcp.server.fastmcp import FastMCP as _FastMCP
 
     _mcp = _FastMCP("lore")
 
     @_mcp.tool()
-    def lore_ask(question: str, scopes: list[str]) -> str:
+    def lore_ask(question: str, scopes: list[str], tenant: str) -> str:
         """Ask a question against your Lore knowledge base.
 
         Args:
             question: Natural language question.
             scopes: List of ACL scope IDs the caller can read (required, never empty).
+            tenant: Tenant namespace to query (required, never empty).
         """
         err = _check_scopes(scopes)
+        if err:
+            return err
+        err = _check_tenant(tenant)
         if err:
             return err
         if not _backend_up():
             return _BACKEND_DOWN_MSG
         data, err = _safe_post("/ask", {
             "question": question,
-            "principal_scopes": scopes,
-            "tenant_id": "solo",
+            "principal_scopes": _clean_scopes(scopes),
+            "tenant_id": tenant.strip(),
         })
         if err:
             return f"Error calling Lore: {err}"
         return data.get("answer", "No answer returned.")
 
     @_mcp.tool()
-    def lore_search(query: str, scopes: list[str], k: int = 10) -> str:
+    def lore_search(query: str, scopes: list[str], tenant: str, k: int = 10) -> str:
         """Search your Lore knowledge base and return ranked hits.
 
         Args:
             query: Search query.
             scopes: List of ACL scope IDs the caller can read (required, never empty).
+            tenant: Tenant namespace to query (required, never empty).
             k: Number of results to return (default 10, max 50).
         """
         err = _check_scopes(scopes)
         if err:
             return err
+        err = _check_tenant(tenant)
+        if err:
+            return err
         if not _backend_up():
             return _BACKEND_DOWN_MSG
-        data, err = _safe_post("/search", {"query": query, "scopes": scopes, "k": k})
+        data, err = _safe_post("/search", {
+            "query": query,
+            "scopes": _clean_scopes(scopes),
+            "tenant_id": tenant.strip(),
+            "k": k,
+        })
         if err:
             return f"Error calling Lore: {err}"
         hits = data.get("results", [])
@@ -146,18 +174,23 @@ try:
         return "\n".join(lines)
 
     @_mcp.tool()
-    def lore_graph(scopes: list[str]) -> str:
+    def lore_graph(scopes: list[str], tenant: str) -> str:
         """Return node and edge counts for your Lore knowledge graph.
 
         Args:
             scopes: List of ACL scope IDs the caller can read (required, never empty).
+            tenant: Tenant namespace to query (required, never empty).
         """
         err = _check_scopes(scopes)
         if err:
             return err
+        err = _check_tenant(tenant)
+        if err:
+            return err
         if not _backend_up():
             return _BACKEND_DOWN_MSG
-        data, err = _safe_get(f"/graph?scopes={','.join(scopes)}")
+        params = urllib.parse.urlencode({"tenant": tenant.strip(), "scopes": ",".join(_clean_scopes(scopes))})
+        data, err = _safe_get(f"/graph?{params}")
         if err:
             return f"Error calling Lore: {err}"
         nodes = len(data.get("nodes", []))
@@ -188,8 +221,9 @@ except ImportError:
                         "question": {"type": "string", "description": "Natural language question."},
                         "scopes": {"type": "array", "items": {"type": "string"},
                                    "description": "ACL scope IDs the caller can read (required)."},
+                        "tenant": {"type": "string", "description": "Tenant namespace to query (required)."},
                     },
-                    "required": ["question", "scopes"],
+                    "required": ["question", "scopes", "tenant"],
                 },
             ),
             _types.Tool(
@@ -201,9 +235,10 @@ except ImportError:
                         "query": {"type": "string"},
                         "scopes": {"type": "array", "items": {"type": "string"},
                                    "description": "ACL scope IDs (required)."},
+                        "tenant": {"type": "string", "description": "Tenant namespace to query (required)."},
                         "k": {"type": "integer", "default": 10},
                     },
-                    "required": ["query", "scopes"],
+                    "required": ["query", "scopes", "tenant"],
                 },
             ),
             _types.Tool(
@@ -214,8 +249,9 @@ except ImportError:
                     "properties": {
                         "scopes": {"type": "array", "items": {"type": "string"},
                                    "description": "ACL scope IDs (required)."},
+                        "tenant": {"type": "string", "description": "Tenant namespace to query (required)."},
                     },
-                    "required": ["scopes"],
+                    "required": ["scopes", "tenant"],
                 },
             ),
         ]
@@ -226,13 +262,19 @@ except ImportError:
         err = _check_scopes(scopes)
         if err:
             return [_types.TextContent(type="text", text=err)]
+        tenant = arguments.get("tenant")
+        err = _check_tenant(tenant)
+        if err:
+            return [_types.TextContent(type="text", text=err)]
+        clean_scopes = _clean_scopes(scopes)
+        tenant = tenant.strip()
         if not _backend_up():
             return [_types.TextContent(type="text", text=_BACKEND_DOWN_MSG)]
         if name == "lore_ask":
             data, err = _safe_post("/ask", {
                 "question": arguments["question"],
-                "principal_scopes": scopes,
-                "tenant_id": "solo",
+                "principal_scopes": clean_scopes,
+                "tenant_id": tenant,
             })
             if err:
                 return [_types.TextContent(type="text", text=f"Error: {err}")]
@@ -240,8 +282,9 @@ except ImportError:
         elif name == "lore_search":
             data, err = _safe_post("/search", {
                 "query": arguments["query"],
-                "scopes": scopes,
+                "scopes": clean_scopes,
                 "k": arguments.get("k", 10),
+                "tenant_id": tenant,
             })
             if err:
                 return [_types.TextContent(type="text", text=f"Error: {err}")]
@@ -254,7 +297,8 @@ except ImportError:
             ]
             return [_types.TextContent(type="text", text="\n".join(lines))]
         elif name == "lore_graph":
-            data, err = _safe_get(f"/graph?scopes={','.join(scopes)}")
+            params = urllib.parse.urlencode({"tenant": tenant, "scopes": ",".join(clean_scopes)})
+            data, err = _safe_get(f"/graph?{params}")
             if err:
                 return [_types.TextContent(type="text", text=f"Error: {err}")]
             nodes = len(data.get("nodes", []))

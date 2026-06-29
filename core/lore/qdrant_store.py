@@ -5,14 +5,19 @@ from .config import settings
 
 # Collection is overridable (eval/test isolation). Set QDRANT_COLLECTION before import.
 COLLECTION = os.environ.get("QDRANT_COLLECTION", "vault_chunks")
-
-# Embedded vs server selection (the hybrid split):
-#   QDRANT_PATH set  → EMBEDDED local mode (no server, no Docker) — the bundled desktop app.
-#   otherwise        → server at settings.qdrant_url — the team/enterprise deployment + tests.
+# Qdrant client selection (combines both: embedded-persistent + in-memory + server):
+#   QDRANT_PATH set            → EMBEDDED local mode (persistent, no server/Docker) — bundled app.
+#   qdrant_url == ":memory:"   → in-memory (ephemeral / quick tests).
+#   otherwise                  → server at settings.qdrant_url — team/enterprise + tests.
 # Embedded local mode is proven to support our named dense+sparse vectors, query_points
 # prefetch, RRF fusion, and payload-filtered ACL search.
 _QDRANT_PATH = os.environ.get("QDRANT_PATH")
-_client = QdrantClient(path=_QDRANT_PATH) if _QDRANT_PATH else QdrantClient(url=settings.qdrant_url)
+if _QDRANT_PATH:
+    _client = QdrantClient(path=_QDRANT_PATH)
+elif settings.qdrant_url == ":memory:":
+    _client = QdrantClient(location=":memory:")
+else:
+    _client = QdrantClient(url=settings.qdrant_url)
 
 
 def ensure_collection(dim, with_sparse=False):
