@@ -45,3 +45,12 @@ def authorized_team_scope_ids(conn, user_id: str) -> list[str]:
         (user_id,),
     ).fetchall()
     return [team_scope_id(r[0]) for r in rows]
+
+
+def authorize_scopes(conn, user_id: str, requested) -> list:
+    """Scopes the server will query with. Without a request → all authorized scopes.
+    With a request → requested ∩ authorized, so a client can never widen its access."""
+    authorized = set(authorized_team_scope_ids(conn, user_id))
+    if not requested:
+        return sorted(authorized)
+    return sorted(authorized.intersection(requested))

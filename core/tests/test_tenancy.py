@@ -1,5 +1,5 @@
 from lore import db
-from lore.tenancy import authorized_team_scope_ids, bootstrap_tenancy, team_scope_id, syncable_scope
+from lore.tenancy import authorized_team_scope_ids, bootstrap_tenancy, team_scope_id, syncable_scope, authorize_scopes
 
 
 def _seed(conn):
@@ -55,3 +55,16 @@ def test_bootstrap_tenancy_is_idempotent():
     conn.execute("select count(*) from teams")
     conn.execute("select count(*) from memberships")
     conn.execute("select count(*) from audit_log")
+
+
+def test_authorize_scopes_cannot_escalate():
+    conn = db.connect()
+    _seed(conn)
+    # default (no request) → all of the user's scopes
+    assert authorize_scopes(conn, "alice", None) == ["team:t1"]
+    # asking only for what you have → granted
+    assert authorize_scopes(conn, "alice", ["team:t1"]) == ["team:t1"]
+    # bob (member of t2) forging a request for t1 → intersection is empty
+    assert authorize_scopes(conn, "bob", ["team:t1"]) == []
+    # bob asking for t1 AND t2 → only t2 survives
+    assert authorize_scopes(conn, "bob", ["team:t1", "team:t2"]) == ["team:t2"]
