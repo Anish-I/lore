@@ -35,3 +35,13 @@ def syncable_scope(scope_type: str) -> bool:
     """True if a scope's notes may leave the device for the shared server.
     `private` is never syncable — enforced here and asserted by tests."""
     return scope_type in _SYNCABLE_SCOPE_TYPES
+
+
+def authorized_team_scope_ids(conn, user_id: str) -> list:
+    """The team scope ids a user may READ, derived from active memberships.
+    SERVER-SIDE source of truth — never trust scopes supplied by the client."""
+    rows = conn.execute(
+        "select team_id from memberships where user_id=%s and status='active' order by team_id",
+        (user_id,),
+    ).fetchall()
+    return [team_scope_id(r[0]) for r in rows]
