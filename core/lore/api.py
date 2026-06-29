@@ -320,6 +320,42 @@ def capture_status(session_id: str):
         "chunks": chunk_count,
     }
 
+class ForgetReq(BaseModel):
+    tenant: str
+    path_prefix: str
+
+@app.post("/forget")
+def forget(req: ForgetReq):
+    """Delete all notes whose source_path starts with path_prefix for the given tenant.
+    Normalizes backslashes to forward slashes before comparison.
+    Removes from Qdrant, cleans edges (both directions), deletes notes (chunks cascade).
+    Body: {tenant, path_prefix}. Returns {forgotten: n}"""
+    if not req.tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    if not req.path_prefix:
+        raise HTTPException(status_code=422, detail="path_prefix is required")
+    prefix = req.path_prefix.replace('\\', '/').rstrip('/')
+    # Escape LIKE metacharacters (\, %, _) so a path like 'Wizards/UI_Kit' can't act as a
+    # wildcard and match unrelated folders.
+    esc = prefix.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    rows = _conn.execute(
+        "select id from notes where tenant_id=%s and source_path is not null and ("
+        "  replace(source_path, '\\', '/') like %s escape '\\'"
+        "  or replace(source_path, '\\', '/') = %s"
+        ")",
+        (req.tenant, esc + '/%', prefix),
+    ).fetchall()
+    forgotten = 0
+    for (note_id,) in rows:
+        qdrant_store.delete_note(note_id)
+        _conn.execute(
+            "delete from edges where tenant_id=%s and (src_note_id=%s or dst_note_id=%s)",
+            (req.tenant, note_id, note_id),
+        )
+        _conn.execute("delete from notes where id=%s", (note_id,))  # chunks cascade
+        forgotten += 1
+    return {"forgotten": forgotten}
+
 @app.delete("/capture")
 def capture_delete(source_type: Optional[str] = None, tenant: Optional[str] = None):
     """Privacy purge: delete all notes of the given source_type within a tenant.

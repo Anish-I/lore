@@ -514,10 +514,73 @@ ipcMain.handle('wizards:install', async (_e, id) => {
   if (!w.scope || !cfg.owner || !cfg.tenant) return { ok: false, error: 'Configure wizard scope, owner, and tenant before installing.' };
   const dir = path.join(root, 'Wizards', safeName(w.name));
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
+
+  // --- Pre-baked notes (baseline/fallback) ---
+  const linkedTitles = [];
   for (const n of (w.notes || [])) {
     const fm = `---\nscope: ${w.scope}\ntags: [${(w.topics || []).join(', ')}]\nwizard: ${w.name}\n---\n\n`;
-    try { fs.writeFileSync(path.join(dir, safeName(n.title) + '.md'), fm + (n.body || ''), 'utf8'); } catch { /* ignore */ }
+    try { fs.writeFileSync(path.join(dir, safeName(n.title) + '.md'), fm + (n.body || ''), 'utf8'); linkedTitles.push(n.title); } catch { /* ignore */ }
   }
+
+  // --- GitHub-aware: one note per file for any github.com source ---
+  const TEXT_EXTS = /\.(md|txt|json|js|ts|jsx|tsx|py|yml|yaml|toml|rs|go|java|rb|sh|conf|ini|cfg|xml|html|css|scss|sql|tf|hcl)$/i;
+  const SKIP_DIRS = /(^|\/)(node_modules|\.git|dist|build|\.next|__pycache__|\.venv|venv)\//;  // skip nested too
+  const GH_MAX_BYTES = 256 * 1024;   // skip oversized files (tree gives blob size)
+  const ghFetch = (url) => {           // bounded fetch: 12s timeout, never hangs the main process
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 12000);
+    return fetch(url, { headers: { 'User-Agent': 'lore-desktop/1' }, signal: ac.signal })
+      .finally(() => clearTimeout(t));
+  };
+  for (const src of (w.sources || [])) {
+    const ghm = src.match(/^https?:\/\/github\.com\/([^/]+)\/([^/?# ]+)/i);
+    if (!ghm) continue;
+    const [, ghOwner, repoRaw] = ghm;
+    const ghRepo = repoRaw.replace(/\.git$/, '');
+    try {
+      if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', { phase: 'fetch', current: `Fetching ${ghOwner}/${ghRepo}…`, done: 0, total: 1, errors: 0 });
+      const repoRes = await ghFetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}`);
+      if (!repoRes.ok) continue;
+      const repoInfo = await repoRes.json();
+      const branch = repoInfo.default_branch || 'main';
+      const treeRes = await ghFetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/git/trees/${branch}?recursive=1`);
+      if (!treeRes.ok) continue;
+      const treeData = await treeRes.json();
+      const files = (treeData.tree || []).filter((f) =>
+        f.type === 'blob' && TEXT_EXTS.test(f.path) && !SKIP_DIRS.test(f.path)
+        && (f.size == null || f.size <= GH_MAX_BYTES)).slice(0, 40);
+      if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', { phase: 'fetch', current: `Fetching ${files.length} files from ${ghOwner}/${ghRepo}…`, done: 0, total: files.length, errors: 0 });
+      let done = 0;
+      for (const file of files) {
+        try {
+          const rawRes = await ghFetch(`https://raw.githubusercontent.com/${ghOwner}/${ghRepo}/${branch}/${file.path}`);
+          if (!rawRes.ok) { done++; continue; }
+          let content = await rawRes.text();
+          if (content.length > GH_MAX_BYTES) content = content.slice(0, GH_MAX_BYTES) + '\n… (truncated)';
+          const isMd = /\.md$/i.test(file.path);
+          const fm = `---\nscope: ${w.scope}\ntags: [${(w.topics || []).join(', ')}]\nwizard: ${w.name}\nsource: ${src}\n---\n\n`;
+          // heading makes the title predictable for wikilink resolution
+          const body = `# ${file.path}\n\n` + (isMd ? content : ('```\n' + content + '\n```'));
+          // hash suffix so distinct repo paths never collide after safeName truncation
+          const hash = require('crypto').createHash('sha1').update(file.path).digest('hex').slice(0, 6);
+          const fname = safeName(file.path.replace(/\//g, '_')) + '-' + hash + '.md';
+          fs.writeFileSync(path.join(dir, fname), fm + body, 'utf8');
+          linkedTitles.push(file.path);
+          done++;
+        } catch { done++; /* individual file failure: skip silently */ }
+        if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', { phase: 'fetch', current: file.path, done, total: files.length, errors: 0 });
+      }
+    } catch { /* network down / private repo / rate-limited → fall back to pre-baked notes only */ }
+  }
+
+  // --- Hub note: _Home.md wikilinks every note → connected subgraph ---
+  const topics = w.topics || [];
+  const tagLine = topics.map((t) => `#${t}`).join('  ');
+  const noteLinks = linkedTitles.map((t) => `- [[${t}]]`).join('\n');
+  const homeFm = `---\nscope: ${w.scope}\ntags: [${topics.join(', ')}]\nwizard: ${w.name}\n---\n\n`;
+  const homeBody = `# ${w.name}\n\n${w.desc || ''}${tagLine ? '\n\n' + tagLine : ''}\n\n## Notes\n\n${noteLinks}\n`;
+  try { fs.writeFileSync(path.join(dir, '_Home.md'), homeFm + homeBody, 'utf8'); } catch { /* ignore */ }
+
   registerRoot(dir);
   try {
     await runScrape({
@@ -527,15 +590,31 @@ ipcMain.handle('wizards:install', async (_e, id) => {
     });
   } catch { /* ignore */ }
   saveConfig({ ...cfg, installedWizards: { ...(cfg.installedWizards || {}), [id]: { name: w.name } } });
-  if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', { phase: 'done', done: (w.notes || []).length, total: (w.notes || []).length, current: `installed ${w.name}`, errors: 0 });
-  return { ok: true, installed: (w.notes || []).length };
+  const total = linkedTitles.length + 1; // +1 for _Home.md hub node
+  if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', { phase: 'done', done: total, total, current: `installed ${w.name}`, errors: 0 });
+  return { ok: true, installed: total };
 });
 
-ipcMain.handle('wizards:uninstall', (_e, id) => {
+ipcMain.handle('wizards:uninstall', async (_e, id) => {
   const w = (loadCatalog().wizards || []).find((x) => x.id === id);
   const root = vaultRoot();
+  const cfg = loadConfig() || {};
+  // De-index from the knowledge graph BEFORE removing files.
+  // If the backend is REACHABLE but errors (4xx/5xx), abort and keep the wizard installed so the
+  // user can retry cleanly (Codex review). If the backend is unreachable, proceed best-effort.
+  if (w && root && cfg.tenant) {
+    const dirFwd = path.join(root, 'Wizards', safeName(w.name)).replace(/\\/g, '/');
+    try {
+      const fr = await fetch(`${BACKEND_URL}/forget`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tenant: cfg.tenant, path_prefix: dirFwd }),
+      });
+      if (!fr.ok) return { ok: false, error: `Could not de-index (backend ${fr.status}); try again.` };
+    } catch { /* backend unreachable — file removal proceeds best-effort */ }
+  }
   if (w && root) { try { fs.rmSync(path.join(root, 'Wizards', safeName(w.name)), { recursive: true, force: true }); } catch { /* ignore */ } }
-  const cfg = loadConfig() || {}; const iw = { ...(cfg.installedWizards || {}) }; delete iw[id];
+  const iw = { ...(cfg.installedWizards || {}) }; delete iw[id];
   saveConfig({ ...cfg, installedWizards: iw });
   return { ok: true };
 });

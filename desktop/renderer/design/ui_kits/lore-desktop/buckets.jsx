@@ -66,8 +66,9 @@ function BkStars({ value, onRate }) {
   );
 }
 
-function WizardStoreCard({ w, onInstall, onRate }) {
+function WizardStoreCard({ w, onInstall, onRate, onUninstall }) {
   const [busy, setBusy] = React.useState(false);
+  const [unbusy, setUnbusy] = React.useState(false);
   return (
     <BkCard style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -87,7 +88,10 @@ function WizardStoreCard({ w, onInstall, onRate }) {
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{w.rating} · {(w.installs || 0).toLocaleString()}</span>
         <div style={{ flex: 1 }} />
         {w.installed
-          ? <BkBadge tone="success" dot>installed</BkBadge>
+          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+              <BkBadge tone="success" dot>installed</BkBadge>
+              <BkButton variant="secondary" size="sm" icon={unbusy ? 'loader' : 'trash'} onClick={async () => { setUnbusy(true); await onUninstall(w.id); setUnbusy(false); }}>{unbusy ? 'Removing…' : 'Uninstall'}</BkButton>
+            </span>
           : <BkButton variant="primary" size="sm" icon={busy ? 'loader' : 'download'} onClick={async () => { setBusy(true); await onInstall(w.id); setBusy(false); }}>{busy ? 'Installing…' : 'Install'}</BkButton>}
       </div>
     </BkCard>
@@ -107,6 +111,7 @@ function WizardStore({ onChanged }) {
   React.useEffect(() => { load(); }, [load]);
   const install = async (id) => { try { await window.lore.wizards.install(id); } catch { /* */ } await load(); if (onChanged) onChanged(); };
   const rate = async (id, s) => { try { await window.lore.wizards.rate(id, s); } catch { /* */ } load(); };
+  const uninstall = async (id) => { try { await window.lore.wizards.uninstall(id); } catch { /* */ } await load(); if (onChanged) onChanged(); };
   if (catalog === null) return <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', padding: '24px 0' }}>Loading knowledge bases…</div>;
   if (!catalog.length) return null;
 
@@ -160,7 +165,7 @@ function WizardStore({ onChanged }) {
       </div>
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', margin: '0 2px 8px' }}>{filtered.length.toLocaleString()} result{filtered.length !== 1 ? 's' : ''}{filtered.length > shown ? ` · showing ${shown}` : ''}</div>
       <div style={bkS.grid}>
-        {visible.map((w) => <WizardStoreCard key={w.id} w={w} onInstall={install} onRate={rate} />)}
+        {visible.map((w) => <WizardStoreCard key={w.id} w={w} onInstall={install} onRate={rate} onUninstall={uninstall} />)}
       </div>
       {filtered.length > shown && (
         <button onClick={() => setShown((s) => s + 60)} style={{ marginTop: 14, width: '100%', padding: '10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
