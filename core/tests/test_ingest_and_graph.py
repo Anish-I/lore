@@ -75,9 +75,11 @@ def test_graph_response_shape():
         assert all(k in node for k in ("id", "label", "scope", "owner", "links", "updated")), \
             f"Node missing required fields: {node}"
     # Each edge must be a 3-element list [src, dst, kind].
+    from lore.relations import RELATION_KINDS
+    allowed_kinds = ("link", "folder", "tag", "topic") + RELATION_KINDS
     for edge in body["edges"]:
         assert len(edge) == 3, f"Edge must be [src, dst, kind], got: {edge}"
-        assert edge[2] in ("link", "folder", "tag", "topic"), f"Unexpected edge kind: {edge[2]}"
+        assert edge[2] in allowed_kinds, f"Unexpected edge kind: {edge[2]}"
 
 
 def test_graph_edge_acl_drop():

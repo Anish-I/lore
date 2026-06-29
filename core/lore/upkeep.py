@@ -308,10 +308,16 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
             _delete_note(conn, tenant, note_id)
             purged += 1
 
+    # --- Step 6: refresh the reasoned graph (typed relations + node importance) ---
+    from . import relations
+    rel_edges = relations.backfill_relations(conn, tenant)
+    relations.recompute_importance(conn, tenant)
+
     return {
         "dateNotes": len(ephemeral),
         "topics": len(topics_acc),
         "folded": len(folded_anchors),
         "deleted": deleted,
         "purgedNoise": purged,
+        "relations": rel_edges,
     }

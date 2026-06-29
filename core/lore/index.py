@@ -3,6 +3,7 @@ from . import qdrant_store
 from .chunker import chunk_markdown
 from .contextualize import apply_context
 from .distill import distill_md
+from . import relations
 
 # --- Edge extraction constants ---
 _EDGE_CAP_FOLDER = 8    # max folder-sibling edges per note
@@ -246,6 +247,23 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     tag_list = _parse_tags(text)
     tag_edges = _tag_edges(conn, tenant_id, source_id, tag_list)
     _upsert_edges(conn, tenant_id, source_id, "tag", tag_edges)
+
+    # semantic relations: typed, confidence-scored edges from the cue lexicon (reasoned graph).
+    # weight column carries the confidence; evidence carries the justifying sentence.
+    def _resolve_title(title):
+        row = conn.execute(
+            "select id from notes where lower(title)=%s and tenant_id=%s limit 1",
+            (title.lower(), tenant_id),
+        ).fetchone()
+        return row[0] if row and row[0] != source_id else None
+
+    rels = relations.extract_relations(text, _resolve_title)
+    by_kind = {}
+    for dst, kind, conf, evidence in rels:
+        by_kind.setdefault(kind, []).append((dst, conf, evidence))
+    # Upsert every relation kind (empty included) so edges the text no longer asserts are cleared.
+    for kind in relations.RELATION_KINDS:
+        _upsert_edges(conn, tenant_id, source_id, kind, by_kind.get(kind, []))
 
     return len(points)
 

@@ -51,6 +51,8 @@ _BODY_MIGRATION = [
     "alter table notes add column if not exists body text",
     "alter table notes add column if not exists body_sha256 text",
     "alter table notes add column if not exists content_hash text",
+    # M7 reasoned-graph: per-note importance score (weighted typed in-degree).
+    "alter table notes add column if not exists importance real default 0",
 ]
 
 # Unique constraint added in M1; applied opportunistically (no-op if already present).
@@ -72,7 +74,9 @@ do $$ begin
     alter table edges drop constraint edges_kind_check;
   end if;
   alter table edges
-    add constraint edges_kind_check check (kind in ('link','folder','tag','topic'));
+    add constraint edges_kind_check check (kind in (
+      'link','folder','tag','topic',
+      'supports','contradicts','causes','depends_on','supersedes','implements','relates_to'));
 end $$
 """
 
