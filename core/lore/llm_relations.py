@@ -123,17 +123,22 @@ def _upsert_llm_edge(conn, tenant, src, dst, kind, conf, evidence) -> bool:
 
 
 def enrich_relations(conn, tenant: str, llm_call=None, min_conf: float = _MIN_CONF,
-                     limit: int = 40, model: str = None, force: bool = False) -> dict:
+                     limit: int = 40, model: str = None, force: bool = False,
+                     provider: str = None) -> dict:
     """Enrich the reasoned graph with LLM-inferred relations for notes whose body changed.
 
     Args:
-        llm_call: callable(prompt)->str. Defaults to together_chat. Injectable for tests.
+        llm_call: callable(prompt)->str. Injectable for tests. When None, resolves the
+            configured provider (codex subscription / claude subscription / BYOK).
+        provider: override the provider ('codex' | 'claude' | 'byok'); else env LORE_LLM_PROVIDER.
         limit: max notes to process this run (cost control).
         force: re-enrich even if the body hash is cached.
 
     Returns {"notesProcessed", "edges", "skipped"}.
     """
-    llm_call = llm_call or together_chat
+    if llm_call is None:
+        from .llm_providers import resolve_llm_call
+        llm_call = resolve_llm_call(provider)
     _ensure_cache(conn)
 
     # Candidate whitelist: distinctive existing titles -> id (no invented nodes possible).

@@ -461,17 +461,33 @@ class EnrichReq(BaseModel):
     tenant: str = "solo"
     limit: int = 40
     force: bool = False
+    provider: Optional[str] = None   # 'codex' | 'claude' | 'byok'; else env LORE_LLM_PROVIDER
 
 
 @app.post("/enrich")
 def enrich(req: EnrichReq):
-    """Optional cloud-LLM relation enrichment: infer typed relations from descriptive prose,
+    """Optional LLM relation enrichment: infer typed relations from descriptive prose,
     constrained to existing note titles, origin='llm', never overwriting stronger heuristic edges.
-    Requires TOGETHER_API_KEY. Body: {tenant, limit?, force?}. Returns {notesProcessed, edges, skipped}."""
+    Uses the configured LLM provider — Codex subscription, Claude subscription, or BYOK.
+    Body: {tenant, limit?, force?, provider?}. Returns {notesProcessed, edges, skipped, provider}."""
     from .llm_relations import enrich_relations
-    if not os.environ.get("TOGETHER_API_KEY"):
-        raise HTTPException(status_code=400, detail="TOGETHER_API_KEY not set on the backend")
-    return enrich_relations(_conn, req.tenant, limit=max(1, min(req.limit, 200)), force=req.force)
+    from .llm_providers import resolve_llm_call, provider_available, ProviderError
+    prov = (req.provider or os.environ.get("LORE_LLM_PROVIDER") or "byok").lower()
+    if not provider_available(prov):
+        raise HTTPException(status_code=400,
+            detail=f"LLM provider '{prov}' unavailable (codex/claude CLI not found, or no BYOK key set)")
+    try:
+        stats = enrich_relations(_conn, req.tenant, limit=max(1, min(req.limit, 200)),
+                                 force=req.force, provider=prov)
+    except ProviderError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**stats, "provider": prov}
+
+@app.get("/enrich/providers")
+def enrich_providers():
+    """Which LLM providers are usable right now (for the Settings picker)."""
+    from .llm_providers import provider_available
+    return {p: provider_available(p) for p in ("codex", "claude", "byok")}
 
 @app.get("/upkeep/status")
 def upkeep_status():
