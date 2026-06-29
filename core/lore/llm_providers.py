@@ -30,24 +30,36 @@ class ProviderError(RuntimeError):
 def _find_codex_bin() -> str:
     if os.environ.get("CODEX_BIN") and os.path.exists(os.environ["CODEX_BIN"]):
         return os.environ["CODEX_BIN"]
-    onpath = shutil.which("codex")
-    if onpath:
-        return onpath
-    # Windows install layout: %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe
+    # Prefer the real Codex binary (Windows install: %LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe)
+    # over a `codex` shim on PATH — PATH may hold an older Node wrapper that rejects newer config.
     local = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~/AppData/Local")
     hits = glob.glob(os.path.join(local, "OpenAI", "Codex", "bin", "*", "codex.exe"))
     if hits:
         return sorted(hits)[-1]
+    onpath = shutil.which("codex")
+    if onpath:
+        return onpath
     raise ProviderError("Codex CLI not found (set CODEX_BIN or install Codex)")
 
 
 def codex_call(prompt: str, timeout: int = 180) -> str:
-    """Run `codex exec` (read-only) and return just the assistant's final text."""
+    """Run `codex exec` (read-only) and return just the assistant's final text.
+
+    Relation extraction is a simple structured task — no deep reasoning needed — so we run
+    at a LOW reasoning effort for speed (override with LORE_CODEX_EFFORT, e.g. minimal/low/
+    medium). Optional fast model via LORE_CODEX_MODEL."""
     binp = _find_codex_bin()
-    out = subprocess.run(
-        [binp, "exec", "--sandbox", "read-only", "--skip-git-repo-check", prompt],
-        capture_output=True, text=True, timeout=timeout,
-    ).stdout or ""
+    effort = os.environ.get("LORE_CODEX_EFFORT", "low")
+    args = [binp, "exec", "--sandbox", "read-only", "--skip-git-repo-check",
+            "-c", f"model_reasoning_effort={effort}"]
+    model = os.environ.get("LORE_CODEX_MODEL")
+    if model:
+        args += ["-m", model]
+    args.append(prompt)
+    proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+    out = proc.stdout or ""
+    if proc.returncode != 0 and not out.strip():
+        raise ProviderError(f"codex exec failed (exit {proc.returncode}): {(proc.stderr or '').strip()[:200]}")
     # codex exec prints a header, then a line "codex", the answer, then "tokens used".
     m = re.search(r"(?:^|\n)codex\n(.*?)(?:\ntokens used|\Z)", out, re.DOTALL)
     return (m.group(1).strip() if m else out.strip())
