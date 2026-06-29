@@ -20,6 +20,7 @@ let win = null;
 let backendProc = null;
 let watcher = null;
 let upkeepInterval = null;
+let embeddedPgStop = null; // set when config.embeddedPg === true
 
 // ---------- upkeep auto-scheduler ----------
 // Fires a background /upkeep/run every 30 minutes when auto-mode is on.
@@ -597,6 +598,25 @@ app.whenReady().then(async () => {
   const cfg = loadConfig();
   if (!cfg || cfg.upkeepAuto !== false) startUpkeepInterval((cfg && cfg.tenant) || 'solo');
 
+  // ---------- embedded Postgres (opt-in, default OFF) ----------
+  // Set  config.embeddedPg = true  in lore-config.json to enable.
+  // When enabled, a local Postgres cluster is started from bundled binaries
+  // (no Docker required) and DATABASE_URL is pointed at it before the Python
+  // backend is spawned.  When the flag is absent or false, nothing here runs
+  // and the existing Docker-based setup is completely unaffected.
+  if (cfg && cfg.embeddedPg) {
+    const embPg = require('./lib/embedded-postgres');
+    const pgDataDir = path.join(app.getPath('userData'), 'lore-pg-data');
+    const result = await embPg.start({ dataDir: pgDataDir, port: 5433 });
+    if (result.ok) {
+      process.env.DATABASE_URL = result.url;
+      embeddedPgStop = result.stop;
+    } else {
+      console.error('[embedded-pg] failed to start:', result.reason);
+      // Non-fatal: fall through; backend will fail to connect and surface its own error.
+    }
+  }
+
   await ensureBackend(); // best-effort; renderer shows a banner if it's not reachable
   await createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
@@ -604,6 +624,8 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => {
+  // Stop embedded Postgres if it was started (fire-and-forget on quit).
+  if (embeddedPgStop) try { embeddedPgStop(); } catch {}
   if (backendProc) try { backendProc.kill(); } catch {}
   if (watcher) try { watcher.close(); } catch {}
   stopUpkeepInterval();

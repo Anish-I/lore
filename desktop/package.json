@@ -15,7 +15,8 @@
     "playwright": "^1.61.1"
   },
   "dependencies": {
-    "chokidar": "^3.6.0"
+    "chokidar": "^3.6.0",
+    "embedded-postgres": "^18.4.0-beta.17"
   },
   "build": {
     "appId": "co.lore.desktop",
