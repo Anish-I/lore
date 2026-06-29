@@ -1,12 +1,40 @@
+# dependencies
 node_modules/
+desktop/node_modules/
+.venv/
+*.egg-info/
+
+# secrets & local config (never commit)
 .env
+.env.*
+*.token
+.conda/
+secrets/
+
+# python
 __pycache__/
 *.pyc
+.pytest_cache/
+
+# data stores & runtime state
 .qdrant/
 .pgdata/
 data/
-*.egg-info/
-.venv/
-*.stackdump
-desktop/node_modules/
+logs/
+*.log
+.omx/
+.lore/
+
+# build artifacts
+dist/
+build/
 desktop/dist/
+
+# editor / tooling
+.cursor/
+.idea/
+.vscode/
+*.stackdump
+
+# test artifacts
+desktop/e2e-shot-*.png

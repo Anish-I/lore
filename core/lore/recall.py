@@ -68,24 +68,9 @@ def _weight_for(query: str) -> float:
 # Applied to the RETRIEVAL query only (dense+sparse); rerank still scores the
 # original query. Toggle with EXPAND=0. Domain-pluggable.
 _EXPAND = os.environ.get("EXPAND", "1") != "0"
-_GLOSSARY = {
-    "incurred but not": "IBNR reserving reserve",
-    "ibnr": "incurred but not reported reserving",
-    "set aside": "reserve",
-    "open claim": "reserve claim",
-    "book running": "loss ratio plan",
-    "loss costs": "loss ratio pure premium rate indication",
-    "reduce loss": "loss ratio rate indication telematics",
-    "department of insurance": "DOI regulatory inquiry filing complaint",
-    "regulator": "DOI regulatory inquiry compliance",
-    "excess-of-loss": "reinsurance treaty catastrophe XoL",
-    "excess of loss": "reinsurance treaty catastrophe XoL",
-    "catastrophe": "reinsurance treaty catastrophe cat cover PML",
-    "hurricane": "catastrophe reinsurance PML treaty",
-    "capital protects": "reinsurance combined ratio capital",
-    "profitability": "combined ratio loss ratio expense ratio rate",
-    "raise premiums": "rate indication rate filing",
-}
+# Empty by default (domain-pluggable). Populate per-deployment or let the M6
+# recalibration job learn triggers from the user's real queries.
+_GLOSSARY = {}
 
 def expand_query(q: str) -> str:
     if not _EXPAND:

@@ -1,141 +1,309 @@
 /* global React */
-// Lore desktop — force-directed knowledge graph (Obsidian-style: bouncy, draggable).
-// Overrides the static design GraphView with a real d3-force physics simulation.
+// Lore desktop — knowledge graph on CANVAS (Obsidian-style: zoom/pan, light, clean).
+// Renders the whole graph in one canvas pass per frame (not thousands of SVG nodes),
+// with real d3-zoom wheel zoom + pan, degree-scaled nodes, and a sim that sleeps when settled.
 const grNS = window.VaultDesignSystem_ffbf58;
 const { Icon: GrIcon, ScopeTag: GrScope, Button: GrButton } = grNS;
-const GR_SCOPE_FILL = { team: 'var(--jade-500)', enterprise: 'var(--azure-500)', private: 'var(--obsidian-400)' };
+const GR_SCOPE_VAR = { team: '--jade-500', enterprise: '--azure-500', private: '--obsidian-400' };
+// Daily-thread / journal notes named by date — hidden by default so topics dominate the graph.
+const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 
 function GraphView({ graph, onOpen }) {
-  const svgRef = React.useRef(null);
+  const wrapRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
   const simRef = React.useRef(null);
+  const zoomRef = React.useRef(null);
+  const tRef = React.useRef(null);                 // current d3 zoom transform (CSS-px space)
+  const dataRef = React.useRef({ nodes: [], links: [], byId: {} });
+  const palRef = React.useRef({});
+  const hoverRef = React.useRef(null);
   const dragRef = React.useRef(null);
-  const [, tick] = React.useReducer((x) => (x + 1) % 1e9, 0);
-  const [hover, setHover] = React.useState(null);
-  const [sel, setSel] = React.useState(null);
-  const [filters, setFilters] = React.useState({ team: true, enterprise: true, private: true });
+  const drawRef = React.useRef(null);
+  const filtersRef = React.useRef({ team: true, enterprise: true, private: true });
+  const selRef = React.useRef(null);
 
-  // mutable node/link objects (d3 mutates these in place)
-  const data = React.useMemo(() => {
-    const nodes = graph.nodes.map((n) => ({ ...n, radius: (n.r / 4) + 1.7 }));
-    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-    const links = graph.edges.filter(([a, b]) => byId[a] && byId[b]).map(([a, b]) => ({ source: a, target: b }));
-    return { nodes, links, byId };
+  const [filters, setFilters] = React.useState({ team: true, enterprise: true, private: true });
+  const [sel, setSel] = React.useState(null);
+  // Version-control date scrubber: show only notes created on/before `cutoff` (by updated_at).
+  const dateBounds = React.useMemo(() => {
+    let lo = Infinity, hi = -Infinity;
+    for (const n of (graph.nodes || [])) { const t = Date.parse(n.updated); if (!isNaN(t)) { if (t < lo) lo = t; if (t > hi) hi = t; } }
+    if (!isFinite(lo)) { lo = 0; hi = Date.now(); }
+    return { lo, hi };
   }, [graph]);
+  const [cutoff, setCutoff] = React.useState(dateBounds.hi);
+  const cutoffRef = React.useRef(dateBounds.hi);
+  React.useEffect(() => { setCutoff(dateBounds.hi); }, [dateBounds]);
+
+  const draw = React.useCallback(() => { if (drawRef.current) drawRef.current(); }, []);
+
+  React.useEffect(() => { filtersRef.current = filters; draw(); }, [filters, draw]);
+  React.useEffect(() => { cutoffRef.current = cutoff; draw(); }, [cutoff, draw]);
+  React.useEffect(() => { selRef.current = sel; draw(); }, [sel, draw]);
 
   React.useEffect(() => {
     const d3 = window.d3;
-    if (!d3) return;
-    const { nodes, links } = data;
+    const cv = canvasRef.current, wrap = wrapRef.current;
+    if (!d3 || !cv || !wrap) return;
+
+    // ---- palette from CSS vars (canvas can't use var()) ----
+    const readPalette = () => {
+      const cs = getComputedStyle(document.documentElement);
+      const v = (n, f) => (cs.getPropertyValue(n).trim() || f);
+      palRef.current = {
+        team: v('--jade-500', '#3fb27f'), enterprise: v('--azure-500', '#4a90d9'),
+        private: v('--obsidian-400', '#8b8f9a'),
+        edge: v('--border-strong', '#2a2d34'), edgeLit: v('--brand-fg', '#c9a24b'),
+        text: v('--text-muted', '#9aa0aa'), textStrong: v('--text-strong', '#f0f0f2'),
+        brand: v('--brand-fg', '#c9a24b'),
+      };
+    };
+    readPalette();
+
+    // ---- data (d3 mutates node objects in place) ----
+    const nodes = graph.nodes.map((n) => ({
+      ...n, deg: n.links || 0,
+      r: Math.max(2.4, Math.min(9, 2.4 + Math.sqrt(n.links || 0) * 0.9)),
+    }));
+    const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    const links = graph.edges
+      .filter(([a, b]) => byId[a] && byId[b])
+      .map(([a, b, kind]) => ({ source: a, target: b, kind: kind || 'link' }));
+    dataRef.current = { nodes, links, byId };
+
+    const dpr = () => window.devicePixelRatio || 1;
+    const resize = () => {
+      const w = wrap.clientWidth, h = wrap.clientHeight;
+      cv.width = Math.max(1, Math.round(w * dpr()));
+      cv.height = Math.max(1, Math.round(h * dpr()));
+      cv.style.width = w + 'px'; cv.style.height = h + 'px';
+    };
+
+    const visible = (n) => {
+      if (!n || filtersRef.current[n.scope] === false) return false;
+      if (GR_DATE_RE.test(n.label || '')) return false;           // date notes are folded into topics → never shown
+      const t = Date.parse(n.updated);
+      if (!isNaN(t) && t > cutoffRef.current) return false;        // version control: hide notes created after the cutoff
+      return true;
+    };
+
+    const render = () => {
+      const ctx = cv.getContext('2d');
+      const t = tRef.current || d3.zoomIdentity;
+      const pal = palRef.current;
+      const { nodes: ns, links: ls } = dataRef.current;
+      const focus = hoverRef.current || selRef.current;
+      const nb = new Set();
+      if (focus) for (const l of ls) {
+        const a = l.source.id || l.source, b = l.target.id || l.target;
+        if (a === focus) nb.add(b); if (b === focus) nb.add(a);
+      }
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.setTransform(dpr() * t.k, 0, 0, dpr() * t.k, dpr() * t.x, dpr() * t.y);
+
+      // edges
+      for (const l of ls) {
+        const a = l.source, b = l.target;
+        if (a.x == null || !visible(a) || !visible(b)) continue;
+        const lit = focus && (a.id === focus || b.id === focus);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+        ctx.strokeStyle = lit ? pal.edgeLit : pal.edge;
+        ctx.globalAlpha = focus ? (lit ? 0.85 : 0.08) : 0.42;
+        ctx.lineWidth = (lit ? 1.3 : 0.7) / t.k;
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+
+      // nodes
+      for (const n of ns) {
+        if (n.x == null || !visible(n)) continue;
+        const near = !focus || nb.has(n.id) || n.id === focus;
+        ctx.globalAlpha = near ? 1 : 0.22;
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 6.283185);
+        ctx.fillStyle = pal[n.scope] || pal.private;
+        ctx.fill();
+        if (n.id === selRef.current) {
+          ctx.lineWidth = 2 / t.k; ctx.strokeStyle = pal.brand; ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+
+      // labels — only when zoomed in, or for the focused node + its neighbors
+      const showAll = t.k > 1.25;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      for (const n of ns) {
+        if (n.x == null || !visible(n)) continue;
+        const isFocus = focus && (n.id === focus || nb.has(n.id));
+        if (!showAll && !isFocus) continue;
+        ctx.globalAlpha = (focus && !isFocus) ? 0.28 : 0.92;
+        ctx.fillStyle = n.id === focus ? pal.textStrong : pal.text;
+        ctx.font = `${n.id === focus ? 600 : 500} ${11 / t.k}px ui-sans-serif, system-ui, sans-serif`;
+        const label = n.label || '';
+        ctx.fillText(label.length > 42 ? label.slice(0, 40) + '…' : label, n.x, n.y + n.r + 2 / t.k);
+      }
+      ctx.globalAlpha = 1;
+    };
+    drawRef.current = render;
+
+    // ---- simulation (sleeps when settled; tick redraws while hot) ----
     const sim = d3.forceSimulation(nodes)
-      .force('charge', d3.forceManyBody().strength(-24).distanceMax(60))
-      .force('link', d3.forceLink(links).id((d) => d.id).distance(13).strength(0.5))
-      .force('center', d3.forceCenter(50, 50))
-      .force('collide', d3.forceCollide((d) => d.radius + 1.6))
-      .force('x', d3.forceX(50).strength(0.035))
-      .force('y', d3.forceY(50).strength(0.035))
-      .alpha(1).alphaDecay(0.015).velocityDecay(0.34);
-    sim.on('tick', tick);
+      .force('charge', d3.forceManyBody().strength(-95).distanceMax(420))
+      .force('link', d3.forceLink(links).id((d) => d.id).distance(42).strength(0.22))
+      .force('center', d3.forceCenter(0, 0))
+      .force('collide', d3.forceCollide((d) => d.r + 3))
+      .force('x', d3.forceX(0).strength(0.018))
+      .force('y', d3.forceY(0).strength(0.018))
+      .alpha(1).alphaDecay(0.022).velocityDecay(0.4);
+    sim.on('tick', render);
     simRef.current = sim;
-    return () => { sim.on('tick', null); sim.stop(); };
-  }, [data]);
 
-  const focus = hover || sel;
-  const neighbors = React.useMemo(() => {
-    const s = new Set();
-    if (focus) data.links.forEach((l) => {
-      const a = l.source.id || l.source, b = l.target.id || l.target;
-      if (a === focus) s.add(b); if (b === focus) s.add(a);
-    });
-    return s;
-  }, [focus, data]);
+    // ---- hit testing (CSS-px space) ----
+    const pick = (clientX, clientY) => {
+      const rect = cv.getBoundingClientRect();
+      const t = tRef.current || d3.zoomIdentity;
+      const wx = (clientX - rect.left - t.x) / t.k, wy = (clientY - rect.top - t.y) / t.k;
+      let best = null, bd = Infinity;
+      for (const n of dataRef.current.nodes) {
+        if (n.x == null || !visible(n)) continue;
+        const dx = n.x - wx, dy = n.y - wy, d = dx * dx + dy * dy, rr = (n.r + 4) * (n.r + 4);
+        if (d < rr && d < bd) { bd = d; best = n; }
+      }
+      return best;
+    };
 
-  const toVB = (e) => {
-    const svg = svgRef.current; const pt = svg.createSVGPoint();
-    pt.x = e.clientX; pt.y = e.clientY;
-    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
-    return { x: p.x, y: p.y };
-  };
-  const onMove = (e) => { const n = dragRef.current; if (!n) return; const { x, y } = toVB(e); n.fx = x; n.fy = y; };
-  const onUp = () => {
-    const n = dragRef.current; if (n) { n.fx = null; n.fy = null; }
-    dragRef.current = null;
-    if (simRef.current) simRef.current.alphaTarget(0);
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-  };
-  const onDown = (e, n) => {
-    e.preventDefault(); e.stopPropagation();
-    dragRef.current = n; const { x, y } = toVB(e); n.fx = x; n.fy = y;
-    if (simRef.current) simRef.current.alphaTarget(0.3).restart();
-    setSel(n.id);
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', onUp);
-  };
-  const reheat = () => { if (simRef.current) simRef.current.alpha(0.7).restart(); };
+    // ---- zoom + pan (pan only when not starting on a node) ----
+    const zoom = d3.zoom().scaleExtent([0.08, 9])
+      .filter((e) => {
+        if (e.type === 'wheel') return !e.ctrlKey;          // wheel always zooms
+        return !pick(e.clientX, e.clientY);                  // drag pans only on background
+      })
+      .on('zoom', (e) => { tRef.current = e.transform; render(); });
+    const sel3 = d3.select(cv);
+    sel3.call(zoom).on('dblclick.zoom', null);
+    zoomRef.current = { zoom, sel: sel3 };
+    tRef.current = d3.zoomIdentity;
 
-  const visible = (id) => data.byId[id] && filters[data.byId[id].scope];
-  const xy = (ref) => (typeof ref === 'object' ? ref : data.byId[ref]);
-  const selNode = sel && data.byId[sel];
+    const fitView = () => {
+      const ns = dataRef.current.nodes;
+      if (!ns.length) return;
+      let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+      for (const n of ns) {
+        if (n.x == null || !visible(n)) continue;
+        minx = Math.min(minx, n.x - n.r); maxx = Math.max(maxx, n.x + n.r);
+        miny = Math.min(miny, n.y - n.r); maxy = Math.max(maxy, n.y + n.r);
+      }
+      if (!isFinite(minx)) return;
+      const W = cv.width / dpr(), H = cv.height / dpr();
+      const gw = (maxx - minx) || 1, gh = (maxy - miny) || 1;
+      const k = Math.min(W / gw, H / gh) * 0.86;
+      const cx = (minx + maxx) / 2, cy = (miny + maxy) / 2;
+      const t = d3.zoomIdentity.translate(W / 2 - k * cx, H / 2 - k * cy).scale(k);
+      sel3.call(zoom.transform, t);   // syncs tRef via the zoom handler + redraws
+    };
+    zoomRef.current.fit = fitView;
+
+    // ---- node drag + click-to-open (React-independent pointer handlers) ----
+    let downX = 0, downY = 0, moved = false;
+    const onDragMove = (e) => {
+      const n = dragRef.current; if (!n) return;
+      if (!moved && Math.hypot(e.clientX - downX, e.clientY - downY) > 3) moved = true;
+      const rect = cv.getBoundingClientRect(); const t = tRef.current;
+      n.fx = (e.clientX - rect.left - t.x) / t.k;
+      n.fy = (e.clientY - rect.top - t.y) / t.k;
+    };
+    const onDragUp = () => {
+      const n = dragRef.current; if (n) { n.fx = null; n.fy = null; }
+      dragRef.current = null;
+      if (simRef.current) simRef.current.alphaTarget(0);
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', onDragUp);
+      if (n && !moved && onOpen) onOpen(n.id);   // a click (no drag) opens the note
+    };
+    const onDown = (e) => {
+      const n = pick(e.clientX, e.clientY);
+      if (!n) { if (selRef.current) setSel(null); return; }   // background → zoom pans
+      downX = e.clientX; downY = e.clientY; moved = false;
+      dragRef.current = n; n.fx = n.x; n.fy = n.y; setSel(n.id);
+      if (simRef.current) simRef.current.alphaTarget(0.18).restart();
+      window.addEventListener('pointermove', onDragMove);
+      window.addEventListener('pointerup', onDragUp);
+    };
+    const onHover = (e) => {
+      if (dragRef.current) return;
+      const n = pick(e.clientX, e.clientY);
+      const id = n ? n.id : null;
+      if (id !== hoverRef.current) { hoverRef.current = id; cv.style.cursor = n ? 'pointer' : 'grab'; render(); }
+    };
+    const onDbl = (e) => { const n = pick(e.clientX, e.clientY); if (n && onOpen) onOpen(n.id); };
+    cv.addEventListener('pointerdown', onDown);
+    cv.addEventListener('pointermove', onHover);
+    cv.addEventListener('dblclick', onDbl);
+
+    // ---- resize + theme observers ----
+    const ro = new ResizeObserver(() => { resize(); render(); });
+    ro.observe(wrap);
+    resize();
+    const mo = new MutationObserver(() => { readPalette(); render(); });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
+    const fitTimer = setTimeout(fitView, 420);   // fit once after initial layout
+
+    return () => {
+      clearTimeout(fitTimer);
+      ro.disconnect(); mo.disconnect();
+      cv.removeEventListener('pointerdown', onDown);
+      cv.removeEventListener('pointermove', onHover);
+      cv.removeEventListener('dblclick', onDbl);
+      window.removeEventListener('pointermove', onDragMove);
+      window.removeEventListener('pointerup', onDragUp);
+      sim.on('tick', null); sim.stop();
+      drawRef.current = null;
+    };
+  }, [graph, onOpen, setSel]);
+
+  const reheat = () => { if (simRef.current) simRef.current.alpha(0.55).restart(); };
+  const fit = () => { if (zoomRef.current && zoomRef.current.fit) zoomRef.current.fit(); };
+  const selNode = sel && dataRef.current.byId[sel];
+
+  const pill = (active) => ({
+    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', cursor: 'pointer',
+    border: '1px solid var(--border)', borderRadius: 'var(--radius-full)',
+    background: active ? 'var(--surface-raised)' : 'transparent', opacity: active ? 1 : 0.45,
+    fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)',
+  });
 
   return (
-    <div style={{ flex: 1, minWidth: 0, position: 'relative', background: 'var(--surface-canvas)', overflow: 'hidden' }}>
-      <div style={{ position: 'absolute', top: 18, left: 22, zIndex: 2 }}>
+    <div ref={wrapRef} style={{ flex: 1, minWidth: 0, position: 'relative', background: 'var(--surface-canvas)', overflow: 'hidden' }}>
+      <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: 'grab' }} />
+
+      <div style={{ position: 'absolute', top: 18, left: 22, zIndex: 2, pointerEvents: 'none' }}>
         <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>Knowledge graph</h2>
-        <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' }}>{data.nodes.length} notes · {data.links.length} links · drag to play</p>
+        <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' }}>{dataRef.current.nodes.length} notes · {dataRef.current.links.length} links · scroll to zoom · drag to pan</p>
       </div>
+
       <div style={{ position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8, alignItems: 'center' }}>
         {['team', 'enterprise', 'private'].map((k) => (
-          <button key={k} onClick={() => setFilters((f) => ({ ...f, [k]: !f[k] }))} style={{
-            display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 10px', cursor: 'pointer',
-            border: '1px solid var(--border)', borderRadius: 'var(--radius-full)',
-            background: filters[k] ? 'var(--surface-raised)' : 'transparent',
-            opacity: filters[k] ? 1 : 0.45, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)',
-          }}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: GR_SCOPE_FILL[k] }} />{k}
+          <button key={k} onClick={() => setFilters((f) => ({ ...f, [k]: !f[k] }))} style={pill(filters[k])}>
+            <span style={{ width: 9, height: 9, borderRadius: '50%', background: `var(${GR_SCOPE_VAR[k]})` }} />{k}
           </button>
         ))}
-        <button onClick={reheat} title="Shake" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 9px', cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-raised)', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)' }}>
-          <GrIcon name="sparkles" size={12} />shake
-        </button>
+        <div title="Scrub the graph by note creation date (version control) — drag to see knowledge as of any date" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-raised)' }}>
+          <GrIcon name="history" size={12} style={{ color: 'var(--text-faint)' }} />
+          <input type="range" min={dateBounds.lo} max={dateBounds.hi} value={Math.min(cutoff, dateBounds.hi)} step={86400000}
+            onChange={(e) => setCutoff(Number(e.target.value))}
+            style={{ width: 118, accentColor: 'var(--brand-fg)', cursor: 'pointer' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: cutoff >= dateBounds.hi ? 'var(--text-faint)' : 'var(--brand-fg)', minWidth: 66 }}>{cutoff >= dateBounds.hi ? 'all' : new Date(cutoff).toISOString().slice(0, 10)}</span>
+        </div>
+        <button onClick={fit} title="Fit to view" style={pill(true)}><GrIcon name="maximize" size={12} />fit</button>
+        <button onClick={reheat} title="Shake" style={pill(true)}><GrIcon name="sparkles" size={12} />shake</button>
       </div>
 
-      <svg ref={svgRef} viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet"
-        onClick={() => setSel(null)}
-        style={{ width: '100%', height: '100%', cursor: dragRef.current ? 'grabbing' : 'default', touchAction: 'none' }}>
-        {data.links.map((l, i) => {
-          const a = xy(l.source), b = xy(l.target);
-          if (!a || !b || a.x == null) return null;
-          if (!visible(a.id) || !visible(b.id)) return null;
-          const lit = focus && (focus === a.id || focus === b.id);
-          return <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-            stroke={lit ? 'var(--graph-edge)' : 'var(--border-strong)'} strokeWidth={lit ? 0.55 : 0.3}
-            opacity={focus && !lit ? 0.35 : 0.9} style={{ transition: 'stroke 120ms' }} />;
-        })}
-        {data.nodes.map((n) => {
-          if (n.x == null || !visible(n.id)) return null;
-          const lit = focus === n.id;
-          const near = focus && (neighbors.has(n.id) || focus === n.id);
-          const dim = focus && !near;
-          return (
-            <g key={n.id} style={{ cursor: 'grab' }}
-              onPointerDown={(e) => onDown(e, n)}
-              onMouseEnter={() => setHover(n.id)} onMouseLeave={() => setHover(null)}
-              onDoubleClick={() => onOpen && onOpen(n.id)}>
-              {sel === n.id && <circle cx={n.x} cy={n.y} r={n.radius + 1.8} fill="none" stroke="var(--brand-bg)" strokeWidth={0.55} />}
-              <circle cx={n.x} cy={n.y} r={n.radius} fill={GR_SCOPE_FILL[n.scope]} stroke="var(--surface-canvas)" strokeWidth={0.5}
-                opacity={dim ? 0.4 : 1} />
-              <text x={n.x} y={n.y + n.radius + 3} textAnchor="middle"
-                style={{ pointerEvents: 'none', fontFamily: 'var(--font-sans)', fontSize: 2.4, fontWeight: lit ? 600 : 500, fill: lit ? 'var(--text-strong)' : 'var(--text-muted)', opacity: dim ? 0.45 : 1 }}>{n.label}</text>
-            </g>
-          );
-        })}
-      </svg>
-
       {selNode && (
-        <div style={{ position: 'absolute', right: 18, bottom: 18, width: 240, padding: 14, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)' }}>
+        <div style={{ position: 'absolute', right: 18, bottom: 18, width: 240, padding: 14, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 3 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
             <GrIcon name="file-text" size={15} style={{ color: 'var(--brand-fg)' }} />
-            <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>{selNode.label}</span>
+            <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selNode.label}</span>
             <GrScope scope={selNode.scope} size="sm" showLabel={false} />
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginBottom: 12 }}>

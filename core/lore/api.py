@@ -1,13 +1,15 @@
-import os
-from fastapi import FastAPI, Depends
+import datetime, hashlib, os
+from typing import Optional
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from . import db
+from . import db, qdrant_store
 from .config import settings
 from .embed import FakeEmbedder, VoyageEmbedder, LocalEmbedder, LocalSparseEmbedder
 from .rerank import FakeReranker, VoyageReranker, LocalReranker
-from .index import index_note
+from .index import index_note, index_document
 from .recall import retrieve, retrieve_traced
+from .redact import redact
 from . import llm
 
 app = FastAPI(title="Lore Core")
@@ -30,10 +32,12 @@ def get_reranker():
 def get_sparse_embedder():
     return None if _FAKE else LocalSparseEmbedder()
 
-_TEAMS = ["underwriting","claims","actuarial","fraud-siu","customer-service","legal-compliance",
-          "marketing","it-eng","finance","hr","sales-distribution","product"]
-_CIRCLES = ["exec-committee","rate-filing-2026","project-telematics","catastrophe-response","ma-diligence","data-governance"]
 PROFILES = {
+  # Solo personal workspace (default): one identity, your own knowledge.
+  "solo": {"tenant": "solo", "company": "My Lore", "personas": [
+      {"label": "You", "scopes": ["private","team","enterprise"]}],
+    "examples": ["what was I working on with the Kalshi bot?","summarize the Wingman architecture",
+                 "what decisions did I make about the agent hub?","find my notes on the accident case"]},
   "acme": {"tenant": "acme", "company": "Acme (demo)", "personas": [
       {"label": "Alice", "scopes": ["alice-private","eng-team","acme-corp"]},
       {"label": "Bob", "scopes": ["bob-private","eng-team","acme-corp"]},
@@ -41,27 +45,23 @@ PROFILES = {
       {"label": "Admin (all)", "scopes": ["alice-private","bob-private","eng-team","acme-corp"]}],
     "examples": ["what do we know about Project Phoenix?","why is the Acme renewal at risk?",
                  "root cause of incident PROJ-1037","how do we handle database connection limits?"]},
-  "apex": {"tenant": "apex", "company": "Apex Auto Insurance", "personas": [
-      {"label": "CEO", "scopes": ["ceo-private","exec-committee","team-finance","team-claims","team-actuarial","apex-enterprise"]},
-      {"label": "Chief Actuary", "scopes": ["chief-actuary-private","exec-committee","team-actuarial","rate-filing-2026","data-governance","apex-enterprise"]},
-      {"label": "Actuary", "scopes": ["team-actuarial","apex-enterprise"]},
-      {"label": "Underwriter", "scopes": ["team-underwriting","apex-enterprise"]},
-      {"label": "Claims Adjuster", "scopes": ["team-claims","apex-enterprise"]},
-      {"label": "Finance Analyst", "scopes": ["team-finance","apex-enterprise"]},
-      {"label": "HR Partner", "scopes": ["team-hr","apex-enterprise"]},
-      {"label": "Rate-Filing circle", "scopes": ["rate-filing-2026","apex-enterprise"]},
-      {"label": "Marketer", "scopes": ["team-marketing","apex-enterprise"]},
-      {"label": "Admin (all)", "scopes": [f"team-{t}" for t in _TEAMS] + _CIRCLES + ["apex-enterprise"]}],
-    "examples": ["loss ratio trend and rate indication","catastrophe reinsurance exposure",
-                 "incident in the rating engine","fraud ring investigation in Florida",
-                 "rate filing for telematics usage-based pricing"]},
 }
-PROFILE = os.environ.get("VAULT_PROFILE", "acme")
+PROFILE = os.environ.get("VAULT_PROFILE", "solo")
 
 class ReindexReq(BaseModel):
     path: str; owner_id: str = "alice"; scope_id: str = "alice-private"; tenant_id: str = "t1"
 class AskReq(BaseModel):
-    question: str; principal_scopes: list[str]; tenant_id: str = "t1"
+    question: str; principal_scopes: list[str]; tenant_id: str = "t1"; model: Optional[str] = None
+
+class IngestReq(BaseModel):
+    source_id: str
+    title: str
+    text: str
+    scope: str
+    owner: str
+    tenant: str
+    source_type: str = "note"
+    content_hash: Optional[str] = None
 
 @app.post("/reindex")
 def reindex(req: ReindexReq, embedder=Depends(get_embedder), sparse=Depends(get_sparse_embedder)):
@@ -69,13 +69,37 @@ def reindex(req: ReindexReq, embedder=Depends(get_embedder), sparse=Depends(get_
                    sparse_embedder=sparse)
     return {"indexed_chunks": n}
 
+@app.post("/ingest")
+def ingest(req: IngestReq):
+    """Index pre-normalized text from an external source.
+
+    IMPORTANT: always uses the local embedder regardless of VOYAGE_API_KEY.
+    Caller-supplied text may contain sensitive data; sending it to an external
+    embedding API (Voyage) would be a data-leak path.  LocalEmbedder runs fully
+    on-device.  In VAULT_FAKE=1 test mode FakeEmbedder is used instead.
+    """
+    if _FAKE:
+        embedder = FakeEmbedder()
+        sparse = None
+    else:
+        embedder = LocalEmbedder()       # never VoyageEmbedder here
+        sparse = LocalSparseEmbedder()
+
+    n = index_document(
+        source_id=req.source_id, title=req.title, text=req.text,
+        scope_id=req.scope, owner_id=req.owner, tenant_id=req.tenant,
+        embedder=embedder, conn=_conn, sparse_embedder=sparse,
+        source_type=req.source_type, content_hash=req.content_hash,
+    )
+    return {"ok": True, "note_id": req.source_id, "chunks": n}
+
 @app.post("/ask")
 def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
         sparse=Depends(get_sparse_embedder)):
     hits = retrieve(req.question, embedder, reranker, req.principal_scopes, req.tenant_id,
                     sparse_embedder=sparse)
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
-    text, engine = llm.answer(req.question, chunks)
+    text, engine = llm.answer(req.question, chunks, model=req.model)
     return {"answer": text, "engine": engine,
             "citations": [{"note_id": h.note_id, "heading_path": h.heading_path, "why": h.why} for h in hits]}
 
@@ -85,10 +109,10 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
     """Full pipeline trace for the visualizer: per-lane candidates, fusion, rerank, answer."""
     if sparse is None:
         return {"error": "trace requires real models (unset VAULT_FAKE)"}
-    final, tr = retrieve_traced(req.question, embedder, reranker, sparse,
-                                req.principal_scopes, req.tenant_id)
+    _, tr = retrieve_traced(req.question, embedder, reranker, sparse,
+                            req.principal_scopes, req.tenant_id)
     chunks = [{"title": f["title"], "text": f["text"]} for f in tr["final"]]
-    text, engine = llm.answer(req.question, chunks)
+    text, engine = llm.answer(req.question, chunks, model=req.model)
     tr["answer"] = text
     tr["engine"] = engine
     tr["scopes_asked"] = req.principal_scopes
@@ -97,6 +121,305 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
 @app.get("/presets")
 def presets():
     return PROFILES.get(PROFILE, PROFILES["acme"])
+
+@app.get("/graph")
+def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
+    """Return the knowledge graph for a tenant filtered by ACL scope.
+
+    Query params:
+        tenant: tenant_id to query (default: active VAULT_PROFILE tenant).
+        scopes: comma-separated list of scope_ids the viewer can see
+                (default: union of all scopes across all personas in the active profile).
+
+    Response:
+        {
+          "nodes": [{"id", "label", "scope", "owner", "links", "updated"}, ...],
+          "edges": [[src_id, dst_id, kind], ...]
+        }
+
+    ACL guarantees (enforced server-side, not post-filtered):
+        - A node appears only if its scope_id is in the caller's allowed set.
+        - An edge appears only if BOTH endpoints are in the returned node set.
+        - Node `links` counts degree AFTER scope filtering.
+        - Node list is capped at 1500 (most-connected first); edges follow.
+    """
+    profile = PROFILES.get(PROFILE, PROFILES["acme"])
+    active_tenant = tenant or profile["tenant"]
+
+    if scopes:
+        allowed = [s.strip() for s in scopes.split(",") if s.strip()]
+    else:
+        # Default: all scopes visible to any persona in this profile.
+        allowed = list({s for p in profile["personas"] for s in p["scopes"]})
+
+    # Fetch all nodes visible to the caller (ACL: scope_id must be in allowed set).
+    # This is the server-side filter — no post-filtering is performed after this point.
+    rows = _conn.execute(
+        """select id, title, scope_id, owner_id, updated_at, source_path
+           from notes
+           where tenant_id=%s and scope_id = any(%s)""",
+        (active_tenant, allowed),
+    ).fetchall()
+
+    node_ids = {r[0] for r in rows}
+
+    # Fetch all edges for this tenant (cheap — edges table is small relative to notes).
+    # We then filter to only edges where both endpoints are in the visible node set.
+    edge_rows = _conn.execute(
+        "select src_note_id, dst_note_id, kind from edges where tenant_id=%s",
+        (active_tenant,),
+    ).fetchall()
+
+    # ACL edge filter: both endpoints must be visible.
+    filtered_edges = [
+        (src, dst, kind) for src, dst, kind in edge_rows
+        if src in node_ids and dst in node_ids
+    ]
+
+    # Compute per-node degree in the filtered graph (used for cap ordering and UI).
+    degree = {nid: 0 for nid in node_ids}
+    for src, dst, _ in filtered_edges:
+        degree[src] = degree.get(src, 0) + 1
+        degree[dst] = degree.get(dst, 0) + 1
+
+    # Cap at 1500 nodes (most-connected first); re-filter edges after cap.
+    MAX_NODES = 1500
+    if len(node_ids) > MAX_NODES:
+        top_ids = set(sorted(node_ids, key=lambda nid: degree.get(nid, 0), reverse=True)[:MAX_NODES])
+        filtered_edges = [(src, dst, kind) for src, dst, kind in filtered_edges
+                         if src in top_ids and dst in top_ids]
+        # Recompute degree after cap so `links` field is accurate.
+        degree = {nid: 0 for nid in top_ids}
+        for src, dst, _ in filtered_edges:
+            degree[src] = degree.get(src, 0) + 1
+            degree[dst] = degree.get(dst, 0) + 1
+    else:
+        top_ids = node_ids
+
+    row_by_id = {r[0]: r for r in rows}
+    nodes = []
+    for nid in top_ids:
+        nid_, title, scope_id, owner_id, updated_at, source_path = row_by_id[nid]
+        nodes.append({
+            "id": nid_,
+            "label": title or nid_,
+            "scope": scope_id,
+            "owner": owner_id,
+            "path": source_path,
+            "links": degree.get(nid_, 0),
+            "updated": updated_at.isoformat() if updated_at else None,
+        })
+
+    return {
+        "nodes": nodes,
+        "edges": [[src, dst, kind] for src, dst, kind in filtered_edges],
+    }
+
+class CaptureReq(BaseModel):
+    session_id: str
+    title: str
+    text: str
+    scope: str
+    owner: str
+    tenant: str
+    mode: str = "default"  # reserved for future routing (e.g. "private", "team"); unused in M1
+
+def _session_note_id(session_id: str) -> str:
+    """Stable note_id derived from session_id (SHA-1, first 16 hex chars)."""
+    return hashlib.sha1(session_id.encode()).hexdigest()[:16]
+
+def _local_embedder():
+    """Always returns a local (on-device) embedder — never Voyage.
+    Used by /capture and /ingest to prevent external API data-leak."""
+    return FakeEmbedder() if _FAKE else LocalEmbedder()
+
+def _local_sparse():
+    return None if _FAKE else LocalSparseEmbedder()
+
+@app.post("/capture")
+def capture(req: CaptureReq):
+    """Index a Claude session transcript after server-side secret redaction.
+
+    Text is redacted before embedding or storage.  Re-POSTing the same
+    session_id upserts the existing note (one note per session).
+
+    Body: {session_id, title, text, scope, owner, tenant, mode}
+    Returns: {ok, note_id, chunks}
+    """
+    safe_text = redact(req.text)
+    note_id = _session_note_id(req.session_id)
+    n = index_document(
+        source_id=note_id, title=req.title, text=safe_text,
+        scope_id=req.scope, owner_id=req.owner, tenant_id=req.tenant,
+        embedder=_local_embedder(), conn=_conn, sparse_embedder=_local_sparse(),
+        source_type="claude-session",
+    )
+    return {"ok": True, "note_id": note_id, "chunks": n}
+
+@app.get("/capture/status")
+def capture_status(session_id: str):
+    """Check whether a session has been indexed.
+
+    Returns: {exists, note_id, updated, chunks}
+    """
+    note_id = _session_note_id(session_id)
+    row = _conn.execute(
+        "select updated_at from notes where id=%s", (note_id,)
+    ).fetchone()
+    if not row:
+        return {"exists": False, "note_id": note_id, "updated": None, "chunks": 0}
+    chunk_count = _conn.execute(
+        "select count(*) from chunks where note_id=%s", (note_id,)
+    ).fetchone()[0]
+    return {
+        "exists": True,
+        "note_id": note_id,
+        "updated": row[0].isoformat() if row[0] else None,
+        "chunks": chunk_count,
+    }
+
+@app.delete("/capture")
+def capture_delete(source_type: str = "claude-session", tenant: Optional[str] = None):
+    """Privacy purge: delete all notes of the given source_type within a tenant.
+
+    Removes matching notes from Postgres (chunks cascade), their outgoing/incoming
+    edges, and their Qdrant vector points.
+
+    Query params: source_type (default: claude-session), tenant (default: active profile)
+    Returns: {deleted: n}
+    """
+    active_tenant = tenant or PROFILES.get(PROFILE, PROFILES["acme"])["tenant"]
+    rows = _conn.execute(
+        "select id from notes where source_type=%s and tenant_id=%s",
+        (source_type, active_tenant),
+    ).fetchall()
+    deleted = 0
+    for (note_id,) in rows:
+        qdrant_store.delete_note(note_id)
+        _conn.execute(
+            "delete from edges where tenant_id=%s and (src_note_id=%s or dst_note_id=%s)",
+            (active_tenant, note_id, note_id),
+        )
+        _conn.execute("delete from notes where id=%s", (note_id,))  # chunks cascade
+        deleted += 1
+    return {"deleted": deleted}
+
+@app.get("/notes/{note_id}")
+def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] = None):
+    """Retrieve a note's metadata and original body by ID.
+
+    Query params:
+        tenant: tenant_id to read from (default: active VAULT_PROFILE tenant).
+        scopes: comma-separated ACL scopes; when supplied the note must be in one of
+                them or a 404 is returned.  Omit to skip scope filtering.
+
+    Returns {id, title, scope, body, updated}.  body is the original markdown
+    as stored at index time (lossless; chunk text is NOT a full reconstruction).
+    404 if the note does not exist or is not visible to the caller.
+    """
+    profile = PROFILES.get(PROFILE, PROFILES["acme"])
+    active_tenant = tenant or profile["tenant"]
+
+    q = ("select id, title, scope_id, body, updated_at "
+         "from notes where id=%s and tenant_id=%s")
+    params: list = [note_id, active_tenant]
+
+    if scopes:
+        allowed = [s.strip() for s in scopes.split(",") if s.strip()]
+        if allowed:
+            q += " and scope_id = any(%s)"
+            params.append(allowed)
+
+    row = _conn.execute(q, params).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Note not found")
+    id_, title, scope, body, updated = row
+    return {
+        "id": id_,
+        "title": title,
+        "scope": scope,
+        "body": body,
+        "updated": updated.isoformat() if updated else None,
+    }
+
+
+class SearchReq(BaseModel):
+    query: str
+    scopes: list[str]
+    k: int = 10
+    tenant_id: str = "solo"
+
+@app.post("/search")
+def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
+           sparse=Depends(get_sparse_embedder)):
+    """Hybrid-retrieve ranked chunks filtered by the given scopes.
+
+    Body: {query, scopes:[...], k?:int=10, tenant_id?:str='solo'}
+    Returns: {results:[{note_id, title, scope, heading_path, text, score}]}
+
+    scopes is REQUIRED and must not be empty (never defaults to all).
+    """
+    if not req.query or not req.query.strip():
+        raise HTTPException(status_code=422, detail="query must not be blank")
+    if not req.scopes or not any(s.strip() for s in req.scopes):
+        raise HTTPException(status_code=422, detail="scopes is required and must not be empty")
+    k = max(1, min(req.k, 50))
+    hits = retrieve(req.query, embedder, reranker, req.scopes, req.tenant_id,
+                    limit=k, sparse_embedder=sparse)
+    # Fetch note metadata (title, scope) for the returned hits in one query.
+    note_ids = list(dict.fromkeys(h.note_id for h in hits))
+    note_meta = {}
+    if note_ids:
+        rows = _conn.execute(
+            "select id, title, scope_id from notes where id = any(%s)",
+            (note_ids,),
+        ).fetchall()
+        note_meta = {r[0]: (r[1], r[2]) for r in rows}
+    results = []
+    for h in hits:
+        meta = note_meta.get(h.note_id, (None, None))
+        results.append({
+            "note_id": h.note_id,
+            "title": meta[0],
+            "scope": meta[1],
+            "heading_path": h.heading_path,
+            "text": h.text,
+            "score": round(h.score, 4),
+        })
+    return {"results": results}
+
+
+# --- Upkeep state (in-process; reset on restart) ---
+_upkeep_last_run: Optional[str] = None
+_upkeep_last_stats: dict = {}
+
+class UpkeepRunReq(BaseModel):
+    tenant: str
+    scope: Optional[str] = None
+    use_llm: bool = False   # when True: Ollama-assisted topic extraction (slower, capped at 25 notes)
+
+@app.post("/upkeep/run")
+def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
+    """Fold ephemeral date/session notes into durable topic nodes.
+
+    Body: {tenant, scope?, use_llm?:bool=False}
+    Returns: {dateNotes, topics, folded}
+    """
+    from .upkeep import run_upkeep
+    global _upkeep_last_run, _upkeep_last_stats
+    stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm)
+    _upkeep_last_run = datetime.datetime.utcnow().isoformat()
+    _upkeep_last_stats = stats
+    return stats
+
+@app.get("/upkeep/status")
+def upkeep_status():
+    """Return last upkeep run timestamp and stats.
+
+    Returns: {lastRun, dateNotes, topics, folded}
+    """
+    return {"lastRun": _upkeep_last_run, **_upkeep_last_stats}
+
 
 @app.get("/", response_class=HTMLResponse)
 def home():

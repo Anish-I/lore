@@ -1,42 +1,116 @@
+<div align="center">
+
+<img src="desktop/renderer/design/assets/sprites/lore-familiar.png" alt="Lore" width="140" />
+
 # Lore 📖
 
-**Your company's lore — the stuff people "just know," made searchable.**
+**A local-first knowledge OS that replaces Obsidian — and actually remembers.**
 
-Lore is an enterprise knowledge OS. A local agent watches each employee's files, distills them into linked
-Markdown, and indexes everything into a permissioned, recall-obsessed retrieval engine. Each person's **vault**
-becomes queryable; teams ask across vaults within their **scope**. Ask anything; know everything.
+Your notes, your machine, your graph. Lore watches your files, links them into a knowledge graph,
+and answers questions over everything with recall-obsessed, permissioned retrieval. No cloud, no API
+keys, nothing leaves your machine.
+
+[![CI](https://github.com/Anish-I/lore/actions/workflows/ci.yml/badge.svg)](https://github.com/Anish-I/lore/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white)
+![Electron](https://img.shields.io/badge/desktop-Electron-47848F?logo=electron&logoColor=white)
+![Local-first](https://img.shields.io/badge/local--first-no%20cloud-22c55e)
+![Status](https://img.shields.io/badge/stage-active%20development-orange)
 
 ```
-$ lore ask "why'd we drop the Acme renewal?"
+$ lore ask "what did I decide about the kalshi bot?"
 ```
 
-## Why Lore
-- **Permissioned by design** — every note carries a scope (private / team / circle / enterprise); retrieval is
-  filtered *inside* the query, so you only ever see what you're allowed to. Verified: 210 adversarial cross-scope
-  probes, **zero leakage**.
-- **Recall you can trust** — hybrid dense (BGE) + BM25 sparse + cross-encoder rerank + query-adaptive fusion, plus
-  a dedicated exact-match lane. On a 46k-note simulated insurer: **exact-ID recall@1 = 100%**, semantic ~75–83%.
-- **Runs on your hardware** — local models (fastembed BGE + cross-encoder, Ollama for answers). No API keys, no
-  data leaving the building. Voyage is a pluggable option, not a dependency.
-- **Knowledge survives people** — when someone leaves, re-tag their notes to the team. Transfer is just a label.
+</div>
 
-## Architecture
-- **Python core** (`core/lore/`, FastAPI) — ingestion, indexing, recall. `lore.api` on `:8099`.
-- **Node proxy** (`api/`) — thin `/ask` forwarder.
-- **Qdrant** — vector + BM25 retrieval (ACL filter in-query). **Postgres** — source of truth + scopes + graph.
-- Models: BGE-small-en-v1.5 (dense) · Qdrant/bm25 (sparse) · ms-marco-MiniLM-L-6-v2 (rerank) · gemma4 (answers).
+---
 
-## Quick start
+## ✨ What makes Lore different
+
+- **🔒 Local-first & private** — local models (fastembed BGE + cross-encoder, Ollama for answers) run
+  fully on-device. No keys, no telemetry, no data leaving the building. Voyage is a *pluggable* option,
+  never a dependency.
+- **🎯 Recall you can trust** — hybrid **dense (BGE) + BM25 sparse + cross-encoder rerank** with
+  query-adaptive fusion and a dedicated exact-ID lane. Built and tuned against adversarial near-duplicate
+  corpora.
+- **🕸️ A real knowledge graph** — wikilinks, folders and tags become edges; a zoomable canvas (d3-force)
+  lets you explore connections the way you would in Obsidian, click a node to open the note.
+- **🧹 Self-maintaining** — Lore's **upkeep job converts ephemeral date/session notes into durable topic
+  nodes** automatically, folding their content under topics and keeping the graph topic-centric over time.
+- **🪝 Lore Hooks** — one-click auto-capture from Claude Code / Codex / Copilot straight into your graph
+  (redacted, debounced, fully local) so your AI work becomes searchable knowledge.
+- **🧙 Wizards (installable knowledge bases)** — an app-store of curated KBs you can install, rate, and
+  sync into your vault.
+- **🔌 MCP server + CLI** — expose your Lore to any AI tool (`lore_ask`, `lore_search`, `lore_graph`) and
+  query it from the terminal (`lore ask`, `lore search`).
+- **👥 Permissioned by design** — every note carries a scope (`private` / `team` / `enterprise`); retrieval
+  is filtered *inside* the query, so you only ever see what you're allowed to. Built to scale from solo to
+  teams (the long game: a self-hosted **Glean** alternative).
+
+## 🏗️ Architecture
+
+| Layer | What |
+|-------|------|
+| **Desktop** (`desktop/`) | Electron app — file explorer, editor, Ask, graph, Hooks, Wizards, Settings. |
+| **Python core** (`core/lore/`) | FastAPI on `:8099` — ingestion, indexing, recall, upkeep, capture. |
+| **Qdrant** | Vector + BM25 retrieval with the ACL filter applied *in-query*. |
+| **Postgres** | Source of truth — notes, original bodies, scopes, and graph edges. |
+
+**Pipeline:** hybrid dense + BM25 → RRF → 1-hop graph expand → cross-encoder rerank → cited answer.
+**Models:** BGE-small-en-v1.5 (dense) · Qdrant/bm25 (sparse) · ms-marco-MiniLM-L-6-v2 (rerank) · Ollama (answers).
+
+## 🚀 Quick start
+
+**Desktop app (recommended)**
+```bash
+docker compose up -d            # Qdrant :6333 + Postgres :5433
+cd desktop && npm install
+npm start                       # spawns the Python backend + opens the app
 ```
-docker compose up -d                      # Qdrant :6333 + Postgres :5433
-cd core && pip install -e ".[dev,local]"  # local = offline models
-python -m uvicorn lore.api:app --port 8099
-# open http://localhost:8099/  (live retrieval pipeline visualizer)
+
+**Backend only (dev)**
+```bash
+docker compose up -d
+cd core && pip install -e ".[dev,local]"   # local = offline models
+python -m uvicorn lore.api:app --port 8099 # http://localhost:8099/
 ```
 
-## Demo & tests
-- `sim/generate_company.py` — generate a 46k-note simulated car-insurance company (Apex Auto Insurance).
-- `sim/benchmark.py` — accuracy (recall@1/@3/MRR). `sim/audit_scopes.py` — per-scope adversarial ACL audit.
-- `eval/run_eval.py` — multi-domain semantic eval. `pytest` in `core/` — unit + integration suite.
+## 💻 CLI & MCP
 
-See `docs/superpowers/specs/` for the design spec and `docs/BACKLOG.md` for the roadmap.
+```bash
+pip install -e ./core           # installs the `lore` and `lore-mcp` commands
+
+lore ask "summarize my wingman architecture" --scope private
+lore search "rag rerank"
+lore graph                      # node/edge counts
+```
+
+Activate the **MCP server** from the desktop app (Settings → Integrations) or add it manually to
+`~/.claude/.mcp.json`:
+```json
+{ "mcpServers": { "lore": { "command": "python", "args": ["-m", "lore.mcp_server"], "cwd": "core" } } }
+```
+Read-only tools `lore_ask`, `lore_search`, `lore_graph` let any MCP client query your Lore.
+
+## 🧪 Tests & CI
+
+```bash
+cd core && pytest -q            # unit + integration (uses FakeEmbedder, no model downloads)
+```
+Every push runs the [CI workflow](.github/workflows/ci.yml): the Python suite against ephemeral
+Postgres + Qdrant services, plus Electron main-process syntax and renderer JSX validation. Tagging
+`v*` triggers the [release workflow](.github/workflows/release.yml) to build the desktop installer.
+
+## 🗺️ Roadmap
+
+- Bundle the Python/Qdrant sidecar for a true standalone signed `.exe`
+- Broader ingestion (Docling / Marker / OCR)
+- GitHub `.lore` packages — commit a tiny bundle of a repo's notes that decompresses into Lore on pull
+- Team / enterprise cross-vault scopes + auth
+- Edge agent: local watch/distill/embed with a durable server as source of truth
+
+See `docs/superpowers/specs/` for the design spec and `docs/BACKLOG.md` for the backlog.
+
+## 📜 License
+
+© 2026 — All rights reserved. Free for personal use; broader freeware/open distribution is planned.
+Until a license file lands here, treat this as source-available, not open source.

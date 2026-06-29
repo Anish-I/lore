@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-tests:
+    name: Python core (pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: vault
+          POSTGRES_PASSWORD: vault
+          POSTGRES_DB: vault
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U vault"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      qdrant:
+        image: qdrant/qdrant:latest
+        ports: ['6333:6333']
+    env:
+      # FakeEmbedder + offline LLM: no model downloads, no API keys needed in CI.
+      VAULT_FAKE: '1'
+      DATABASE_URL: postgresql://vault:vault@localhost:5433/vault
+      QDRANT_URL: http://localhost:6333
+      QDRANT_COLLECTION: vault_test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Wait for Qdrant to be ready
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:6333/readyz && exit 0
+            sleep 2
+          done
+          echo "Qdrant did not become ready" && exit 1
+
+      - name: Install core (with dev extras)
+        run: pip install -e "./core[dev]"
+
+      - name: Run test suite
+        working-directory: core
+        run: python -m pytest -q
+
+  desktop-check:
+    name: Electron desktop (syntax + JSX)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci || npm install
+
+      - name: Syntax-check main-process modules
+        working-directory: desktop
+        run: |
+          for f in main.js preload.js mcp-installer.js hooks-installer.js scraper.js; do
+            [ -f "$f" ] && node --check "$f" && echo "ok: $f"
+          done
+
+      - name: Validate renderer JSX (Babel parse)
+        working-directory: desktop
+        run: |
+          npm install --no-save @babel/core@7 @babel/preset-react@7
+          node -e '
+            const babel = require("@babel/core");
+            const fs = require("fs"), path = require("path");
+            const dirs = ["renderer", "renderer/design/ui_kits/lore-desktop"];
+            let bad = 0;
+            for (const d of dirs) {
+              if (!fs.existsSync(d)) continue;
+              for (const f of fs.readdirSync(d)) {
+                if (!f.endsWith(".jsx")) continue;
+                const p = path.join(d, f);
+                try { babel.transformFileSync(p, { presets: ["@babel/preset-react"] }); console.log("ok:", p); }
+                catch (e) { console.error("FAIL:", p, e.message); bad++; }
+              }
+            }
+            process.exit(bad ? 1 : 0);
+          '

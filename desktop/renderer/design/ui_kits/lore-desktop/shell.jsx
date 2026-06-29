@@ -26,7 +26,23 @@ const shellS = {
   },
 };
 
-function Titlebar({ theme, onToggleTheme, onAsk, onSettings }) {
+// Reusable "?" help hint with an instant custom tooltip (native title is unreliable in Electron).
+// Registered on window so other ui-kit files (buckets/projects) can reuse it.
+function HelpHint({ tip, size = 14 }) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', verticalAlign: 'middle' }}
+      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: '50%', border: '1px solid var(--border-strong)', color: 'var(--text-faint)', fontSize: Math.round(size * 0.62), fontWeight: 700, cursor: 'help' }}>?</span>
+      {show && (
+        <span style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, width: 240, padding: '9px 11px', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-lg)', color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 11.5, fontWeight: 400, lineHeight: 1.5, whiteSpace: 'normal', zIndex: 200, pointerEvents: 'none' }}>{tip}</span>
+      )}
+    </span>
+  );
+}
+window.LoreHelpHint = HelpHint;
+
+function Titlebar({ theme, onToggleTheme, onAsk, onSettings, onProfile, onImport }) {
   return (
     <div style={shellS.titlebar}>
       <div style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
@@ -52,12 +68,17 @@ function Titlebar({ theme, onToggleTheme, onAsk, onSettings }) {
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+        <button onClick={onImport} title="Import files, folders, or a .zip — drop anywhere too" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 11px', marginRight: 4, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 12.5, cursor: 'pointer' }}>
+          <Icon name="upload" size={14} />Import
+        </button>
         <Tooltip label="Ask Lore" kbd="⌘↵" side="bottom"><IconButton icon="sparkles" label="Ask Lore" onClick={onAsk} /></Tooltip>
         <Tooltip label={theme === 'dark' ? 'Paper theme' : 'Workbench theme'} side="bottom">
           <IconButton icon={theme === 'dark' ? 'sun' : 'moon'} label="Toggle theme" onClick={onToggleTheme} />
         </Tooltip>
         <IconButton icon="settings" label="Settings" onClick={onSettings} />
-        <Avatar name="Alice Ng" size={24} scope="team" style={{ marginLeft: 4 }} />
+        <button onClick={onProfile} title="Account" style={{ background: 'none', border: 'none', padding: 0, marginLeft: 4, cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}>
+          <Avatar name="Alice Ng" size={24} scope="team" />
+        </button>
       </div>
     </div>
   );
@@ -68,8 +89,9 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
     { id: 'workspace', icon: 'files', label: 'Files' },
     { id: 'search', icon: 'search', label: 'Search' },
     { id: 'graph', icon: 'network', label: 'Graph' },
-    { id: 'projects', icon: 'layout-grid', label: 'Projects' },
-    { id: 'buckets', icon: 'library', label: 'Buckets' },
+    { id: 'projects', icon: 'layout-grid', label: 'Sagas' },
+    { id: 'buckets', icon: 'library', label: 'Wizards' },
+    { id: 'hooks', icon: 'plug', label: 'Hooks' },
   ];
   return (
     <div style={shellS.rail}>
@@ -107,23 +129,102 @@ function TreeNode({ node, activeNote, onOpen, onToggle }) {
   );
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace }) {
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote }) {
+  const SB_SCOPE = { team: 'var(--jade-500)', enterprise: 'var(--azure-500)', private: 'var(--obsidian-400)' };
+  // While viewing a Wizard, the sidebar shows the Wizard — NOT your personal files (scope isolation).
+  if (wizard) {
+    return (
+      <div style={shellS.sidebar}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)' }}>
+          <Icon name="library" size={16} style={{ color: 'var(--brand-fg)' }} />
+          <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wizard.name}</span>
+          {wizard.scope && <ScopeTag scope={wizard.scope} size="sm" showLabel={false} />}
+        </div>
+        <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {wizard.desc && <div style={{ fontSize: 12.5, color: 'var(--text-subtle)', lineHeight: 1.5 }}>{wizard.desc}</div>}
+          {wizard.topics && wizard.topics.length > 0 && (
+            <div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Topics</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>{wizard.topics.map((t) => <Badge key={t} tone="info">#{t}</Badge>)}</div>
+            </div>
+          )}
+          {wizard.contributors && wizard.contributors.length > 0 && (
+            <div>
+              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Contributors</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>{wizard.contributors.map((m) => <div key={m} style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Avatar name={m} size={20} /><span style={{ fontSize: 12.5, color: 'var(--text-body)' }}>{m}</span></div>)}</div>
+            </div>
+          )}
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{wizard.notes} notes{wizard.recall != null ? ` · recall ${wizard.recall}` : ''}</div>
+        </div>
+        <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', alignItems: 'center', gap: 7 }}>
+          <Icon name="eye-off" size={12} style={{ color: 'var(--text-faint)' }} />
+          <span style={{ fontSize: 11, color: 'var(--text-faint)', lineHeight: 1.4 }}>Your personal vault is hidden while viewing a Wizard.</span>
+        </div>
+      </div>
+    );
+  }
+  const kbChip = (active, scope) => {
+    const c = scope ? SB_SCOPE[scope] : null;
+    return {
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      padding: '3px 9px', borderRadius: 'var(--radius-full)', cursor: 'pointer',
+      border: `1px solid ${active ? (c || 'var(--brand-soft-border)') : 'var(--border)'}`,
+      background: active ? 'var(--surface-raised)' : 'var(--surface-inset)',
+      color: active ? (c || 'var(--brand-fg)') : 'var(--text-muted)',
+      fontFamily: 'var(--font-mono)', fontSize: 10.5, whiteSpace: 'nowrap',
+    };
+  };
+  const allActive = !kbFilter || kbFilter.length === 0;
   return (
     <div style={shellS.sidebar}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)' }}>
         <Icon name="folder-open" size={16} style={{ color: 'var(--brand-fg)' }} />
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>{workspace.name}</span>
         <ScopeTag scope={workspace.scope} size="sm" showLabel={false} />
-        <IconButton icon="plus" label="New note" size="sm" />
+        <IconButton icon="plus" label="New note" size="sm" onClick={onCreateNote} />
       </div>
+      {bases && bases.length > 0 && (
+        <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+            <Icon name="layers" size={11} style={{ color: 'var(--text-faint)' }} />
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Knowledge bases {allActive ? '· all' : `· ${kbFilter.length} selected`}</span>
+            <HelpHint size={13} tip="Switch to one base, or click several to combine them. Filters the file tree AND the knowledge graph." />
+          </div>
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+            <button onClick={onClearBases} style={{ ...kbChip(allActive), borderColor: allActive ? 'var(--jade-500)' : 'var(--border)', background: allActive ? 'var(--surface-raised)' : 'var(--surface-inset)', color: allActive ? 'var(--jade-400)' : 'var(--text-muted)', fontWeight: 600 }}>All</button>
+            {bases.map((b) => {
+              const sc = baseScopes && baseScopes[b];
+              return (
+                <button key={b} onClick={() => onToggleBase(b)} style={kbChip(kbFilter && kbFilter.includes(b), sc)}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: SB_SCOPE[sc] || 'var(--obsidian-400)', flexShrink: 0 }} />{b}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       <div style={{ flex: 1, overflowY: 'auto', padding: '6px 8px' }}>
         {tree.map((n) => (
           <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle} />
         ))}
       </div>
-      <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--jade-400)', animation: 'lore-pulse 2.4s var(--ease-out) infinite' }} />
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{workspace.indexedLabel || 'indexed'}</span>
+      <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', flexDirection: 'column', gap: 7 }}>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Scope legend</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px 12px' }}>
+          {[
+            { icon: 'lock', color: 'var(--obsidian-400)', label: 'Private (you)' },
+            { icon: 'users', color: 'var(--jade-500)', label: 'Team' },
+            { icon: 'building-2', color: 'var(--azure-500)', label: 'Enterprise' },
+          ].map((s) => (
+            <span key={s.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
+              <Icon name={s.icon} size={11} style={{ color: s.color }} />{s.label}
+            </span>
+          ))}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid var(--divider)', paddingTop: 6 }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--jade-400)', animation: 'lore-pulse 2.4s var(--ease-out) infinite' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>green dot = indexed · {workspace.indexedLabel || 'indexed'}</span>
+        </div>
       </div>
     </div>
   );
@@ -134,7 +235,7 @@ function StatusBar() {
     <div style={shellS.status}>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="circle-dot" size={12} style={{ color: 'var(--jade-400)' }} />indexed · recall@20</span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="git-fork" size={12} />7 links</span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="users" size={12} />team</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="lock" size={12} />private</span>
       <div style={{ flex: 1 }} />
       <span>234 words</span>
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><Icon name="refresh-cw" size={12} />synced</span>

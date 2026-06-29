@@ -3,6 +3,18 @@
 const akNS = window.VaultDesignSystem_ffbf58;
 const { Icon: AkIcon, IconButton: AkIconBtn, AskMessage, CitationChip, EvidenceRow, Kbd: AkKbd, ScopeTag: AkScope } = akNS;
 
+// Render final answers as real Markdown (headings/lists/code/bold) — Claude-style — not a flat word blob.
+const akMd = window.markdownit ? window.markdownit({ html: false, linkify: true, breaks: true }) : null;
+if (typeof document !== 'undefined' && !document.getElementById('ak-md-style')) {
+  const s = document.createElement('style'); s.id = 'ak-md-style';
+  s.textContent = `.ak-md{font-size:14px;line-height:1.62;color:var(--text-body)}.ak-md>:first-child{margin-top:0}.ak-md>:last-child{margin-bottom:0}.ak-md p{margin:0 0 9px}.ak-md h1,.ak-md h2,.ak-md h3,.ak-md h4{font-family:var(--font-serif);color:var(--text-strong);font-weight:600;line-height:1.3;margin:14px 0 6px}.ak-md h1{font-size:18px}.ak-md h2{font-size:16px}.ak-md h3{font-size:14.5px}.ak-md ul,.ak-md ol{margin:4px 0 9px;padding-left:20px}.ak-md li{margin:3px 0}.ak-md li>ul,.ak-md li>ol{margin:3px 0}.ak-md code{background:var(--surface-inset);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-family:var(--font-mono);font-size:12.5px}.ak-md pre{background:var(--surface-inset);border:1px solid var(--border);border-radius:var(--radius-md);padding:11px 13px;overflow-x:auto;margin:9px 0}.ak-md pre code{background:none;border:none;padding:0;font-size:12.5px}.ak-md strong{color:var(--text-strong);font-weight:600}.ak-md a{color:var(--brand-fg);text-decoration:none}.ak-md blockquote{border-left:3px solid var(--border-strong);margin:9px 0;padding:2px 0 2px 13px;color:var(--text-muted)}.ak-md hr{border:none;border-top:1px solid var(--divider);margin:12px 0}.ak-md table{border-collapse:collapse;margin:9px 0;font-size:13px}.ak-md th,.ak-md td{border:1px solid var(--border);padding:5px 9px;text-align:left}`;
+  document.head.appendChild(s);
+}
+function AkMarkdown({ text }) {
+  if (!akMd) return <span style={{ whiteSpace: 'pre-wrap' }}>{text}</span>;
+  return <div className="ak-md" dangerouslySetInnerHTML={{ __html: akMd.render(String(text || '')) }} />;
+}
+
 const akS = {
   panel: { width: 'var(--ask-width)', flexShrink: 0, background: 'var(--surface-panel)', borderLeft: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column' },
   header: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)', flexShrink: 0 },
@@ -62,9 +74,13 @@ function SourceToggle({ value, onChange }) {
 
 function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource }) {
   const [draft, setDraft] = React.useState('');
+  const [model, setModel] = React.useState('gemma4:e4b (local)');
+  const [showCites, setShowCites] = React.useState(true);
+  const [cog, setCog] = React.useState(false);
+  const akSel = { width: '100%', marginTop: 4, padding: '5px 7px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-strong)', fontFamily: 'var(--font-mono)', fontSize: 11.5, outline: 'none' };
   const scrollRef = React.useRef(null);
   React.useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages, asking]);
-  const send = (q) => { const v = (q ?? draft).trim(); if (!v || asking) return; setDraft(''); onSend(v); };
+  const send = (q) => { const v = (q ?? draft).trim(); if (!v || asking) return; setDraft(''); onSend(v, model.split(' ')[0]); };
 
   return (
     <div style={akS.panel}>
@@ -80,8 +96,10 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
       <div style={akS.scroll} ref={scrollRef}>
         {messages.length === 0 && (
           <div style={{ padding: '24px 6px' }}>
-            <p style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)', margin: '0 0 4px' }}>Ask across your vaults.</p>
-            <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '0 0 16px', lineHeight: 1.5 }}>Answers are drawn only from notes in your scope, and every claim is cited.</p>
+            <img src="design/assets/sprites/lore-familiar.png" alt="" aria-hidden="true"
+              style={{ display: 'block', width: 132, height: 132, margin: '0 auto 10px', objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))', pointerEvents: 'none', userSelect: 'none' }} />
+            <p style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)', margin: '0 0 4px', textAlign: 'center' }}>Ask across your vaults.</p>
+            <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '0 0 16px', lineHeight: 1.5, textAlign: 'center' }}>Answers are drawn only from notes in your scope, and every claim is cited.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
               {suggestions.map((s) => (
                 <button key={s} onClick={() => send(s)} style={{
@@ -102,9 +120,11 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
             : (
               <div key={i}>
                 <AskMessage role="answer" sources={m.streaming ? undefined : m.sources} scopes={m.streaming ? undefined : m.scopes} streaming={m.streaming}>
-                  <AnswerRuns runs={m.shown || m.runs} />
+                  {m.streaming
+                    ? <AnswerRuns runs={m.shown || m.runs} />
+                    : <AkMarkdown text={m.text || (m.shown || m.runs || []).map((r) => r.x).join('')} />}
                 </AskMessage>
-                {!m.streaming && m.evidence && <Evidence rows={m.evidence} />}
+                {showCites && !m.streaming && m.evidence && <Evidence rows={m.evidence} />}
               </div>
             )
         ))}
@@ -119,9 +139,10 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
             placeholder="Ask anything about your knowledge…"
             style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-sans)', fontSize: 14, lineHeight: 1.5, color: 'var(--text-strong)' }}
           />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-            <AkScope scope="team" size="sm" />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>cites sources</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, position: 'relative' }}>
+            <button onClick={() => setCog((c) => !c)} title="Model, scope & citations" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>
+              <AkIcon name="sliders-horizontal" size={12} />{model.split(' ')[0]} · {source || 'both'}{showCites ? ' · cites' : ''}
+            </button>
             <div style={{ flex: 1 }} />
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}><AkKbd>↵</AkKbd> send</span>
             <button onClick={() => send()} disabled={asking} style={{
@@ -129,6 +150,25 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
               border: 'none', borderRadius: 'var(--radius-sm)', cursor: asking ? 'default' : 'pointer',
               background: 'var(--brand-bg)', color: 'var(--text-onbrand)', opacity: asking ? 0.5 : 1,
             }}><AkIcon name="arrow-up" size={16} /></button>
+
+            {cog && (
+              <div style={{ position: 'absolute', bottom: 32, left: 0, width: 232, padding: 11, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }}>Model
+                  <select value={model} onChange={(e) => setModel(e.target.value)} style={akSel}>
+                    {['gemma4:e4b (local)', 'llama4-maverick (local)', 'qwen2.5 (local)'].map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </label>
+                <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }}>Scope
+                  <select value={source || 'both'} onChange={(e) => onSource && onSource(e.target.value)} style={akSel}>
+                    {[['both', 'Me + Team'], ['me', 'Me (private)'], ['team', 'Team / shared']].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select>
+                </label>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5, color: 'var(--text-body)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={showCites} onChange={(e) => setShowCites(e.target.checked)} />
+                  Cite sources
+                </label>
+              </div>
+            )}
           </div>
         </div>
       </div>

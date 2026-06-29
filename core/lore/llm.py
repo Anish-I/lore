@@ -35,13 +35,14 @@ def extractive_answer(question, chunks) -> str:
     lines = [f"- {c['text'].strip()[:200]}  [{c['title']}]" for c in chunks[:4]]
     return "Based on your vault:\n" + "\n".join(lines)
 
-def answer(question, chunks):
-    """Try the local LLM; fall back to extractive. Returns (text, engine)."""
+def answer(question, chunks, model=None):
+    """Try the local LLM (optionally a caller-chosen model); fall back to extractive. Returns (text, engine)."""
+    mdl = model or DEFAULT_MODEL
     if os.environ.get("VAULT_FAKE") == "1":
         return extractive_answer(question, chunks), "extractive(test)"
     if chunks and is_ollama_up():
         try:
-            return ollama_answer(question, chunks), f"ollama:{DEFAULT_MODEL}"
+            return ollama_answer(question, chunks, model=mdl), f"ollama:{mdl}"
         except Exception as e:
             return extractive_answer(question, chunks), f"extractive (llm error: {e})"
     return extractive_answer(question, chunks), "extractive"

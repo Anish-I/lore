@@ -145,31 +145,110 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode,
   );
 }
 
-function ContextPane({ note, onAsk }) {
+// Small free-form (force-directed) "local graph" of a note's connections (center = this note).
+function EdMiniGraph({ connections, onOpen, centerLabel }) {
+  const [hover, setHover] = React.useState(null);
+  const [, tickRender] = React.useReducer((x) => (x + 1) % 1e9, 0);
+  const dataRef = React.useRef({ nodes: [], links: [] });
+  const W = 120, H = 112, cx = 60, cy = 52;
+  const colOf = (k) => k === 'tag' ? 'var(--amber-400)' : k === 'folder' ? 'var(--jade-500)' : 'var(--azure-500)';
+  const items = connections.slice(0, 18);
+
+  React.useEffect(() => {
+    const d3 = window.d3; if (!d3) return;
+    const center = { nid: '__self', fx: cx, fy: cy };
+    const ns = items.map((c, i) => ({ ...c, nid: c.id || ('n' + i), x: cx + (i % 2 ? 1 : -1) * (8 + i), y: cy + (i % 3 - 1) * (8 + i) }));
+    const nodes = [center, ...ns];
+    const links = ns.map((c) => ({ source: '__self', target: c.nid }));
+    dataRef.current = { nodes, links };
+    const sim = d3.forceSimulation(nodes)
+      .force('charge', d3.forceManyBody().strength(-34))
+      .force('link', d3.forceLink(links).id((d) => d.nid).distance(20).strength(0.75))
+      .force('collide', d3.forceCollide(6.5))
+      .force('x', d3.forceX(cx).strength(0.05))
+      .force('y', d3.forceY(cy).strength(0.05))
+      .alpha(1).alphaDecay(0.045);
+    sim.on('tick', tickRender);
+    return () => { sim.on('tick', null); sim.stop(); };
+  }, [connections]);
+
+  const { nodes, links } = dataRef.current;
+  const byId = {}; nodes.forEach((n) => { byId[n.nid] = n; });
+  const clampX = (v) => Math.max(5, Math.min(W - 5, v));
+  const clampY = (v) => Math.max(5, Math.min(H - 12, v));
+  const self = byId['__self'];
+  const hov = hover ? byId[hover] : null;
+
+  return (
+    <svg viewBox="0 0 120 112" style={{ width: '100%', height: 168, display: 'block' }}>
+      {links.map((l, i) => {
+        const tid = (l.target && l.target.nid) || l.target;
+        const a = self, b = byId[tid];
+        if (!a || !b || a.x == null || b.x == null) return null;
+        const lit = hover === tid;
+        return <line key={i} x1={clampX(a.x)} y1={clampY(a.y)} x2={clampX(b.x)} y2={clampY(b.y)}
+          stroke={lit ? colOf(b.kind) : 'var(--border-strong)'} strokeWidth={lit ? 1.2 : 0.55} opacity={hover && !lit ? 0.22 : 0.8} />;
+      })}
+      {nodes.filter((n) => n.nid !== '__self').map((n) => {
+        if (n.x == null) return null;
+        const lit = hover === n.nid;
+        return <circle key={n.nid} cx={clampX(n.x)} cy={clampY(n.y)} r={lit ? 5.6 : 4} fill={colOf(n.kind)}
+          stroke="var(--surface-panel)" strokeWidth={0.6} opacity={hover && !lit ? 0.4 : 1} style={{ cursor: 'pointer' }}
+          onMouseEnter={() => setHover(n.nid)} onMouseLeave={() => setHover((h) => h === n.nid ? null : h)}
+          onClick={() => onOpen(n.path)} />;
+      })}
+      {self && self.x != null && <circle cx={clampX(self.x)} cy={clampY(self.y)} r={6.5} fill="var(--brand-fg)" stroke="var(--surface-panel)" strokeWidth={1} />}
+      <text x={cx} y={107} textAnchor="middle" style={{ fontFamily: 'var(--font-sans)', fontSize: 6.4, fontWeight: 600, fill: 'var(--text-strong)', pointerEvents: 'none' }}>
+        {(hov ? hov.label : (centerLabel || 'this note')).slice(0, 32)}
+      </text>
+    </svg>
+  );
+}
+
+function ContextPane({ note, onAsk, connections, onOpenNote }) {
   const [tab, setTab] = React.useState('backlinks');
+  const conns = connections || [];
   return (
     <div style={edS.context}>
       <div style={{ padding: '0 12px' }}>
         <EdTabs value={tab} onChange={setTab} tabs={[
-          { value: 'backlinks', label: 'Backlinks', count: note.backlinks.length },
+          { value: 'backlinks', label: 'Backlinks', count: conns.length },
           { value: 'outline', label: 'Outline' },
           { value: 'tags', label: 'Tags', count: note.tags.length },
         ]} />
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
-        {tab === 'backlinks' && (note.backlinks.length === 0
-          ? <div style={{ fontSize: 12.5, color: 'var(--text-faint)', padding: '8px 8px', lineHeight: 1.5 }}>No backlinks yet.</div>
-          : note.backlinks.map((bl, i) => (
-          <div key={i} style={{ display: 'flex', gap: 9, padding: '9px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
-            <EdIcon name="link-2" size={14} style={{ color: 'var(--link-fg)', marginTop: 2 }} />
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>{bl.note}</div>
-              <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', marginTop: 2 }}>› {bl.heading} · {bl.owner}</div>
+        {tab === 'backlinks' && (conns.length === 0
+          ? <div style={{ fontSize: 12.5, color: 'var(--text-faint)', padding: '8px 8px', lineHeight: 1.5 }}>No connections yet. Add a <code>[[wikilink]]</code> or tag and re-index.</div>
+          : <React.Fragment>
+            <div style={{ background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', marginBottom: 10 }}>
+              <EdMiniGraph connections={conns} centerLabel={note.title} onOpen={(p) => onOpenNote && onOpenNote(p)} />
             </div>
-          </div>
-        )))}
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', margin: '0 4px 6px' }}>{conns.length} connection{conns.length !== 1 ? 's' : ''} · click to open</div>
+            {conns.map((c, i) => {
+              const meta = c.kind === 'folder' ? { lbl: 'Same folder', sub: 'sits in the same folder', icon: 'folder', col: 'var(--jade-500)' }
+                : c.kind === 'tag' ? { lbl: 'Shared tag', sub: 'shares a #tag', icon: 'hash', col: 'var(--amber-400)' }
+                : (c.dir === 'in' ? { lbl: 'Backlink', sub: 'links to this note', icon: 'corner-down-left', col: 'var(--azure-500)' }
+                  : { lbl: 'Outgoing link', sub: 'this note links to it', icon: 'corner-up-right', col: 'var(--azure-500)' });
+              return (
+                <div key={c.id || i} onClick={() => onOpenNote && onOpenNote(c.path)} title={meta.sub} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                  <span style={{ width: 26, height: 26, flexShrink: 0, borderRadius: 'var(--radius-sm)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-inset)', border: '1px solid var(--border)' }}>
+                    <EdIcon name={meta.icon} size={13} style={{ color: meta.col }} />
+                  </span>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.label}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: meta.col, flexShrink: 0 }} />{meta.lbl}
+                    </div>
+                  </div>
+                  <EdIcon name="arrow-up-right" size={13} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />
+                </div>
+              );
+            })}
+          </React.Fragment>
+        )}
         {tab === 'outline' && note.outline.map((h, i) => (
           <div key={i} style={{ padding: '6px 8px', paddingLeft: 8 + (i === 0 ? 0 : 14), fontSize: 13, color: i === 0 ? 'var(--text-strong)' : 'var(--text-muted)', fontWeight: i === 0 ? 600 : 400, cursor: 'pointer' }}>{h}</div>
         ))}

@@ -29,16 +29,18 @@ function ProjectsView({ projects, groups, onOpen }) {
     <div style={prS.wrap}>
       <div style={prS.head}>
         <div>
-          <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>Projects</h1>
+          <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>Sagas
+            {window.LoreHelpHint && <window.LoreHelpHint size={16} tip="A Saga is a project — a body of work with a goal (e.g. Wingman, Kalshi Bot). A note belongs to ONE Saga. Contrast with a Wizard (knowledge base): a cross-project collection a note can appear in many of." />}
+          </h1>
           <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' }}>Focused workspaces that gather notes, people, and an Ask thread.</p>
         </div>
         <div style={{ flex: 1 }} />
-        <PrButton variant="primary" icon="plus">New project</PrButton>
+        <PrButton variant="primary" icon="plus">New saga</PrButton>
       </div>
       <div style={prS.body}>
         <div style={{ marginBottom: 18 }}>
           <PrTabs value={tab} onChange={setTab} tabs={[
-            { value: 'projects', label: 'Projects', count: projects.length },
+            { value: 'projects', label: 'Sagas', count: projects.length },
             { value: 'groups', label: 'Groups', count: groups.length },
           ]} />
         </div>

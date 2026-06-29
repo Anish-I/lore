@@ -44,6 +44,85 @@ function SettingsView({ settings }) {
   const [local, setLocal] = React.useState(s.indexing.localFallback);
   const [defScope, setDefScope] = React.useState('private');
 
+  // Developer / Integrations state
+  const [mcpStatus, setMcpStatus] = React.useState('checking'); // 'checking' | 'installed' | 'detected' | 'not configured'
+  const [mcpActivating, setMcpActivating] = React.useState(false);
+  const [copiedKey, setCopiedKey] = React.useState(''); // which snippet was copied
+
+  // Data upkeep state
+  const [upkeepAuto, setUpkeepAuto] = React.useState(false);
+  const [upkeepRunning, setUpkeepRunning] = React.useState(false);
+  const [upkeepResult, setUpkeepResult] = React.useState(null); // {dateNotes, topics, folded} | {error}
+  const [upkeepStatusLine, setUpkeepStatusLine] = React.useState('');
+
+  React.useEffect(() => {
+    if (window.lore && window.lore.mcp && window.lore.mcp.detect) {
+      window.lore.mcp.detect()
+        .then((st) => setMcpStatus(st || 'not configured'))
+        .catch(() => setMcpStatus('not configured'));
+    } else {
+      setMcpStatus('not configured');
+    }
+    if (window.lore && window.lore.upkeep && window.lore.upkeep.status) {
+      window.lore.upkeep.status()
+        .then((st) => { if (st) setUpkeepStatusLine(String(st)); })
+        .catch(() => {});
+    }
+  }, []);
+
+  const stCopy = (text, key) => {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((c) => (c === key ? '' : c)), 1800);
+    }).catch(() => {});
+  };
+
+  const stMcpToggle = async (enable) => {
+    setMcpActivating(true);
+    try {
+      if (enable) {
+        if (window.lore && window.lore.mcp && window.lore.mcp.install) await window.lore.mcp.install();
+        setMcpStatus('installed');
+      } else {
+        if (window.lore && window.lore.mcp && window.lore.mcp.uninstall) await window.lore.mcp.uninstall();
+        setMcpStatus('not configured');
+      }
+    } catch { /* non-fatal */ }
+    setMcpActivating(false);
+  };
+
+  const stRunUpkeep = async () => {
+    if (!window.lore || !window.lore.upkeep || !window.lore.upkeep.run) return;
+    setUpkeepRunning(true);
+    setUpkeepResult(null);
+    try {
+      const res = await window.lore.upkeep.run({ tenant: 'solo' });
+      setUpkeepResult(res || {});
+      if (window.lore.upkeep.status) {
+        window.lore.upkeep.status().then((st) => { if (st) setUpkeepStatusLine(String(st)); }).catch(() => {});
+      }
+    } catch (e) {
+      setUpkeepResult({ error: String((e && e.message) || e) });
+    }
+    setUpkeepRunning(false);
+  };
+
+  const stSetUpkeepAuto = (v) => {
+    setUpkeepAuto(v);
+    if (window.lore && window.lore.upkeep && window.lore.upkeep.setAuto) {
+      window.lore.upkeep.setAuto(v).catch(() => {});
+    }
+  };
+
+  const ST_CLI_INSTALL = 'pip install -e ./core';
+  const ST_CLI_SAMPLE = 'lore ask "what\'s the kalshi bot"';
+  const ST_MCP_JSON = '{\n  "mcpServers": {\n    "lore": {\n      "command": "python",\n      "args": ["-m", "lore.mcp_server"],\n      "cwd": "<path-to-core>"\n    }\n  }\n}';
+
+  const stMcpIsActive = mcpStatus === 'installed';
+  const stMcpTone = mcpStatus === 'installed' ? 'success' : mcpStatus === 'detected' ? 'info' : 'neutral';
+  const stMcpLabel = mcpStatus === 'checking' ? 'checking…' : mcpStatus;
+
   return (
     <div style={stS.wrap}>
       <div style={stS.body}>
@@ -111,6 +190,93 @@ function SettingsView({ settings }) {
                 : <StButton variant="secondary" size="sm" icon="plus">Connect</StButton>}
             </Row>
           ))}
+        </Section>
+
+        {/* ── CLI ── */}
+        <Section icon="terminal" title="CLI">
+          <Row label="Install" hint="Run once in your terminal to make `lore` available globally.">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-body)', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '3px 8px' }}>{ST_CLI_INSTALL}</code>
+              <StButton variant="ghost" size="sm" icon={copiedKey === 'cli-install' ? 'check' : 'copy'} onClick={() => stCopy(ST_CLI_INSTALL, 'cli-install')}>
+                {copiedKey === 'cli-install' ? 'Copied' : 'Copy'}
+              </StButton>
+            </div>
+          </Row>
+          <Row label="Example query" hint="Ask a question from your terminal." last>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-body)', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '3px 8px' }}>{ST_CLI_SAMPLE}</code>
+              <StButton variant="ghost" size="sm" icon={copiedKey === 'cli-sample' ? 'check' : 'copy'} onClick={() => stCopy(ST_CLI_SAMPLE, 'cli-sample')}>
+                {copiedKey === 'cli-sample' ? 'Copied' : 'Copy'}
+              </StButton>
+            </div>
+          </Row>
+        </Section>
+
+        {/* ── MCP server ── */}
+        <Section icon="plug-2" title="MCP server">
+          <Row label="Status">
+            <StBadge tone={stMcpTone} dot>{stMcpLabel}</StBadge>
+          </Row>
+          <Row label="Activate in Claude Code / Cursor / Codex" hint="One-click writes the lore entry into ~/.claude/.mcp.json (idempotent, backup kept).">
+            <StSwitch
+              checked={stMcpIsActive}
+              onChange={stMcpToggle}
+              disabled={mcpActivating || mcpStatus === 'checking'}
+            />
+          </Row>
+          <Row label="Manual setup" hint="Paste into ~/.claude/.mcp.json (or cursor/codex equivalent) to configure manually." last>
+            <StButton
+              variant="ghost"
+              size="sm"
+              icon={copiedKey === 'mcp-json' ? 'check' : 'copy'}
+              onClick={() => stCopy(ST_MCP_JSON, 'mcp-json')}
+            >
+              {copiedKey === 'mcp-json' ? 'Copied JSON' : 'Copy JSON'}
+            </StButton>
+          </Row>
+          <div style={{ padding: '10px 16px 14px', background: 'var(--surface-inset)', borderTop: '1px solid var(--divider)' }}>
+            <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{ST_MCP_JSON}</pre>
+          </div>
+        </Section>
+
+        {/* ── Data upkeep ── */}
+        <Section icon="refresh-ccw" title="Data upkeep">
+          <Row label="Auto-upkeep" hint="Lore folds date/session notes into topic nodes automatically after each ingest.">
+            <StSwitch checked={upkeepAuto} onChange={stSetUpkeepAuto} />
+          </Row>
+          <Row label="Rebuild now" hint="Detect ephemeral notes (daily, session, sync) and consolidate them into durable topic nodes." last>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {upkeepRunning && (
+                <StIcon name="loader" size={14} style={{ color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite' }} />
+              )}
+              <StButton
+                variant="secondary"
+                size="sm"
+                icon="zap"
+                onClick={stRunUpkeep}
+                disabled={upkeepRunning}
+              >
+                {upkeepRunning ? 'Running…' : 'Rebuild now'}
+              </StButton>
+            </div>
+          </Row>
+          {(upkeepResult || upkeepStatusLine) && (
+            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+              {upkeepResult && !upkeepResult.error && (
+                <span>
+                  Folded <strong>{upkeepResult.dateNotes ?? '?'}</strong> date notes into{' '}
+                  <strong>{upkeepResult.topics ?? '?'}</strong> topics
+                  {upkeepResult.folded != null ? ` (${upkeepResult.folded} merged)` : ''}.
+                </span>
+              )}
+              {upkeepResult && upkeepResult.error && (
+                <span style={{ color: 'var(--clay-400)' }}>Error: {upkeepResult.error}</span>
+              )}
+              {!upkeepResult && upkeepStatusLine && (
+                <span>{upkeepStatusLine}</span>
+              )}
+            </div>
+          )}
         </Section>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>

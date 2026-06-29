@@ -1,0 +1,55 @@
+name: Release
+
+# Builds the Lore desktop freeware installer when a version tag is pushed.
+# Tag a release with:  git tag v0.1.0 && git push origin v0.1.0
+# (The repo can stay private; Releases/artifacts are produced for distribution.)
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create the GitHub Release
+
+jobs:
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci || npm install
+
+      - name: Build installer (electron-builder)
+        working-directory: desktop
+        run: npm run dist
+        env:
+          # Disable code-signing in CI (no cert); ship unsigned for now.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lore-windows
+          path: |
+            desktop/dist/*.exe
+            desktop/dist/*.blockmap
+            desktop/dist/latest.yml
+          if-no-files-found: warn
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/*.exe
+            desktop/dist/latest.yml
+          draft: true
+          generate_release_notes: true

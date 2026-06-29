@@ -11,7 +11,8 @@
   },
   "devDependencies": {
     "electron": "^31.3.0",
-    "electron-builder": "^24.13.3"
+    "electron-builder": "^24.13.3",
+    "playwright": "^1.61.1"
   },
   "dependencies": {
     "chokidar": "^3.6.0"
@@ -19,10 +20,19 @@
   "build": {
     "appId": "co.lore.desktop",
     "productName": "Lore",
-    "files": ["main.js", "preload.js", "renderer/**/*"],
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*"
+    ],
     "win": {
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
-    "directories": { "output": "dist" }
+    "directories": {
+      "output": "dist"
+    }
   }
 }
