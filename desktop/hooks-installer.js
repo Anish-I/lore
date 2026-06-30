@@ -159,15 +159,18 @@ function installClaude() {
     // Remove existing Lore entries (idempotent).
     settings.hooks[event] = settings.hooks[event].filter((h) => !isLoreEntry(h));
 
-    // Append fresh Lore entry.
-    // The command string uses the platform-native path to lore-capture.js.
-    // Outer quotes handle paths with spaces; JSON.stringify in the write
-    // step will escape backslashes for Windows correctly.
-    settings.hooks[event].push({
-      _lore:   true,
-      command: `node "${HOOK_SCRIPT}" ${modeArg}`,
-      async:   true,
-    });
+    // Append fresh Lore entry in the REQUIRED Claude Code shape:
+    //   { matcher, hooks: [{ type:'command', command }] }
+    // (the previous flat {command} shape was invalid and got the whole
+    // settings.json skipped). `_lore:true` tags it for idempotent removal.
+    // Tool-scoped events (PostToolUse) take an empty matcher = all tools;
+    // Stop is not tool-scoped, so it omits the matcher.
+    const entry = {
+      hooks: [{ type: 'command', command: `node "${HOOK_SCRIPT}" ${modeArg}` }],
+      _lore: true,
+    };
+    if (event !== 'Stop') entry.matcher = '';
+    settings.hooks[event].push(entry);
   }
 
   // Atomic write: write to a temp file, then rename over the target.
