@@ -36,8 +36,27 @@ def get_sparse_embedder():
 
 EMPTY_PROFILE = {"tenant": None, "company": None, "personas": [], "examples": []}
 
+# Named workspace profiles. A profile is activated only when VAULT_PROFILE names it
+# explicitly; an unset/unknown VAULT_PROFILE resolves to EMPTY_PROFILE (default-free UX).
+PROFILES = {
+    # Solo personal workspace: one identity over your own knowledge graph.
+    # Scopes cover every ACL the solo notes use (private/research/team) plus enterprise.
+    "solo": {"tenant": "solo", "company": "My Lore", "personas": [
+        {"label": "You", "scopes": ["private", "research", "team", "enterprise"]}],
+        "examples": ["what was I working on with the Kalshi bot?", "summarize the Wingman architecture",
+                     "what decisions did I make about the agent hub?", "find my notes on the accident case"]},
+    "acme": {"tenant": "acme", "company": "Acme (demo)", "personas": [
+        {"label": "Alice", "scopes": ["alice-private", "eng-team", "acme-corp"]},
+        {"label": "Bob", "scopes": ["bob-private", "eng-team", "acme-corp"]},
+        {"label": "New hire", "scopes": ["eng-team", "acme-corp"]},
+        {"label": "Admin (all)", "scopes": ["alice-private", "bob-private", "eng-team", "acme-corp"]}],
+        "examples": ["what do we know about Project Phoenix?", "why is the Acme renewal at risk?",
+                     "root cause of incident PROJ-1037", "how do we handle database connection limits?"]},
+}
+
 def active_profile():
-    return EMPTY_PROFILE
+    name = os.environ.get("VAULT_PROFILE")
+    return PROFILES.get(name, EMPTY_PROFILE) if name else EMPTY_PROFILE
 
 
 # --- Google OAuth (desktop loopback) + Lore session JWT --------------------
