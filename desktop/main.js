@@ -98,14 +98,37 @@ async function isBackendUp() {
 
 async function ensureBackend() {
   if (await isBackendUp()) return 'already-running';
-  if (!fs.existsSync(CORE_DIR)) return 'no-core'; // packaged build without a bundled sidecar (M2)
-  const py = process.platform === 'win32' ? 'python' : 'python3';
-  backendProc = spawn(py, ['-m', 'uvicorn', 'lore.api:app', '--port', String(BACKEND_PORT)], {
-    cwd: CORE_DIR,
-    env: { ...process.env },
-    stdio: 'ignore',
-    windowsHide: true,
-  });
+
+  // Explicit child env so the packaged build can steer the frozen backend at
+  // embedded Qdrant / Postgres. Cloning process.env also carries DATABASE_URL,
+  // which the embedded-Postgres block in app.whenReady set before we ran (item 4).
+  const childEnv = { ...process.env };
+
+  if (app.isPackaged) {
+    // Packaged: launch the PyInstaller-frozen backend directly — no Python, no CORE_DIR.
+    // (Reached BEFORE the no-core guard, which only applies to the dev/python path.)
+    const exe = path.join(process.resourcesPath, 'lore-backend', 'lore-backend.exe');
+    // Embedded Qdrant: QDRANT_PATH switches QdrantClient into local on-disk path mode.
+    const qdrantPath = path.join(app.getPath('userData'), 'lore-qdrant');
+    try { fs.mkdirSync(qdrantPath, { recursive: true }); } catch { /* ignore */ }
+    childEnv.QDRANT_PATH = qdrantPath;
+    childEnv.LORE_PORT = String(BACKEND_PORT); // frozen exe binds this port
+    backendProc = spawn(exe, [], {
+      env: childEnv,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  } else {
+    // Dev: system Python + uvicorn from the source CORE_DIR (Docker PG / Qdrant).
+    if (!fs.existsSync(CORE_DIR)) return 'no-core'; // dev source tree missing
+    const py = process.platform === 'win32' ? 'python' : 'python3';
+    backendProc = spawn(py, ['-m', 'uvicorn', 'lore.api:app', '--port', String(BACKEND_PORT)], {
+      cwd: CORE_DIR,
+      env: childEnv,
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+  }
   backendProc.on('error', (e) => console.error('backend spawn error', e));
   // poll for readiness (models load on first boot — allow ~40s)
   for (let i = 0; i < 80; i++) {
@@ -818,15 +841,16 @@ app.whenReady().then(async () => {
   const cfg = loadConfig();
   if (cfg && cfg.upkeepAuto === true && cfg.tenant) startUpkeepInterval(cfg.tenant);
 
-  // ---------- embedded Postgres (opt-in, default OFF) ----------
-  // Set  config.embeddedPg = true  in lore-config.json to enable.
-  // When enabled, a local Postgres cluster is started from bundled binaries
-  // (no Docker required) and DATABASE_URL is pointed at it before the Python
-  // backend is spawned.  When the flag is absent or false, nothing here runs
-  // and the existing Docker-based setup is completely unaffected.
-  if (cfg && cfg.embeddedPg) {
+  // ---------- embedded Postgres ----------
+  // Active when packaged (shipped app needs no Docker) OR config.embeddedPg = true.
+  // When active, a local Postgres cluster is started from bundled binaries
+  // (no Docker required) and DATABASE_URL is pointed at it before the backend
+  // is spawned. In dev with the flag absent/false, nothing here runs and the
+  // existing Docker-based setup is completely unaffected.
+  if (app.isPackaged || (cfg && cfg.embeddedPg)) {
     const embPg = require('./lib/embedded-postgres');
     const pgDataDir = path.join(app.getPath('userData'), 'lore-pg-data');
+    // TODO: free-port pick to avoid Docker PG clash
     const result = await embPg.start({ dataDir: pgDataDir, port: 5433 });
     if (result.ok) {
       process.env.DATABASE_URL = result.url;

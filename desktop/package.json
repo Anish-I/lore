@@ -24,7 +24,22 @@
     "files": [
       "main.js",
       "preload.js",
-      "renderer/**/*"
+      "renderer/**/*",
+      "lib/**/*",
+      "scraper.js",
+      "hooks-installer.js",
+      "mcp-installer.js",
+      "wizards-catalog.json",
+      "assets/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "../core/pyi-dist/lore-backend",
+        "to": "lore-backend"
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/embedded-postgres/**"
     ],
     "win": {
       "target": [
