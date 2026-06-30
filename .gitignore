@@ -44,3 +44,9 @@ client_secret_*.json
 
 # superpowers SDD scratch (ledger, briefs, diffs)
 .superpowers/
+
+# PyInstaller backend freeze artifacts
+core/pyi-dist/
+core/pyi-build/
+core/pyi-spec/
+*.spec
