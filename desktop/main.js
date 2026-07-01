@@ -19,7 +19,7 @@ let win = null;
 let backendProc = null;
 let watcher = null;
 let upkeepInterval = null;
-let embeddedPgStop = null; // set when config.embeddedPg === true
+let embeddedPgStop = null; // set when config.serverMode === true
 
 // ---------- upkeep auto-scheduler ----------
 // Fires a background /upkeep/run every 30 minutes when auto-mode is on.
@@ -103,6 +103,18 @@ async function ensureBackend() {
   // embedded Qdrant / Postgres. Cloning process.env also carries DATABASE_URL,
   // which the embedded-Postgres block in app.whenReady set before we ran (item 4).
   const childEnv = { ...process.env };
+
+  // Local Obsidian-light default: SQLite truth + embedded Qdrant, no servers.
+  // Applies to BOTH the packaged and dev spawn paths below unless the user has
+  // explicitly opted into server mode (cfg.serverMode === true), in which case
+  // the existing Postgres/QDRANT_URL server env (set in app.whenReady) is left alone.
+  const cfg = loadConfig();
+  if (!(cfg && cfg.serverMode === true)) {
+    const userData = app.getPath('userData');
+    childEnv.DATABASE_URL = `sqlite:///${path.join(userData, 'lore.db')}`;
+    childEnv.QDRANT_PATH = path.join(userData, 'lore-qdrant');
+    delete childEnv.QDRANT_URL; // ensure embedded mode, not a server client
+  }
 
   if (app.isPackaged) {
     // Packaged: launch the PyInstaller-frozen backend directly — no Python, no CORE_DIR.
@@ -842,12 +854,12 @@ app.whenReady().then(async () => {
   if (cfg && cfg.upkeepAuto === true && cfg.tenant) startUpkeepInterval(cfg.tenant);
 
   // ---------- embedded Postgres ----------
-  // Active when packaged (shipped app needs no Docker) OR config.embeddedPg = true.
-  // When active, a local Postgres cluster is started from bundled binaries
-  // (no Docker required) and DATABASE_URL is pointed at it before the backend
-  // is spawned. In dev with the flag absent/false, nothing here runs and the
-  // existing Docker-based setup is completely unaffected.
-  if (app.isPackaged || (cfg && cfg.embeddedPg)) {
+  // Embedded Postgres is ONLY for an explicit server-mode build/config — the
+  // light local default (SQLite + embedded Qdrant, set in ensureBackend) never
+  // spawns Postgres. When serverMode is true, a local Postgres cluster is
+  // started from bundled binaries (no Docker required) and DATABASE_URL is
+  // pointed at it before the backend is spawned.
+  if (cfg && cfg.serverMode === true) {
     const embPg = require('./lib/embedded-postgres');
     const pgDataDir = path.join(app.getPath('userData'), 'lore-pg-data');
     // TODO: free-port pick to avoid Docker PG clash

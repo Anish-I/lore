@@ -1,7 +1,19 @@
 import datetime
+import importlib
 from lore import db
 from lore import tenancy
 from lore.sqlutil import in_clause
+
+
+def test_connect_selects_sqlite_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", f"sqlite:///{tmp_path/'x.db'}")
+    import lore.config as cfg
+    importlib.reload(cfg)
+    import lore.db as dbmod
+    importlib.reload(dbmod)
+    conn = dbmod.connect()
+    assert isinstance(conn, dbmod._SqliteConn)
+    conn.close()
 
 
 def test_sqlite_connect_execute_and_placeholder_translation(tmp_path):
