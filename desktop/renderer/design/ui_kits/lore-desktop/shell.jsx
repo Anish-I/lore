@@ -309,9 +309,9 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
       <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             <Icon name="layers" size={11} style={{ color: 'var(--text-faint)' }} />
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Knowledge bases {allActive ? '· all' : `· ${kbFilter.length} selected`}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Sections {allActive ? '· all' : `· ${kbFilter.length} selected`}</span>
             <HelpHint size={13} tip="Switch to one base, or click several to combine them. Filters the file tree AND the knowledge graph." />
-            <button onClick={() => { setGrpInput(true); setGrpName(''); setGrpStatus(''); }} title="Add a group / knowledge base"
+            <button onClick={() => { setGrpInput(true); setGrpName(''); setGrpStatus(''); }} title="Add a section"
               style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 18, height: 18, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-faint)', cursor: 'pointer', fontSize: 14, lineHeight: 1, flexShrink: 0 }}>+</button>
           </div>
           {grpInput && (
