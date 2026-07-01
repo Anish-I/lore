@@ -29,6 +29,10 @@ def test_jwt_roundtrip_and_rejection():
         auth.verify_session_jwt(expired)
 
 
+@pytest.mark.skipif(
+    not os.path.exists(os.environ.get("GOOGLE_OAUTH_CLIENT_FILE") or auth._DEFAULT_CLIENT_FILE),
+    reason="gitignored secrets/google_oauth_client.json not present on this machine",
+)
 def test_load_google_client_exposes_client_id():
     # The gitignored secrets/google_oauth_client.json must load and expose a client_id.
     cid = auth.google_client_id()
