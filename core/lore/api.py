@@ -5,6 +5,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from . import db, qdrant_store
 from .config import settings
+from .sqlutil import in_clause
 from .embed import FakeEmbedder, VoyageEmbedder, LocalEmbedder, LocalSparseEmbedder
 from .rerank import FakeReranker, VoyageReranker, LocalReranker
 from .index import index_note, index_document
@@ -214,11 +215,12 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
 
     # Fetch all nodes visible to the caller (ACL: scope_id must be in allowed set).
     # This is the server-side filter — no post-filtering is performed after this point.
+    frag, sparams = in_clause("scope_id", allowed)
     rows = _conn.execute(
-        """select id, title, scope_id, owner_id, updated_at, source_path, importance
+        f"""select id, title, scope_id, owner_id, updated_at, source_path, importance
            from notes
-           where tenant_id=%s and scope_id = any(%s)""",
-        (active_tenant, allowed),
+           where tenant_id=%s and {frag}""",
+        [active_tenant, *sparams],
     ).fetchall()
 
     node_ids = {r[0] for r in rows}
@@ -429,8 +431,9 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
     if scopes:
         allowed = [s.strip() for s in scopes.split(",") if s.strip()]
         if allowed:
-            q += " and scope_id = any(%s)"
-            params.append(allowed)
+            frag, sparams = in_clause("scope_id", allowed)
+            q += f" and {frag}"
+            params.extend(sparams)
 
     row = _conn.execute(q, params).fetchone()
     if not row:
@@ -472,9 +475,10 @@ def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_
     note_ids = list(dict.fromkeys(h.note_id for h in hits))
     note_meta = {}
     if note_ids:
+        frag, sparams = in_clause("id", note_ids)
         rows = _conn.execute(
-            "select id, title, scope_id from notes where id = any(%s)",
-            (note_ids,),
+            f"select id, title, scope_id from notes where {frag}",
+            sparams,
         ).fetchall()
         note_meta = {r[0]: (r[1], r[2]) for r in rows}
     results = []

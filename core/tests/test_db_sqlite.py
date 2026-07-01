@@ -1,6 +1,7 @@
 import datetime
 from lore import db
 from lore import tenancy
+from lore.sqlutil import in_clause
 
 
 def test_sqlite_connect_execute_and_placeholder_translation(tmp_path):
@@ -73,4 +74,24 @@ def test_timestamp_columns_read_as_aware_datetime(tmp_path):
     _ = ts.isoformat()                                # api.py depends on this
     now = datetime.datetime.now(datetime.timezone.utc)
     _ = (now - ts).total_seconds()                    # relations.py depends on this
+    conn.close()
+
+
+def test_in_clause_and_scope_filter_on_sqlite(tmp_path):
+    frag, params = in_clause("scope_id", ["private", "team"])
+    assert frag == "scope_id in (%s,%s)"
+    assert params == ["private", "team"]
+    assert in_clause("scope_id", []) == ("1=0", [])
+
+    url = f"sqlite:///{tmp_path/'lore.db'}"
+    conn = db._connect_url(url)
+    db.bootstrap_schema(conn)
+    for i, sc in enumerate(["private", "team", "enterprise"]):
+        conn.execute("insert into notes(id, tenant_id, scope_id) values (%s,%s,%s)",
+                     (f"n{i}", "t", sc))
+    frag, params = in_clause("scope_id", ["private", "team"])
+    rows = conn.execute(
+        f"select id from notes where tenant_id=%s and {frag} order by id",
+        ["t", *params]).fetchall()
+    assert [r[0] for r in rows] == ["n0", "n1"]
     conn.close()

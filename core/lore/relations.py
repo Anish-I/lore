@@ -15,6 +15,8 @@ import re
 import math
 import datetime
 
+from .sqlutil import in_clause
+
 # Relation kinds we emit (relates_to is intentionally NOT emitted in v1 — the
 # structural 'link' edge already captures generic association).
 RELATION_KINDS = ("supports", "contradicts", "causes", "depends_on", "supersedes", "implements")
@@ -325,11 +327,12 @@ def recompute_importance(conn, tenant: str, now=None) -> int:
     now = now or datetime.datetime.now(datetime.timezone.utc)
 
     # Incoming typed-edge weight sums per destination note.
+    frag, kparams = in_clause("kind", list(_IMPORTANCE_WEIGHTS.keys()))
     rows = conn.execute(
-        """select dst_note_id, kind, sum(weight)
-           from edges where tenant_id=%s and kind = any(%s)
+        f"""select dst_note_id, kind, sum(weight)
+           from edges where tenant_id=%s and {frag}
            group by dst_note_id, kind""",
-        (tenant, list(_IMPORTANCE_WEIGHTS.keys())),
+        [tenant, *kparams],
     ).fetchall()
     raw = {}  # note_id -> {kind: sum}
     for dst, kind, total in rows:
