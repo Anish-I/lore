@@ -59,3 +59,18 @@ def test_bootstrap_tenancy_sqlite_idempotent(tmp_path):
     rid = conn.execute("select id from audit_log").fetchone()[0]
     assert isinstance(rid, int)
     conn.close()
+
+
+def test_timestamp_columns_read_as_aware_datetime(tmp_path):
+    url = f"sqlite:///{tmp_path/'lore.db'}"
+    conn = db._connect_url(url)
+    db.bootstrap_schema(conn)
+    conn.execute("insert into notes(id, tenant_id, scope_id) values (%s,%s,%s)",
+                 ("n1", "t", "private"))
+    ts = conn.execute("select updated_at from notes where id=%s", ("n1",)).fetchone()[0]
+    assert isinstance(ts, datetime.datetime)
+    assert ts.tzinfo is not None                      # tz-aware
+    _ = ts.isoformat()                                # api.py depends on this
+    now = datetime.datetime.now(datetime.timezone.utc)
+    _ = (now - ts).total_seconds()                    # relations.py depends on this
+    conn.close()

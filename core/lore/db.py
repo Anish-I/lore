@@ -15,6 +15,26 @@ _SQLITE_WRITE_LOCK = threading.Lock()
 _PLACEHOLDER = re.compile(r"%s")
 
 
+# core/lore/db.py — parse SQLite `timestamp` columns to tz-aware UTC datetimes
+def _parse_sqlite_ts(value: bytes):
+    s = value.decode() if isinstance(value, (bytes, bytearray)) else str(value)
+    s = s.strip()
+    if not s:
+        return None
+    # CURRENT_TIMESTAMP yields "YYYY-MM-DD HH:MM:SS" (naive UTC); also accept ISO-8601.
+    txt = s.replace("Z", "+00:00")
+    try:
+        dt = datetime.datetime.fromisoformat(txt)
+    except ValueError:
+        dt = datetime.datetime.strptime(s, "%Y-%m-%d %H:%M:%S")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=datetime.timezone.utc)
+    return dt
+
+
+sqlite3.register_converter("timestamp", _parse_sqlite_ts)
+
+
 def is_sqlite(url: str) -> bool:
     return url.startswith("sqlite:")
 
