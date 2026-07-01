@@ -164,6 +164,39 @@ end $$
 """
 
 
+# Final-shape schema for SQLite (no ALTER/DO$$ migration path needed): includes
+# all M1/M2/M7 columns and the full edges-kind CHECK (base kinds + reasoned-graph
+# kinds) up front, since SQLite installs are always fresh (no legacy DBs to migrate).
+SCHEMA_SQLITE = """
+create table if not exists notes(
+  id text primary key, tenant_id text, owner_id text, scope_id text,
+  source_path text, title text, source_type text,
+  body text, body_sha256 text, content_hash text,
+  importance real default 0,
+  updated_at timestamp default current_timestamp);
+create table if not exists chunks(
+  id text primary key, note_id text references notes(id) on delete cascade,
+  heading_path text, text text, has_context integer default 0,
+  chunk_index int, updated_at timestamp default current_timestamp);
+create table if not exists edges(
+  tenant_id text not null,
+  src_note_id text not null,
+  dst_note_id text not null,
+  kind text not null,
+  weight real default 1.0,
+  evidence text,
+  origin text default 'index',
+  updated_at timestamp default current_timestamp,
+  constraint edges_unique unique (tenant_id, src_note_id, dst_note_id, kind),
+  constraint edges_kind_check check (kind in (
+    'link','folder','tag','topic',
+    'supports','contradicts','causes','depends_on','supersedes','implements','relates_to')));
+create index if not exists edges_src on edges(src_note_id);
+create index if not exists edges_dst on edges(dst_note_id);
+create index if not exists edges_tenant on edges(tenant_id);
+"""
+
+
 def connect():
     return _connect_url(settings.database_url)
 
@@ -175,6 +208,11 @@ def bootstrap_schema(conn):
     without dropping existing data.  The main SCHEMA block is then executed with
     IF NOT EXISTS guards so fresh installs and upgrades both work.
     """
+    if isinstance(conn, _SqliteConn):
+        # Fresh, final-shape schema — no Postgres ALTER/DO$$ migration path.
+        conn.executescript(SCHEMA_SQLITE)
+        return
+
     # Step 1a: add source_type to notes (M1 migration).
     for stmt in _NOTES_MIGRATION:
         try:
