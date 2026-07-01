@@ -48,7 +48,7 @@ def test_enrich_creates_llm_edges_and_respects_stronger_heuristic():
     enrich_relations(conn, _TENANT, llm_call=fake_llm, limit=10, force=True)
     # the inferred edge exists with origin='llm'
     row = conn.execute(
-        "select kind, round(weight::numeric,2), origin from edges "
+        "select kind, weight, origin from edges "
         "where tenant_id=%s and src_note_id='llm-src' and dst_note_id='llm-comp'", (_TENANT,)).fetchone()
     assert row is not None and row[0] == "supersedes" and row[2] == "llm"
     # hallucinated target created no node/edge
@@ -59,9 +59,9 @@ def test_enrich_creates_llm_edges_and_respects_stronger_heuristic():
     conn.execute("insert into edges(tenant_id,src_note_id,dst_note_id,kind,weight,evidence,origin) "
                  "values(%s,'llm-src','llm-comp','supersedes',0.95,'heuristic','index')", (_TENANT,))
     enrich_relations(conn, _TENANT, llm_call=fake_llm, limit=10, force=True)
-    row = conn.execute("select round(weight::numeric,2), origin from edges where tenant_id=%s "
+    row = conn.execute("select weight, origin from edges where tenant_id=%s "
                        "and src_note_id='llm-src' and dst_note_id='llm-comp'", (_TENANT,)).fetchone()
-    assert float(row[0]) == 0.95 and row[1] == "index", "stronger heuristic edge must survive"
+    assert round(float(row[0]), 2) == 0.95 and row[1] == "index", "stronger heuristic edge must survive"
 
 
 def test_enrich_caches_by_body_hash():

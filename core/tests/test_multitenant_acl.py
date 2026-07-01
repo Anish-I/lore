@@ -22,8 +22,7 @@ def _seed_membership(conn):
                  "values('bob','o1','t2','member','active') on conflict (user_id,team_id) do update set status='active'")
 
 
-def test_cross_member_recall_is_leakproof():
-    conn = db.connect()
+def test_cross_member_recall_is_leakproof(conn):
     db.bootstrap_schema(conn)
     _seed_membership(conn)
     emb, rr = FakeEmbedder(), FakeReranker()

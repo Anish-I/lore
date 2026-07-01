@@ -50,3 +50,8 @@ core/pyi-dist/
 core/pyi-build/
 core/pyi-spec/
 *.spec
+
+# local store artifacts (ruvector / rvf)
+ruvector.db
+*.rvf
+*.rvf.lock

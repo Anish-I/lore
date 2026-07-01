@@ -1,4 +1,3 @@
-from lore import db
 from lore.tenancy import authorized_team_scope_ids, bootstrap_tenancy, team_scope_id, syncable_scope, authorize_scopes
 
 
@@ -16,8 +15,7 @@ def _seed(conn):
                  "values('carol','o1','t1','member','revoked') on conflict (user_id,team_id) do update set status='revoked'")
 
 
-def test_authorized_scopes_from_membership():
-    conn = db.connect()
+def test_authorized_scopes_from_membership(conn):
     _seed(conn)
     assert authorized_team_scope_ids(conn, "alice") == ["team:t1"]
     assert authorized_team_scope_ids(conn, "bob") == ["team:t2"]
@@ -27,8 +25,7 @@ def test_authorized_scopes_from_membership():
     assert authorized_team_scope_ids(conn, "nobody") == []
 
 
-def test_authorized_scopes_sorted_for_multi_team():
-    conn = db.connect()
+def test_authorized_scopes_sorted_for_multi_team(conn):
     _seed(conn)
     conn.execute("insert into memberships(user_id,org_id,team_id,role,status) "
                  "values('dave','o1','t1','member','active') on conflict (user_id,team_id) do update set status='active'")
@@ -46,8 +43,7 @@ def test_scope_helpers():
     assert syncable_scope("anything-else") is False
 
 
-def test_bootstrap_tenancy_is_idempotent():
-    conn = db.connect()
+def test_bootstrap_tenancy_is_idempotent(conn):
     bootstrap_tenancy(conn)
     bootstrap_tenancy(conn)  # second call must not raise
     # tables exist and are queryable
@@ -57,8 +53,7 @@ def test_bootstrap_tenancy_is_idempotent():
     conn.execute("select count(*) from audit_log")
 
 
-def test_authorize_scopes_cannot_escalate():
-    conn = db.connect()
+def test_authorize_scopes_cannot_escalate(conn):
     _seed(conn)
     # default (no request) → all of the user's scopes
     assert authorize_scopes(conn, "alice", None) == ["team:t1"]

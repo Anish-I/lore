@@ -1,3 +1,4 @@
+import contextlib
 import re
 import sqlite3
 import threading
@@ -10,8 +11,9 @@ except Exception:  # pragma: no cover
     psycopg = None
 
 # One process-wide write lock: the FastAPI app shares a single connection across
-# a threadpool, and SQLite allows only one writer at a time.
-_SQLITE_WRITE_LOCK = threading.Lock()
+# a threadpool, and SQLite allows only one writer at a time.  Re-entrant so
+# execute() calls inside a held transaction() don't deadlock.
+_SQLITE_WRITE_LOCK = threading.RLock()
 _PLACEHOLDER = re.compile(r"%s")
 
 
@@ -75,6 +77,12 @@ class _SqliteConn:
         self._db.execute("pragma journal_mode=WAL")
         self._db.execute("pragma foreign_keys=ON")
         self._db.execute("pragma busy_timeout=5000")
+        # Postgres-parity: now() in raw SQL. Returns UTC in a form the registered
+        # `timestamp` converter (_parse_sqlite_ts) parses back to a tz-aware datetime.
+        self._db.create_function(
+            "now", 0,
+            lambda: datetime.datetime.now(datetime.timezone.utc).isoformat(sep=" "),
+        )
 
     def execute(self, sql, params=()):
         sql = _PLACEHOLDER.sub("?", sql)
@@ -85,6 +93,22 @@ class _SqliteConn:
     def executescript(self, sql):
         with _SQLITE_WRITE_LOCK:
             self._db.executescript(sql)
+
+    @contextlib.contextmanager
+    def transaction(self):
+        """psycopg-parity: `with conn.transaction():` block. The connection is
+        autocommit (isolation_level=None), so an explicit BEGIN IMMEDIATE opens a
+        real write transaction; COMMIT on success, ROLLBACK on exception. The lock
+        is re-entrant, so execute() calls inside the block don't deadlock."""
+        with _SQLITE_WRITE_LOCK:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+            except Exception:
+                self._db.execute("ROLLBACK")
+                raise
+            else:
+                self._db.execute("COMMIT")
 
     def cursor(self):
         return self._db.cursor()
