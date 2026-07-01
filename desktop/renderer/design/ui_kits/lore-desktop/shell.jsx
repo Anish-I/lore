@@ -199,7 +199,7 @@ function TreeNode({ node, activeNote, onOpen, onToggle }) {
           name={isFolder ? (node.open ? 'folder-open' : 'folder') : 'file-text'}
           size={13}
           style={{
-            color: isActive ? 'var(--brand-fg)' : isFolder ? 'var(--text-subtle)' : 'var(--text-faint)',
+            color: isActive ? 'var(--brand-fg)' : isFolder ? 'var(--text-subtle)' : node.scope ? SH_scopeColor(node.scope) : 'var(--text-faint)',
             flexShrink: 0,
           }}
         />
@@ -217,10 +217,7 @@ function TreeNode({ node, activeNote, onOpen, onToggle }) {
         }}>
           {node.name}
         </span>
-        {/* Right-side indicators: indexed dot, scope icons */}
-        {node.indexed && (
-          <span title="indexed" style={{ width: 5, height: 5, borderRadius: '50%', background: 'var(--jade-400)', flexShrink: 0 }} />
-        )}
+        {/* Right-side indicators: scope icons */}
         {node.scope === 'private' && <Icon name="lock" size={10} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />}
         {node.scope === 'team' && <Icon name="users" size={10} style={{ color: 'var(--scope-team-fg)', flexShrink: 0 }} />}
         {node.scope === 'enterprise' && <Icon name="building-2" size={10} style={{ color: 'var(--scope-ent-fg)', flexShrink: 0 }} />}
@@ -362,8 +359,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid var(--divider)', paddingTop: 6 }}>
-          <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'var(--jade-400)', animation: 'lore-pulse 2.4s var(--ease-out) infinite' }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>green dot = indexed · {workspace.indexedLabel || 'indexed'}</span>
+          <Icon name="file-text" size={11} style={{ color: 'var(--text-faint)' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{workspace.indexedLabel ? `${workspace.indexedLabel} on disk` : 'no library'}</span>
         </div>
       </div>
     </div>

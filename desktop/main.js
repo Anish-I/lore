@@ -174,7 +174,7 @@ function buildTree(root, depth = 0) {
       const children = buildTree(full, depth + 1);
       if (children.length) folders.push({ id: full, kind: 'folder', name: e.name, depth, open: depth === 0, children });
     } else if (e.name.toLowerCase().endsWith('.md')) {
-      notes.push({ id: full, kind: 'note', name: e.name.replace(/\.md$/i, ''), depth, scope: scopeOf(full), indexed: true });
+      notes.push({ id: full, kind: 'note', name: e.name.replace(/\.md$/i, ''), depth, scope: scopeOf(full) });
     }
   }
   folders.sort((a, b) => a.name.localeCompare(b.name));
