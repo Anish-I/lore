@@ -1,5 +1,85 @@
-import psycopg
+import re
+import sqlite3
+import threading
+import datetime
 from .config import settings
+
+try:
+    import psycopg  # server-only; absent is fine on a pure-local install
+except Exception:  # pragma: no cover
+    psycopg = None
+
+# One process-wide write lock: the FastAPI app shares a single connection across
+# a threadpool, and SQLite allows only one writer at a time.
+_SQLITE_WRITE_LOCK = threading.Lock()
+_PLACEHOLDER = re.compile(r"%s")
+
+
+def is_sqlite(url: str) -> bool:
+    return url.startswith("sqlite:")
+
+
+def _sqlite_path(url: str) -> str:
+    # sqlite:///abs/path  or  sqlite://relative -> strip the scheme
+    return url[len("sqlite://"):] if url.startswith("sqlite://") else url
+
+
+class _SqliteCursor:
+    """Wraps a sqlite3 cursor so callers get psycopg-like fetchone/fetchall."""
+    def __init__(self, cur):
+        self._cur = cur
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+    def fetchall(self):
+        return self._cur.fetchall()
+
+    def __iter__(self):
+        return iter(self._cur)
+
+
+class _SqliteConn:
+    """psycopg-compatible-enough wrapper over stdlib sqlite3.
+
+    - autocommit (isolation_level=None)
+    - %s -> ? placeholder translation
+    - WAL + foreign_keys pragmas
+    - serialized writes via a process-wide lock
+    """
+    def __init__(self, path: str):
+        self._db = sqlite3.connect(
+            path, check_same_thread=False, isolation_level=None,
+            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+        )
+        self._db.execute("pragma journal_mode=WAL")
+        self._db.execute("pragma foreign_keys=ON")
+        self._db.execute("pragma busy_timeout=5000")
+
+    def execute(self, sql, params=()):
+        sql = _PLACEHOLDER.sub("?", sql)
+        with _SQLITE_WRITE_LOCK:
+            cur = self._db.execute(sql, tuple(params))
+        return _SqliteCursor(cur)
+
+    def executescript(self, sql):
+        with _SQLITE_WRITE_LOCK:
+            self._db.executescript(sql)
+
+    def cursor(self):
+        return self._db.cursor()
+
+    def close(self):
+        try:
+            self._db.close()
+        except Exception:
+            pass
+
+
+def _connect_url(url: str):
+    if is_sqlite(url):
+        return _SqliteConn(_sqlite_path(url))
+    return psycopg.connect(url, autocommit=True)
 
 # Fresh-install schema.  All CREATE statements use IF NOT EXISTS; indexes use
 # CREATE INDEX IF NOT EXISTS so this is safe to call on every startup.
@@ -85,8 +165,7 @@ end $$
 
 
 def connect():
-    conn = psycopg.connect(settings.database_url, autocommit=True)
-    return conn
+    return _connect_url(settings.database_url)
 
 
 def bootstrap_schema(conn):
