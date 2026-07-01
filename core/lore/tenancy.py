@@ -22,10 +22,30 @@ _SCHEMA = [
          actor_user_id text, action text, scope_ids text, detail text)""",
 ]
 
+# SQLite variant of the tenancy DDL: mirrors _SCHEMA above with dialect-legal
+# substitutions (bigserial -> integer primary key autoincrement,
+# timestamptz -> timestamp, now() -> current_timestamp).
+_SCHEMA_SQLITE = [
+    """create table if not exists users (
+         id text primary key, google_sub text unique, email text, name text,
+         created_at timestamp default current_timestamp)""",
+    "create table if not exists orgs (id text primary key, name text)",
+    "create table if not exists teams (id text primary key, org_id text, name text)",
+    """create table if not exists memberships (
+         user_id text, org_id text, team_id text, role text,
+         status text default 'active',
+         primary key (user_id, team_id))""",
+    """create table if not exists audit_log (
+         id integer primary key autoincrement, ts timestamp default current_timestamp,
+         actor_user_id text, action text, scope_ids text, detail text)""",
+]
+
 
 def bootstrap_tenancy(conn) -> None:
     """Create the tenancy tables. Idempotent — safe on every server start."""
-    for stmt in _SCHEMA:
+    from . import db as _db
+    stmts = _SCHEMA_SQLITE if isinstance(conn, _db._SqliteConn) else _SCHEMA
+    for stmt in stmts:
         conn.execute(stmt)
 
 

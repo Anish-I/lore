@@ -1,5 +1,6 @@
 import datetime
 from lore import db
+from lore import tenancy
 
 
 def test_sqlite_connect_execute_and_placeholder_translation(tmp_path):
@@ -42,4 +43,19 @@ def test_bootstrap_schema_sqlite_final_shape(tmp_path):
     n = conn.execute("select count(*) from edges where kind=%s",
                      ("supersedes",)).fetchone()[0]
     assert n == 1
+    conn.close()
+
+
+def test_bootstrap_tenancy_sqlite_idempotent(tmp_path):
+    url = f"sqlite:///{tmp_path/'lore.db'}"
+    conn = db._connect_url(url)
+    tenancy.bootstrap_tenancy(conn)
+    tenancy.bootstrap_tenancy(conn)  # must not raise
+    for t in ("orgs", "teams", "memberships", "audit_log"):
+        conn.execute(f"select count(*) from {t}").fetchone()
+    # audit_log autoincrement id works without an explicit value
+    conn.execute("insert into audit_log(actor_user_id, action) values (%s,%s)",
+                 ("alice", "test"))
+    rid = conn.execute("select id from audit_log").fetchone()[0]
+    assert isinstance(rid, int)
     conn.close()
