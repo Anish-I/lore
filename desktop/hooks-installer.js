@@ -101,10 +101,17 @@ function detectTools() {
 
 // ---------- internal helpers ----------
 
-// Returns true when a hook entry was written by Lore.
+// Returns true when a hook entry was written by Lore — matches the _lore tag,
+// a top-level command, OR a command nested under hooks[] (older/untagged entries
+// used the { hooks: [{ command }] } shape without a _lore flag, so a tag-only
+// check would miss them and re-install would duplicate).
 function isLoreEntry(h) {
-  return h && (h._lore === true || (typeof h.command === 'string' &&
-    (h.command.includes('lore-capture.js') || h.command.includes('lore-inject.js'))));
+  if (!h) return false;
+  if (h._lore === true) return true;
+  const hit = (c) => typeof c === 'string' && (c.includes('lore-capture.js') || c.includes('lore-inject.js') || c.includes('lore-codex-notify.js'));
+  if (hit(h.command)) return true;
+  if (Array.isArray(h.hooks)) return h.hooks.some((x) => x && hit(x.command));
+  return false;
 }
 
 // Copy the hook scripts and redact.js into ~/.lore/hooks/ and ~/.lore/lib/ respectively.
