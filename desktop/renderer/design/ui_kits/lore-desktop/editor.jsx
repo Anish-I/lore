@@ -155,7 +155,9 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode,
 // Small free-form (force-directed) "local graph" of a note's connections (center = this note).
 // Nodes are draggable — dragging pins a node to the pointer and reheats the
 // simulation, so the layout physically reacts (push/settle) like the main graph.
-function EdMiniGraph({ connections, onOpen, centerLabel }) {
+// `cameFromPath`: when set, the node the user just navigated FROM (via a backlink
+// click) is ringed in a distinct color — a breadcrumb so clicking "back" is legible.
+function EdMiniGraph({ connections, onOpen, centerLabel, cameFromPath }) {
   const [hover, setHover] = React.useState(null);
   const [, tickRender] = React.useReducer((x) => (x + 1) % 1e9, 0);
   const dataRef = React.useRef({ nodes: [], links: [] });
@@ -240,8 +242,10 @@ function EdMiniGraph({ connections, onOpen, centerLabel }) {
       {nodes.filter((n) => n.nid !== '__self').map((n) => {
         if (n.x == null) return null;
         const lit = hover === n.nid;
-        return <circle key={n.nid} cx={clampX(n.x)} cy={clampY(n.y)} r={lit ? 5.6 : 4} fill={colOf(n.kind)}
-          stroke="var(--surface-panel)" strokeWidth={0.6} opacity={hover && !lit ? 0.4 : 1} style={{ cursor: 'grab' }}
+        const isTrail = cameFromPath && n.path && String(n.path).toLowerCase() === String(cameFromPath).toLowerCase();
+        return <circle key={n.nid} cx={clampX(n.x)} cy={clampY(n.y)} r={lit ? 5.6 : (isTrail ? 5.2 : 4)} fill={colOf(n.kind)}
+          stroke={isTrail ? 'var(--brand-fg)' : 'var(--surface-panel)'} strokeWidth={isTrail ? 1.6 : 0.6}
+          opacity={hover && !lit ? 0.4 : 1} style={{ cursor: 'grab' }}
           onMouseEnter={() => setHover(n.nid)} onMouseLeave={() => setHover((h) => h === n.nid ? null : h)}
           onPointerDown={startDrag(n)} onPointerMove={onDrag(n)} onPointerUp={endDrag(n)} onPointerCancel={endDrag(n)} />;
       })}
@@ -253,7 +257,7 @@ function EdMiniGraph({ connections, onOpen, centerLabel }) {
   );
 }
 
-function ContextPane({ note, onAsk, connections, onOpenNote }) {
+function ContextPane({ note, onAsk, connections, onOpenNote, cameFromId }) {
   const [tab, setTab] = React.useState('backlinks');
   const conns = connections || [];
   return (
@@ -269,7 +273,7 @@ function ContextPane({ note, onAsk, connections, onOpenNote }) {
           ? <div style={{ fontSize: 12.5, color: 'var(--text-faint)', padding: '8px 8px', lineHeight: 1.5 }}>No connections yet. Add a <code>[[wikilink]]</code> or tag and re-index.</div>
           : <React.Fragment>
             <div style={{ background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', marginBottom: 10 }}>
-              <EdMiniGraph connections={conns} centerLabel={note.title} onOpen={(p) => onOpenNote && onOpenNote(p)} />
+              <EdMiniGraph connections={conns} centerLabel={note.title} onOpen={(p) => onOpenNote && onOpenNote(p)} cameFromPath={cameFromId} />
             </div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', margin: '0 4px 6px' }}>{conns.length} connection{conns.length !== 1 ? 's' : ''} · click to open</div>
             {conns.map((c, i) => {
@@ -317,7 +321,7 @@ function ContextPane({ note, onAsk, connections, onOpenNote }) {
 // Floating local-graph card — the same EdMiniGraph as the context pane, but
 // floated over the editor ("in the notebook"). Collapsible; hidden when the note
 // has no connections. Positioned by its parent (an absolute-in-relative container).
-function FloatingGraph({ note, connections, onOpenNote }) {
+function FloatingGraph({ note, connections, onOpenNote, cameFromId }) {
   const [collapsed, setCollapsed] = React.useState(false);
   const conns = connections || [];
   if (!note || conns.length === 0) return null;
@@ -339,7 +343,7 @@ function FloatingGraph({ note, connections, onOpenNote }) {
       </div>
       {!collapsed && (
         <div style={{ padding: 6 }}>
-          <EdMiniGraph connections={conns} centerLabel={note.title} onOpen={(p) => onOpenNote && onOpenNote(p)} />
+          <EdMiniGraph connections={conns} centerLabel={note.title} onOpen={(p) => onOpenNote && onOpenNote(p)} cameFromPath={cameFromId} />
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-faint)', textAlign: 'center', marginTop: 2 }}>click a node to open</div>
         </div>
       )}

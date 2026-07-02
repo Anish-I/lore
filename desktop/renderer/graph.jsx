@@ -18,18 +18,28 @@ function grScopeList(nodes) {
 }
 function grScopeVar(scope) { return GR_SCOPE_VAR[scope] || '--brand-fg'; }
 
-// Reasoned (LLM/cue-inferred) edge kinds → color + human label. Single source of
-// truth for both the canvas draw and the on-screen legend.
+// Every edge kind Lore can produce → color + human label + whether it's a
+// reasoned (LLM/cue-inferred) relation or a plain structural link. Single
+// source of truth for the canvas draw AND the on-screen legend, so every line
+// on the graph is explained — nothing renders as an unlabeled gray line.
 const GR_EDGE_KINDS = [
-  { kind: 'depends_on',  color: '#5b8def', label: 'depends on' },
-  { kind: 'supersedes',  color: '#a36bd6', label: 'supersedes' },
-  { kind: 'causes',      color: '#e0883a', label: 'causes' },
-  { kind: 'supports',    color: '#3fa85f', label: 'supports' },
-  { kind: 'contradicts', color: '#d6504f', label: 'contradicts' },
-  { kind: 'implements',  color: '#3fa89a', label: 'implements' },
-  { kind: 'relates_to',  color: '#888888', label: 'relates to' },
+  // Reasoned relations — visually dominant (drawn with confidence-scaled opacity/width).
+  { kind: 'depends_on',  color: '#5b8def', label: 'depends on',  structural: false },
+  { kind: 'supersedes',  color: '#a36bd6', label: 'supersedes',  structural: false },
+  { kind: 'causes',      color: '#e0883a', label: 'causes',      structural: false },
+  { kind: 'supports',    color: '#3fa85f', label: 'supports',    structural: false },
+  { kind: 'contradicts', color: '#d6504f', label: 'contradicts', structural: false },
+  { kind: 'implements',  color: '#3fa89a', label: 'implements',  structural: false },
+  { kind: 'relates_to',  color: '#888888', label: 'relates to',  structural: false },
+  // Structural — auto-extracted from wikilinks/tags/folders/upkeep, drawn muted so
+  // reasoned relations stay dominant, but each kind is still distinct and labeled.
+  { kind: 'link',   color: '#c9a24b', label: 'wikilink',      structural: true },
+  { kind: 'tag',    color: '#d6b34a', label: 'shared tag',    structural: true },
+  { kind: 'folder', color: '#5a5e68', label: 'same folder',   structural: true },
+  { kind: 'topic',  color: '#3a8f8a', label: 'topic',         structural: true },
 ];
 const GR_EDGE_COLORS = Object.fromEntries(GR_EDGE_KINDS.map((e) => [e.kind, e.color]));
+const GR_EDGE_STRUCTURAL = new Set(GR_EDGE_KINDS.filter((e) => e.structural).map((e) => e.kind));
 // Daily-thread / journal notes named by date — hidden by default so topics dominate the graph.
 const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 
@@ -58,16 +68,16 @@ function GraphView({ graph, onOpen }) {
     return ns.length + '|' + ((graph.edges || []).length) + '|' + ns.map((n) => n.id).join(',');
   }, [graph]);
 
-  // Which reasoned edge kinds are actually present → the legend only lists relevant
-  // colors (and whether there are any plain structural links).
+  // Which edge kinds are actually present → the legend only lists relevant colors.
+  // Any kind not in GR_EDGE_KINDS (future/unknown) falls back to a generic "linked" row.
   const legend = React.useMemo(() => {
     const present = new Set();
-    let hasStructural = false;
+    let hasUnknown = false;
     for (const e of (graph.edges || [])) {
       const k = e[2] || 'link';
-      if (GR_EDGE_COLORS[k]) present.add(k); else hasStructural = true;
+      if (GR_EDGE_COLORS[k]) present.add(k); else hasUnknown = true;
     }
-    return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)), hasStructural };
+    return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)), hasStructural: hasUnknown };
   }, [graph]);
   const [filters, setFilters] = React.useState({});
   React.useEffect(() => {
@@ -115,9 +125,9 @@ function GraphView({ graph, onOpen }) {
     };
     readPalette();
 
-    // ---- semantic edge kind → color map (shared with the legend) ----
+    // ---- edge kind → color map (shared with the legend, GR_EDGE_KINDS above) ----
     const EDGE_KIND_COLORS = GR_EDGE_COLORS;
-    const STRUCTURAL_KINDS = new Set(['link', 'folder', 'tag', 'topic']);
+    const STRUCTURAL_KINDS = GR_EDGE_STRUCTURAL;
 
     // ---- data (d3 mutates node objects in place) ----
     const nodes = graph.nodes.map((n) => ({
@@ -171,7 +181,7 @@ function GraphView({ graph, onOpen }) {
         if (a.x == null || !visible(a) || !visible(b)) continue;
         const lit = focus && (a.id === focus || b.id === focus);
         const isStructural = STRUCTURAL_KINDS.has(l.kind);
-        const kindColor = isStructural ? pal.edge : (EDGE_KIND_COLORS[l.kind] || '#888888');
+        const kindColor = EDGE_KIND_COLORS[l.kind] || pal.edge;
         const conf = l.weight != null ? l.weight : 0.9;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
         ctx.strokeStyle = lit ? pal.edgeLit : kindColor;

@@ -294,6 +294,10 @@ function App() {
   const [treeData, setTreeData] = React.useState(null);
   const [tabs, setTabs] = React.useState([]);            // [{id,title,kind,bucket?}]
   const [activeId, setActiveId] = React.useState(null);
+  // Backlink breadcrumb: the note id the user just came FROM, when the current
+  // note was opened by clicking a connection in the mini-graph/backlinks list.
+  // null whenever the user opened the current note any other way.
+  const [cameFromId, setCameFromId] = React.useState(null);
   const [notes, setNotes] = React.useState({});          // path -> parsed note
   const [drafts, setDrafts] = React.useState({});        // path -> raw text
   const [mode, setMode] = React.useState('read');
@@ -460,12 +464,23 @@ function App() {
     return parsed;
   }, [notes]);
 
-  const openNote = React.useCallback(async (id) => {
+  // `cameFrom` (optional 2nd arg) is the id of the note the user was just on, ONLY
+  // when navigating via a backlink/connection click — every other caller (sidebar,
+  // search, tabs) calls openNote with one arg, which resets the trail marker.
+  const openNote = React.useCallback(async (id, cameFrom = null) => {
+    setCameFromId(cameFrom);
     setTabs((ts) => ts.some((t) => t.id === id) ? ts : [...ts, { id, title: id.split(/[\\/]/).pop().replace(/\.md$/i, ''), kind: 'note' }]);
     setActiveId(id); setView('workspace'); setMode('read'); setSearchOpen(false);
     const parsed = await loadNote(id);
     setScope(parsed.scope);
   }, [loadNote]);
+
+  // Wraps openNote so a backlink/connection click marks where the user came from —
+  // the mini-graph on the note they land on highlights that node in a distinct
+  // color. Opening a note any other way (sidebar, search, tabs) resets the trail.
+  const openNoteFromBacklink = React.useCallback((path) => {
+    openNote(path, activeId);
+  }, [openNote, activeId]);
 
   // Stable graph-node open handler (defined AFTER openNote to avoid a TDZ ref).
   // An inline arrow at the call site re-created GraphView's onOpen every render,
@@ -952,11 +967,11 @@ function App() {
               : (editorNote
                 ? <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
                     <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
-                    {FloatingGraph && <FloatingGraph note={editorNote} connections={connections} onOpenNote={openNote} />}
+                    {FloatingGraph && <FloatingGraph note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} />}
                   </div>
                 : <EmptyEditor />)}
             {!askOpen && editorNote && <PaneResizer side="context" />}
-            {askOpen ? askPanel : (editorNote && <ContextPane note={editorNote} connections={connections} onOpenNote={openNote} onAsk={() => setAskOpen(true)} />)}
+            {askOpen ? askPanel : (editorNote && <ContextPane note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} onAsk={() => setAskOpen(true)} />)}
           </React.Fragment>
         )}
 
