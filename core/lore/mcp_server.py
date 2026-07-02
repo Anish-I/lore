@@ -6,6 +6,8 @@ Exposes three tools:
     lore_graph(scopes, tenant)             — return node/edge counts
 
 scopes and tenant are REQUIRED on every tool; never default to all or to a tenant.
+If omitted, they fall back to the LORE_SCOPES (comma-separated) / LORE_TENANT env
+vars, letting an MCP registration pin identity once instead of passing it every call.
 
 Run with:
     python -m lore.mcp_server
@@ -13,6 +15,7 @@ or via the installed script:
     lore-mcp
 """
 import json
+import os
 import socket
 import urllib.parse
 import urllib.request
@@ -107,20 +110,52 @@ def _check_tenant(tenant: str | None) -> str | None:
     return None
 
 
+def _env_scopes() -> list[str]:
+    """Scopes from the LORE_SCOPES env var (comma-separated), stripped and filtered."""
+    raw = os.environ.get("LORE_SCOPES", "")
+    return [s.strip() for s in raw.split(",") if s.strip()]
+
+
+def _env_tenant() -> str | None:
+    """Tenant from the LORE_TENANT env var, if set."""
+    return os.environ.get("LORE_TENANT")
+
+
+def _apply_env_defaults(
+    scopes: list[str] | None, tenant: str | None
+) -> tuple[list[str], str | None]:
+    """Fall back to LORE_SCOPES / LORE_TENANT env vars when args are falsy.
+
+    Shared by both the FastMCP tool path and the low-level SDK fallback path
+    so a caller pinning identity via env never has to pass scopes/tenant.
+    Explicit args always win; the required-scope/tenant checks still run
+    after this, so "no env and no args" keeps returning the required-error
+    messages.
+    """
+    if not scopes:
+        scopes = _env_scopes()
+    if not tenant:
+        tenant = _env_tenant()
+    return scopes, tenant
+
+
 try:
     from mcp.server.fastmcp import FastMCP as _FastMCP
 
     _mcp = _FastMCP("lore")
 
     @_mcp.tool()
-    def lore_ask(question: str, scopes: list[str], tenant: str) -> str:
+    def lore_ask(question: str, scopes: list[str] | None = None, tenant: str | None = None) -> str:
         """Ask a question against your Lore knowledge base.
 
         Args:
             question: Natural language question.
             scopes: List of ACL scope IDs the caller can read (required, never empty).
+                Falls back to the LORE_SCOPES env var (comma-separated) if omitted.
             tenant: Tenant namespace to query (required, never empty).
+                Falls back to the LORE_TENANT env var if omitted.
         """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
         err = _check_scopes(scopes)
         if err:
             return err
@@ -139,15 +174,20 @@ try:
         return data.get("answer", "No answer returned.")
 
     @_mcp.tool()
-    def lore_search(query: str, scopes: list[str], tenant: str, k: int = 10) -> str:
+    def lore_search(
+        query: str, scopes: list[str] | None = None, tenant: str | None = None, k: int = 10
+    ) -> str:
         """Search your Lore knowledge base and return ranked hits.
 
         Args:
             query: Search query.
             scopes: List of ACL scope IDs the caller can read (required, never empty).
+                Falls back to the LORE_SCOPES env var (comma-separated) if omitted.
             tenant: Tenant namespace to query (required, never empty).
+                Falls back to the LORE_TENANT env var if omitted.
             k: Number of results to return (default 10, max 50).
         """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
         err = _check_scopes(scopes)
         if err:
             return err
@@ -174,13 +214,16 @@ try:
         return "\n".join(lines)
 
     @_mcp.tool()
-    def lore_graph(scopes: list[str], tenant: str) -> str:
+    def lore_graph(scopes: list[str] | None = None, tenant: str | None = None) -> str:
         """Return node and edge counts for your Lore knowledge graph.
 
         Args:
             scopes: List of ACL scope IDs the caller can read (required, never empty).
+                Falls back to the LORE_SCOPES env var (comma-separated) if omitted.
             tenant: Tenant namespace to query (required, never empty).
+                Falls back to the LORE_TENANT env var if omitted.
         """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
         err = _check_scopes(scopes)
         if err:
             return err
@@ -220,10 +263,14 @@ except ImportError:
                     "properties": {
                         "question": {"type": "string", "description": "Natural language question."},
                         "scopes": {"type": "array", "items": {"type": "string"},
-                                   "description": "ACL scope IDs the caller can read (required)."},
-                        "tenant": {"type": "string", "description": "Tenant namespace to query (required)."},
+                                   "description": "ACL scope IDs the caller can read (required, never "
+                                                  "empty). Falls back to the LORE_SCOPES env var "
+                                                  "(comma-separated) if omitted."},
+                        "tenant": {"type": "string",
+                                   "description": "Tenant namespace to query (required, never empty). "
+                                                  "Falls back to the LORE_TENANT env var if omitted."},
                     },
-                    "required": ["question", "scopes", "tenant"],
+                    "required": ["question"],
                 },
             ),
             _types.Tool(
@@ -234,11 +281,14 @@ except ImportError:
                     "properties": {
                         "query": {"type": "string"},
                         "scopes": {"type": "array", "items": {"type": "string"},
-                                   "description": "ACL scope IDs (required)."},
-                        "tenant": {"type": "string", "description": "Tenant namespace to query (required)."},
+                                   "description": "ACL scope IDs (required, never empty). Falls back to "
+                                                  "the LORE_SCOPES env var (comma-separated) if omitted."},
+                        "tenant": {"type": "string",
+                                   "description": "Tenant namespace to query (required, never empty). "
+                                                  "Falls back to the LORE_TENANT env var if omitted."},
                         "k": {"type": "integer", "default": 10},
                     },
-                    "required": ["query", "scopes", "tenant"],
+                    "required": ["query"],
                 },
             ),
             _types.Tool(
@@ -248,21 +298,23 @@ except ImportError:
                     "type": "object",
                     "properties": {
                         "scopes": {"type": "array", "items": {"type": "string"},
-                                   "description": "ACL scope IDs (required)."},
-                        "tenant": {"type": "string", "description": "Tenant namespace to query (required)."},
+                                   "description": "ACL scope IDs (required, never empty). Falls back to "
+                                                  "the LORE_SCOPES env var (comma-separated) if omitted."},
+                        "tenant": {"type": "string",
+                                   "description": "Tenant namespace to query (required, never empty). "
+                                                  "Falls back to the LORE_TENANT env var if omitted."},
                     },
-                    "required": ["scopes", "tenant"],
+                    "required": [],
                 },
             ),
         ]
 
     @_server.call_tool()
     async def _call_tool(name: str, arguments: dict) -> list[_types.TextContent]:
-        scopes = arguments.get("scopes", [])
+        scopes, tenant = _apply_env_defaults(arguments.get("scopes"), arguments.get("tenant"))
         err = _check_scopes(scopes)
         if err:
             return [_types.TextContent(type="text", text=err)]
-        tenant = arguments.get("tenant")
         err = _check_tenant(tenant)
         if err:
             return [_types.TextContent(type="text", text=err)]
