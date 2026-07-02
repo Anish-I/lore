@@ -127,7 +127,10 @@ async function ensureBackend() {
   if (app.isPackaged) {
     // Packaged: launch the PyInstaller-frozen backend directly — no Python, no CORE_DIR.
     // (Reached BEFORE the no-core guard, which only applies to the dev/python path.)
-    const exe = path.join(process.resourcesPath, 'lore-backend', 'lore-backend.exe');
+    // Frozen binary name is platform-specific: lore-backend.exe on Windows,
+    // extensionless mach-o/ELF on macOS/Linux (built by core/build_backend_mac.sh).
+    const exeName = process.platform === 'win32' ? 'lore-backend.exe' : 'lore-backend';
+    const exe = path.join(process.resourcesPath, 'lore-backend', exeName);
     // Embedded Qdrant: QDRANT_PATH switches QdrantClient into local on-disk path mode.
     const qdrantPath = path.join(app.getPath('userData'), 'lore-qdrant');
     try { fs.mkdirSync(qdrantPath, { recursive: true }); } catch { /* ignore */ }
