@@ -53,7 +53,7 @@
       "output": "dist"
     },
     "mac": {
-      "icon": "assets/icon.png",
+      "icon": "assets/icon-mac.png",
       "target": [
         "dmg",
         "zip"
