@@ -4,25 +4,6 @@
 // with real d3-zoom wheel zoom + pan, degree-scaled nodes, and a sim that sleeps when settled.
 const grNS = window.VaultDesignSystem_ffbf58;
 const { Icon: GrIcon, ScopeTag: GrScope, Button: GrButton } = grNS;
-const GR_SCOPE_VAR = { team: '--jade-500', enterprise: '--azure-500', private: '--obsidian-400' };
-function grScopeKey(scope) { return scope == null ? '' : String(scope).trim(); }
-// A solo library's notes carry a PURPOSE scope (e.g. "engineering" — from the
-// onboarding role question, meant to tailor the AI's tone, never a real ACL
-// category) rather than a literal "private" tag. The graph's scope filter must
-// only ever show the three real system scopes — team/enterprise pass through,
-// everything else (including a purpose string) canonicalizes to "private" —
-// matching passesScopeFilter's rule in wired-app.jsx.
-function grCanonicalScope(scope) {
-  const s = grScopeKey(scope).toLowerCase();
-  return (s === 'team' || s === 'enterprise') ? s : 'private';
-}
-function grScopeList(nodes) {
-  const seen = new Set();
-  for (const n of nodes || []) seen.add(grCanonicalScope(n.scope));
-  const order = { private: 0, team: 1, enterprise: 2 };
-  return Array.from(seen).sort((a, b) => order[a] - order[b]);
-}
-function grScopeVar(scope) { return GR_SCOPE_VAR[scope] || '--brand-fg'; }
 
 // Every edge kind Lore can produce → color + human label + whether it's a
 // reasoned (LLM/cue-inferred) relation or a plain structural link (always present
@@ -52,7 +33,13 @@ const GR_EDGE_STRUCTURAL = new Set(GR_EDGE_KINDS.filter((e) => e.structural).map
 // Daily-thread / journal notes named by date — hidden by default so topics dominate the graph.
 const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 
-function GraphView({ graph, onOpen }) {
+// bases: top-level folder ("Section") names present in the library.
+// kbFilter: the SAME array the sidebar's Sections switcher owns ([] = show all).
+// onToggleBase: toggles one folder in/out of kbFilter.
+// Scope filtering (All/Private/Team/Plugins) already happened one level up — the
+// `graph` prop is pre-filtered by the parent's kbFilter+scopeFilter, so this
+// component owns no filtering of its own beyond the date-cutoff scrubber below.
+function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
   const wrapRef = React.useRef(null);
   const canvasRef = React.useRef(null);
   const simRef = React.useRef(null);
@@ -63,10 +50,7 @@ function GraphView({ graph, onOpen }) {
   const hoverRef = React.useRef(null);
   const dragRef = React.useRef(null);
   const drawRef = React.useRef(null);
-  const filtersRef = React.useRef({});
   const selRef = React.useRef(null);
-
-  const graphScopes = React.useMemo(() => grScopeList(graph.nodes), [graph]);
 
   // Content signature: the heavy simulation effect below rebuilds only when the
   // actual node/edge SET changes, not on every new `graph` object reference — so
@@ -87,14 +71,6 @@ function GraphView({ graph, onOpen }) {
     }
     return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)) };
   }, [graph]);
-  const [filters, setFilters] = React.useState({});
-  React.useEffect(() => {
-    setFilters((prev) => {
-      const next = {};
-      for (const s of graphScopes) next[s] = prev[s] !== false;
-      return next;
-    });
-  }, [graphScopes.join('\u0000')]);
   const [sel, setSel] = React.useState(null);
   // Version-control date scrubber: show only notes created on/before `cutoff`.
   // Scrubs on the note's real creation date (`created` — frontmatter created:/date:,
@@ -114,7 +90,6 @@ function GraphView({ graph, onOpen }) {
 
   const draw = React.useCallback(() => { if (drawRef.current) drawRef.current(); }, []);
 
-  React.useEffect(() => { filtersRef.current = filters; draw(); }, [filters, draw]);
   React.useEffect(() => { cutoffRef.current = cutoff; draw(); }, [cutoff, draw]);
   React.useEffect(() => { selRef.current = sel; draw(); }, [sel, draw]);
 
@@ -165,8 +140,6 @@ function GraphView({ graph, onOpen }) {
 
     const visible = (n) => {
       if (!n) return false;
-      const sc = grCanonicalScope(n.scope);
-      if (filtersRef.current[sc] === false) return false;
       if (GR_DATE_RE.test(n.label || '')) return false;           // date notes are folded into topics → never shown
       const t = Date.parse(n.created || n.updated);
       if (!isNaN(t) && t > cutoffRef.current) return false;        // version control: hide notes created after the cutoff
@@ -376,10 +349,11 @@ function GraphView({ graph, onOpen }) {
         <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' }}>{dataRef.current.nodes.length} notes · {dataRef.current.links.length} links · scroll to zoom · drag to pan</p>
       </div>
 
-      <div style={{ position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8, alignItems: 'center' }}>
-        {graphScopes.map((k) => (
-          <button key={k} onClick={() => setFilters((f) => ({ ...f, [k]: f[k] === false }))} style={pill(filters[k] !== false)}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: `var(${grScopeVar(k)})` }} />{k}
+      <div style={{ position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '68%' }}>
+        {(bases || []).map((name) => (
+          <button key={name} onClick={() => onToggleBase && onToggleBase(name)} title={`Toggle the "${name}" section`}
+            style={pill(!kbFilter || !kbFilter.length || kbFilter.includes(name))}>
+            {name}
           </button>
         ))}
         <div title="Scrub the graph by note creation date (version control) — drag to see knowledge as of any date" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-raised)' }}>

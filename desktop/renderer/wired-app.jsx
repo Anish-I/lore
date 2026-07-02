@@ -1039,7 +1039,7 @@ function App() {
           <React.Fragment>
             {(graphLoading || !filteredGraph || filteredGraph.nodes.length === 0)
               ? <GraphEmptyState loading={graphLoading} />
-              : <GraphView graph={filteredGraph} onOpen={onGraphOpen} />
+              : <GraphView graph={filteredGraph} onOpen={onGraphOpen} bases={bases} kbFilter={kbFilter} onToggleBase={toggleBase} />
             }
             {askOpen && askPanel}
           </React.Fragment>
