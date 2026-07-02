@@ -408,22 +408,6 @@ function App() {
     const edges = graphData.edges.filter((e) => ids.has(e[0]) && ids.has(e[1]));
     return { nodes, edges };
   }, [graphData, kbFilter, scopeFilter, wizardIds, baseOf]);
-
-  // Stable graph-node open handler — an inline arrow here re-created GraphView's
-  // onOpen every render, which (via graph.jsx's [graph, onOpen] effect) restarted
-  // the whole force simulation on every parent re-render ("glitching out").
-  const onGraphOpen = React.useCallback((id) => {
-    const n = graphData && graphData.nodes.find((x) => x.id === id);
-    if (n && n.path) {
-      openNote(n.path);
-    } else if (window.lore && window.lore.notes && window.lore.notes.get) {
-      window.lore.notes.get(id).then((nd) => {
-        if (nd) setPreviewNote({ title: nd.title || String(id), body: nd.body || '' });
-      }).catch(() => {});
-    } else {
-      setView('workspace');
-    }
-  }, [graphData, openNote]);
   // Dominant scope per knowledge base (folder), so the switcher chips can be colored by scope.
   const baseScopes = React.useMemo(() => {
     const m = {}, rank = { enterprise: 3, team: 2, private: 1 };
@@ -474,6 +458,23 @@ function App() {
     const parsed = await loadNote(id);
     setScope(parsed.scope);
   }, [loadNote]);
+
+  // Stable graph-node open handler (defined AFTER openNote to avoid a TDZ ref).
+  // An inline arrow at the call site re-created GraphView's onOpen every render,
+  // which (via graph.jsx's [graph, onOpen] effect) restarted the force simulation
+  // on every parent re-render ("glitching out").
+  const onGraphOpen = React.useCallback((id) => {
+    const n = graphData && graphData.nodes.find((x) => x.id === id);
+    if (n && n.path) {
+      openNote(n.path);
+    } else if (window.lore && window.lore.notes && window.lore.notes.get) {
+      window.lore.notes.get(id).then((nd) => {
+        if (nd) setPreviewNote({ title: nd.title || String(id), body: nd.body || '' });
+      }).catch(() => {});
+    } else {
+      setView('workspace');
+    }
+  }, [graphData, openNote]);
 
   const openBucket = (b) => {
     const id = 'bucket:' + b.id;
@@ -636,8 +637,12 @@ function App() {
         try { if (await loadTree(root)) { loadedRoot = true; break; } } catch { /* try next */ }
       }
       if (window.lore.onVaultChanged) window.lore.onVaultChanged(() => { if (treeData) loadTree(treeData.root); });
-      const needsSetupRefresh = !existingCfg || Number(existingCfg.setupVersion || 0) < 6;
-      if (needsSetupRefresh || !loadedRoot) setShowOnboarding(true);
+      // Once a user has set up locally (or explicitly skipped), NEVER auto-prompt
+      // onboarding again — not on a version bump, and not just because the library
+      // root failed to load this boot (a transient state, not a reason to re-onboard).
+      const configuredBefore = existingCfg && (existingCfg.onboardedAt || existingCfg.skippedSetupAt
+        || (Array.isArray(existingCfg.roots) && existingCfg.roots.length > 0));
+      if (!configuredBefore) setShowOnboarding(true);
     })();
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen((o) => !o); }
