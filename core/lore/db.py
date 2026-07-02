@@ -182,6 +182,7 @@ create table if not exists notes(
   id text primary key, tenant_id text, owner_id text, scope_id text,
   source_path text, title text, source_type text,
   body text, body_sha256 text, content_hash text,
+  created_at timestamptz,
   updated_at timestamptz default now());
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
@@ -228,6 +229,14 @@ _BODY_MIGRATION = [
     "alter table notes add column if not exists importance real default 0",
 ]
 
+# Column added for the graph date-scrubber: the NOTE's real creation date
+# (frontmatter created:/date: → file mtime → first-seen), never index time.
+# updated_at keeps tracking (re)index time.  Nullable: backfilled lazily by
+# index.backfill_created_at (wired into /upkeep/run and /backfill/created).
+_CREATED_MIGRATION = [
+    "alter table notes add column if not exists created_at timestamptz",
+]
+
 # Unique constraint added in M1; applied opportunistically (no-op if already present).
 _EDGES_UNIQUE_CONSTRAINT = """
 do $$ begin
@@ -263,6 +272,7 @@ create table if not exists notes(
   source_path text, title text, source_type text,
   body text, body_sha256 text, content_hash text,
   importance real default 0,
+  created_at timestamp,
   updated_at timestamp default current_timestamp);
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
@@ -301,6 +311,13 @@ def bootstrap_schema(conn):
     if isinstance(conn, _SqliteConn):
         # Fresh, final-shape schema — no Postgres ALTER/DO$$ migration path.
         conn.executescript(SCHEMA_SQLITE)
+        # One exception: SQLite stores created before the created_at column shipped.
+        # CREATE TABLE IF NOT EXISTS won't add it and SQLite has no
+        # ADD COLUMN IF NOT EXISTS, so probe-and-add (idempotent).
+        try:
+            conn.execute("alter table notes add column created_at timestamp")
+        except Exception:
+            pass  # column already exists
         return
 
     # Step 1a: add source_type to notes (M1 migration).
@@ -320,6 +337,13 @@ def bootstrap_schema(conn):
 
     # Step 1c: add body/body_sha256/content_hash to notes (M2 migration).
     for stmt in _BODY_MIGRATION:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # table may not exist yet
+
+    # Step 1d: add created_at to notes (graph date-scrubber).
+    for stmt in _CREATED_MIGRATION:
         try:
             conn.execute(stmt)
         except Exception:

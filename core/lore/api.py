@@ -8,7 +8,7 @@ from .config import settings
 from .sqlutil import in_clause
 from .embed import FakeEmbedder, VoyageEmbedder, LocalEmbedder, LocalSparseEmbedder
 from .rerank import FakeReranker, VoyageReranker, LocalReranker
-from .index import index_note, index_document
+from .index import index_note, index_document, backfill_created_at
 from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
@@ -252,9 +252,14 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
 
     Response:
         {
-          "nodes": [{"id", "label", "scope", "owner", "links", "updated"}, ...],
+          "nodes": [{"id", "label", "scope", "owner", "links", "updated", "created"}, ...],
           "edges": [[src_id, dst_id, kind], ...]
         }
+
+    `created` is the note's real creation date (frontmatter created:/date: → file
+    mtime → first-seen; see index.derive_created_at) — never overwritten by re-index.
+    `updated` is index time (bumped on every re-ingest). May be null for notes indexed
+    before the created_at column existed and not yet backfilled (see /backfill/created).
 
     ACL guarantees (enforced server-side, not post-filtered):
         - A node appears only if its scope_id is in the caller's allowed set.
@@ -278,7 +283,7 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     # This is the server-side filter — no post-filtering is performed after this point.
     frag, sparams = in_clause("scope_id", allowed)
     rows = _conn.execute(
-        f"""select id, title, scope_id, owner_id, updated_at, source_path, importance
+        f"""select id, title, scope_id, owner_id, updated_at, source_path, importance, created_at
            from notes
            where tenant_id=%s and {frag}""",
         [active_tenant, *sparams],
@@ -322,7 +327,7 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     row_by_id = {r[0]: r for r in rows}
     nodes = []
     for nid in top_ids:
-        nid_, title, scope_id, owner_id, updated_at, source_path, importance = row_by_id[nid]
+        nid_, title, scope_id, owner_id, updated_at, source_path, importance, created_at = row_by_id[nid]
         nodes.append({
             "id": nid_,
             "label": title or nid_,
@@ -331,6 +336,10 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
             "path": source_path,
             "links": degree.get(nid_, 0),
             "updated": updated_at.isoformat() if updated_at else None,
+            # The note's real creation date (frontmatter/mtime/first-seen — see index.py
+            # derive_created_at); None for notes indexed before this column existed and
+            # not yet backfilled. graph.jsx's date-scrubber falls back to `updated` then.
+            "created": created_at.isoformat() if created_at else None,
             "importance": importance or 0,
         })
 
@@ -601,9 +610,29 @@ def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     from .upkeep import run_upkeep
     global _upkeep_last_run, _upkeep_last_stats
     stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm)
+    # Opportunistic backfill: any note still missing created_at (e.g. indexed before
+    # the column existed) gets it derived now from its source file, so the graph
+    # date-scrubber keeps improving as upkeep runs without a separate user action.
+    stats["createdBackfilled"] = backfill_created_at(_conn, req.tenant)
     _upkeep_last_run = datetime.datetime.utcnow().isoformat()
     _upkeep_last_stats = stats
     return stats
+
+
+class BackfillCreatedReq(BaseModel):
+    tenant: str
+
+
+@app.post("/backfill/created")
+def backfill_created(req: BackfillCreatedReq):
+    """Backfill created_at for existing notes from their source file's frontmatter/
+    mtime (falls back to the row's updated_at when the source is unreadable).
+    Never overwrites a note that already has created_at. Idempotent.
+
+    Body: {tenant}. Returns: {updated}.
+    """
+    n = backfill_created_at(_conn, req.tenant)
+    return {"updated": n}
 
 
 class EnrichReq(BaseModel):

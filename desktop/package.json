@@ -1,5 +1,6 @@
 {
   "name": "lore-desktop",
+  "productName": "Lore",
   "version": "0.1.0",
   "description": "Lore \u2014 Knowledge OS desktop app (file explorer + cited recall)",
   "main": "main.js",

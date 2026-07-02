@@ -19,11 +19,13 @@ function grScopeList(nodes) {
 function grScopeVar(scope) { return GR_SCOPE_VAR[scope] || '--brand-fg'; }
 
 // Every edge kind Lore can produce → color + human label + whether it's a
-// reasoned (LLM/cue-inferred) relation or a plain structural link. Single
-// source of truth for the canvas draw AND the on-screen legend, so every line
-// on the graph is explained — nothing renders as an unlabeled gray line.
+// reasoned (LLM/cue-inferred) relation or a plain structural link (always present
+// from plain indexing, no /enrich required). Single source of truth for the canvas
+// draw AND the on-screen legend, so every line on the graph is explained — nothing
+// renders as an unlabeled gray line. Reasoned kinds stay visually dominant
+// (confidence-scaled opacity/width in the draw below); structural kinds are
+// tasteful-but-muted, never the near-invisible `pal.edge` gray they used to be.
 const GR_EDGE_KINDS = [
-  // Reasoned relations — visually dominant (drawn with confidence-scaled opacity/width).
   { kind: 'depends_on',  color: '#5b8def', label: 'depends on',  structural: false },
   { kind: 'supersedes',  color: '#a36bd6', label: 'supersedes',  structural: false },
   { kind: 'causes',      color: '#e0883a', label: 'causes',      structural: false },
@@ -31,8 +33,6 @@ const GR_EDGE_KINDS = [
   { kind: 'contradicts', color: '#d6504f', label: 'contradicts', structural: false },
   { kind: 'implements',  color: '#3fa89a', label: 'implements',  structural: false },
   { kind: 'relates_to',  color: '#888888', label: 'relates to',  structural: false },
-  // Structural — auto-extracted from wikilinks/tags/folders/upkeep, drawn muted so
-  // reasoned relations stay dominant, but each kind is still distinct and labeled.
   { kind: 'link',   color: '#c9a24b', label: 'wikilink',      structural: true },
   { kind: 'tag',    color: '#d6b34a', label: 'shared tag',    structural: true },
   { kind: 'folder', color: '#5a5e68', label: 'same folder',   structural: true },
@@ -69,15 +69,14 @@ function GraphView({ graph, onOpen }) {
   }, [graph]);
 
   // Which edge kinds are actually present → the legend only lists relevant colors.
-  // Any kind not in GR_EDGE_KINDS (future/unknown) falls back to a generic "linked" row.
+  // Any kind not in GR_EDGE_KINDS (future/unknown) folds into the 'link' row.
   const legend = React.useMemo(() => {
     const present = new Set();
-    let hasUnknown = false;
     for (const e of (graph.edges || [])) {
       const k = e[2] || 'link';
-      if (GR_EDGE_COLORS[k]) present.add(k); else hasUnknown = true;
+      present.add(GR_EDGE_COLORS[k] ? k : 'link');
     }
-    return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)), hasStructural: hasUnknown };
+    return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)) };
   }, [graph]);
   const [filters, setFilters] = React.useState({});
   React.useEffect(() => {
@@ -88,10 +87,15 @@ function GraphView({ graph, onOpen }) {
     });
   }, [graphScopes.join('\u0000')]);
   const [sel, setSel] = React.useState(null);
-  // Version-control date scrubber: show only notes created on/before `cutoff` (by updated_at).
+  // Version-control date scrubber: show only notes created on/before `cutoff`.
+  // Scrubs on the note's real creation date (`created` — frontmatter created:/date:,
+  // else file mtime, else first-seen; see core/lore/index.py derive_created_at) so
+  // the slider reflects when knowledge was actually written, not when it was last
+  // re-indexed. Falls back to `updated` for notes indexed before the created_at
+  // column existed and not yet backfilled (see POST /backfill/created).
   const dateBounds = React.useMemo(() => {
     let lo = Infinity, hi = -Infinity;
-    for (const n of (graph.nodes || [])) { const t = Date.parse(n.updated); if (!isNaN(t)) { if (t < lo) lo = t; if (t > hi) hi = t; } }
+    for (const n of (graph.nodes || [])) { const t = Date.parse(n.created || n.updated); if (!isNaN(t)) { if (t < lo) lo = t; if (t > hi) hi = t; } }
     if (!isFinite(lo)) { lo = 0; hi = Date.now(); }
     return { lo, hi };
   }, [graph]);
@@ -155,7 +159,7 @@ function GraphView({ graph, onOpen }) {
       const sc = grScopeKey(n.scope);
       if (sc && filtersRef.current[sc] === false) return false;
       if (GR_DATE_RE.test(n.label || '')) return false;           // date notes are folded into topics → never shown
-      const t = Date.parse(n.updated);
+      const t = Date.parse(n.created || n.updated);
       if (!isNaN(t) && t > cutoffRef.current) return false;        // version control: hide notes created after the cutoff
       return true;
     };
@@ -181,11 +185,16 @@ function GraphView({ graph, onOpen }) {
         if (a.x == null || !visible(a) || !visible(b)) continue;
         const lit = focus && (a.id === focus || b.id === focus);
         const isStructural = STRUCTURAL_KINDS.has(l.kind);
+        // Every kind (reasoned AND structural) gets its own typed color from
+        // GR_EDGE_KINDS — pal.edge is now only a last-resort fallback for a
+        // genuinely unrecognized kind, not the default for structural edges.
         const kindColor = EDGE_KIND_COLORS[l.kind] || pal.edge;
         const conf = l.weight != null ? l.weight : 0.9;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
         ctx.strokeStyle = lit ? pal.edgeLit : kindColor;
-        ctx.globalAlpha = focus ? (lit ? 0.85 : 0.08) : (isStructural ? 0.42 : Math.max(0.15, conf * 0.85));
+        // Structural edges stay more muted than reasoned ones (dominant weight kept
+        // on the /enrich-derived typed relations) but are no longer near-invisible.
+        ctx.globalAlpha = focus ? (lit ? 0.85 : 0.08) : (isStructural ? 0.5 : Math.max(0.15, conf * 0.85));
         ctx.lineWidth = (lit ? 1.3 : (isStructural ? 0.7 : 0.5 + conf * 0.9)) / t.k;
         ctx.stroke();
       }
@@ -375,7 +384,7 @@ function GraphView({ graph, onOpen }) {
         <button onClick={reheat} title="Shake" style={pill(true)}><GrIcon name="sparkles" size={12} />shake</button>
       </div>
 
-      {(legend.kinds.length > 0 || legend.hasStructural) && (
+      {legend.kinds.length > 0 && (
         <div style={{ position: 'absolute', left: 18, bottom: 18, zIndex: 2, padding: '9px 11px', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', maxWidth: 190 }}>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Connection types</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -384,11 +393,6 @@ function GraphView({ graph, onOpen }) {
                 <span style={{ width: 14, height: 2.5, borderRadius: 2, background: e.color, flexShrink: 0 }} />{e.label}
               </div>
             ))}
-            {legend.hasStructural && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--text-faint)' }}>
-                <span style={{ width: 14, height: 2.5, borderRadius: 2, background: 'var(--border-strong)', flexShrink: 0 }} />linked (wiki/tag/folder)
-              </div>
-            )}
           </div>
         </div>
       )}
