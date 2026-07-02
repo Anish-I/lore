@@ -828,6 +828,7 @@ ipcMain.handle('hooks:uninstall', (_e, tool) => {
   let result;
   if (!tool) result = { ok: false, reason: 'Tool is required' };
   else if (tool === 'claude') result = installer.uninstallClaude();
+  else if (tool === 'codex')  result = installer.uninstallCodex();
   else result = { ok: false, reason: `Uninstall not supported for: ${tool}` };
 
   if (win && !win.isDestroyed()) win.webContents.send('hooks:update', installer.detectTools());

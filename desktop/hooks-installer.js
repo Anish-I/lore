@@ -6,7 +6,8 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
-const runtime = require('./lib/runtime');
+const runtime   = require('./lib/runtime');
+const codexToml = require('./lib/codex-toml');
 
 // ---------- paths ----------
 
@@ -15,11 +16,13 @@ const HOOKS_DIR   = path.join(LORE_DIR, 'hooks');
 const LIB_DIR     = path.join(LORE_DIR, 'lib');
 const HOOK_SCRIPT = path.join(HOOKS_DIR, 'lore-capture.js');
 const INJECT_SCRIPT = path.join(HOOKS_DIR, 'lore-inject.js');
+const CODEX_NOTIFY_SCRIPT = path.join(HOOKS_DIR, 'lore-codex-notify.js');
 const HOOK_REDACT = path.join(LIB_DIR,   'redact.js');
 
 // Source files shipped with the Electron app.
 const CAPTURE_SRC = path.join(__dirname, 'assets', 'lore-capture.js');
 const INJECT_SRC  = path.join(__dirname, 'assets', 'lore-inject.js');
+const CODEX_NOTIFY_SRC = path.join(__dirname, 'assets', 'lore-codex-notify.js');
 const REDACT_SRC  = path.join(__dirname, 'lib',    'redact.js');
 
 // Claude Code settings file.
@@ -61,8 +64,13 @@ function detectTools() {
     } catch {}
   }
 
-  // Codex CLI
+  // Codex CLI — installed when config.toml's notify handler is the Lore bridge.
   const codexDetected = fs.existsSync(CODEX_DIR);
+  let codexInstalled = false;
+  try {
+    const notify = codexToml.getRootKey(codexToml.read(), 'notify');
+    codexInstalled = Boolean(notify && notify.includes('lore-codex-notify.js'));
+  } catch {}
 
   // GitHub Copilot (detected via VS Code global storage)
   const copilotDetected = VSCODE_STORAGE_CANDIDATES.some((p) => fs.existsSync(p));
@@ -75,8 +83,8 @@ function detectTools() {
     },
     {
       id: 'codex', name: 'Codex CLI',
-      description: 'OpenAI Codex CLI',
-      detected: codexDetected, installed: false,
+      description: 'OpenAI Codex CLI — turn-end capture via notify',
+      detected: codexDetected, installed: codexInstalled,
     },
     {
       id: 'copilot', name: 'GitHub Copilot',
@@ -106,10 +114,12 @@ function materializeHookFiles() {
   fs.mkdirSync(LIB_DIR,   { recursive: true });
   fs.copyFileSync(CAPTURE_SRC, HOOK_SCRIPT);
   fs.copyFileSync(INJECT_SRC,  INJECT_SCRIPT);
+  fs.copyFileSync(CODEX_NOTIFY_SRC, CODEX_NOTIFY_SCRIPT);
   fs.copyFileSync(REDACT_SRC,  HOOK_REDACT);
   // Make the hooks executable on POSIX (no-op on Windows, harmless).
   try { fs.chmodSync(HOOK_SCRIPT, 0o755); } catch {}
   try { fs.chmodSync(INJECT_SCRIPT, 0o755); } catch {}
+  try { fs.chmodSync(CODEX_NOTIFY_SCRIPT, 0o755); } catch {}
 }
 
 // ---------- installClaude ----------
@@ -255,15 +265,103 @@ async function captureStatus(sessionId) {
   return r.json();
 }
 
-// ---------- stubs for Codex / Copilot (fast-follow) ----------
+// ---------- installCodex ----------
 
-function installCodex()   { return { ok: false, reason: 'experimental — coming soon' }; }
+// Registers the Lore capture bridge as Codex's `notify` handler.
+// Codex allows a single top-level `notify` argv; if one already exists (e.g. a
+// computer-use notifier), it is CHAINED via `--previous-notify '<json argv>'` so
+// the bridge runs it after capturing. Idempotent. Triple-quoted config blocks
+// (developer_instructions) are never touched — codex-toml is quote-aware.
+function installCodex() {
+  try {
+    materializeHookFiles();
+  } catch (e) {
+    return { ok: false, reason: `Failed to materialize hook files: ${e.message}` };
+  }
+  try {
+    const text = codexToml.read();
+    codexToml.backupOnce(text);
+    const node   = process.execPath;
+    const cur    = codexToml.getRootKey(text, 'notify');
+
+    // Already the Lore bridge → no-op (idempotent).
+    if (cur && cur.includes('lore-codex-notify.js')) return { ok: true };
+
+    let newArgv;
+    if (cur) {
+      // Chain the entire previous notify argv so the pre-existing notifier still runs.
+      let prevArgv;
+      try { prevArgv = codexToml.parseArgvValue(cur); } catch { prevArgv = null; }
+      newArgv = prevArgv && prevArgv.length
+        ? [node, CODEX_NOTIFY_SCRIPT, '--previous-notify', JSON.stringify(prevArgv)]
+        : [node, CODEX_NOTIFY_SCRIPT];
+    } else {
+      newArgv = [node, CODEX_NOTIFY_SCRIPT];
+    }
+    const updated = codexToml.setRootKey(text, 'notify', codexToml.formatArgv(newArgv));
+    codexToml.atomicWrite(updated);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: `Failed to write Codex config: ${e.message}` };
+  }
+}
+
+// Removes the Lore bridge from Codex's notify: if it was chaining a previous
+// notifier, that previous argv is restored; otherwise the notify key is dropped.
+function uninstallCodex() {
+  try {
+    const text = codexToml.read();
+    const cur  = codexToml.getRootKey(text, 'notify');
+    if (!cur || !cur.includes('lore-codex-notify.js')) return { ok: true, reason: 'not installed' };
+
+    let argv;
+    try { argv = codexToml.parseArgvValue(cur); } catch { argv = null; }
+    const prevIdx = argv ? argv.indexOf('--previous-notify') : -1;
+    let updated;
+    if (prevIdx !== -1 && argv[prevIdx + 1]) {
+      // Restore the chained notifier as the notify value.
+      let prevArgv;
+      try { prevArgv = JSON.parse(argv[prevIdx + 1]); } catch { prevArgv = null; }
+      updated = prevArgv && prevArgv.length
+        ? codexToml.setRootKey(text, 'notify', codexToml.formatArgv(prevArgv))
+        : dropRootKey(text, 'notify');
+    } else {
+      // No chain — drop the notify line entirely by setting it empty then stripping.
+      updated = dropRootKey(text, 'notify');
+    }
+    codexToml.atomicWrite(updated);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: `Failed to write Codex config: ${e.message}` };
+  }
+}
+
+// Removes a top-level `key = ...` line (quote-aware). codex-toml has no
+// dedicated deleter for root keys, so do a minimal quote-aware line strip here.
+function dropRootKey(text, key) {
+  const lines = text.split('\n');
+  let inTriple = false;
+  const re = new RegExp('^\\s*' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*=');
+  const out = [];
+  for (const line of lines) {
+    const isKey = !inTriple && re.test(line) && !/^\s*\[/.test(line);
+    if (!isKey) out.push(line);
+    const q = (line.match(/"""/g) || []).length;
+    if (q % 2 === 1) inTriple = !inTriple;
+  }
+  return out.join('\n');
+}
+
+// ---------- stub for Copilot (fast-follow) ----------
+
 function installCopilot() { return { ok: false, reason: 'experimental — coming soon' }; }
 
 module.exports = {
   detectTools,
   installClaude,
   uninstallClaude,
+  installCodex,
+  uninstallCodex,
   captureStatus,
   installCodex,
   installCopilot,

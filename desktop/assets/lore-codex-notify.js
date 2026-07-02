@@ -1,0 +1,156 @@
+#!/usr/bin/env node
+// Lore Codex capture bridge — installed to ~/.lore/hooks/lore-codex-notify.js by
+// the Lore installer and registered as Codex's `notify` handler.
+//
+// Codex has no per-prompt hooks; it invokes `notify` at TURN END with the
+// notification JSON payload as the LAST argv:
+//   node lore-codex-notify.js [--previous-notify '<json argv array>'] '<payload json>'
+// The payload looks like:
+//   {"type":"agent-turn-complete","input-messages":[...],"last-assistant-message":"...","cwd":"..."}
+//
+// Behavior:
+//   1. Distil the turn (User: <input-messages> / Assistant: <last-assistant-message>),
+//      mirroring lore-capture.js truncation rules.
+//   2. Redact secrets (../lib/redact.js), append to a rolling buffer keyed by the
+//      project dir, and POST the buffer to <backend>/capture.
+//   3. CHAIN: if --previous-notify is present, spawn that command (detached) with the
+//      ORIGINAL payload appended as its last arg, so a pre-existing notifier still runs.
+//
+// Identity: same lore-config.json candidate paths as lore-capture.js. Missing
+// scope/owner/tenant → skip the POST (buffer only), same as lore-capture.
+//
+// ALWAYS exits 0 — a notify handler must never break Codex. Requires Node 18+.
+'use strict';
+const fs      = require('fs');
+const path    = require('path');
+const os      = require('os');
+const crypto  = require('crypto');
+const { spawn } = require('child_process');
+
+const LORE_DIR     = path.join(os.homedir(), '.lore');
+const SESSIONS_DIR = path.join(LORE_DIR, 'sessions');
+const LOG_PATH     = path.join(LORE_DIR, 'codex-notify.log');
+const POST_TIMEOUT = 800; // ms
+
+function sha1(s) { return crypto.createHash('sha1').update(String(s)).digest('hex'); }
+
+function log(msg) {
+  try { fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
+}
+
+// Identity config — same candidate paths as lore-capture.js loadLoreConfig().
+function loadLoreConfig() {
+  const candidates = [
+    process.env.APPDATA && path.join(process.env.APPDATA, 'lore-desktop', 'lore-config.json'),
+    path.join(os.homedir(), '.config', 'lore-desktop', 'lore-config.json'),
+    path.join(os.homedir(), 'Library', 'Application Support', 'lore-desktop', 'lore-config.json'),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch {}
+  }
+  return { scope: null, owner: null, tenant: null };
+}
+
+// ---------- argv parsing ----------
+// The payload JSON is the LAST argv. `--previous-notify '<json>'` may appear before it.
+function parseArgs(argv) {
+  let previousNotify = null;
+  const rest = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--previous-notify' && i + 1 < argv.length) {
+      previousNotify = argv[i + 1];
+      i++;
+    } else {
+      rest.push(argv[i]);
+    }
+  }
+  const payloadRaw = rest.length ? rest[rest.length - 1] : '';
+  return { previousNotify, payloadRaw };
+}
+
+// ---------- distillation ----------
+function distil(payload) {
+  const parts = [];
+  const inputs = Array.isArray(payload['input-messages']) ? payload['input-messages'] : [];
+  const userText = inputs.map((m) => String(m || '')).join(' ').trim();
+  if (userText) parts.push(`User: ${userText.slice(0, 500)}`);
+  const asst = payload['last-assistant-message'];
+  if (typeof asst === 'string' && asst.trim()) parts.push(`Assistant: ${asst.slice(0, 800)}`);
+  return parts.join('\n\n');
+}
+
+// ---------- chain-forward the previous notifier ----------
+function chainPrevious(previousNotify, payloadRaw) {
+  if (!previousNotify) return;
+  let prevArgv;
+  try { prevArgv = JSON.parse(previousNotify); } catch { log('bad --previous-notify json'); return; }
+  if (!Array.isArray(prevArgv) || !prevArgv.length) return;
+  try {
+    const [cmd, ...args] = prevArgv;
+    const child = spawn(cmd, [...args, payloadRaw], { detached: true, stdio: 'ignore' });
+    child.on('error', (e) => log(`prev-notify spawn error: ${e}`));
+    child.unref();
+  } catch (e) { log(`prev-notify chain failed: ${e}`); }
+}
+
+// ---------- flush to backend ----------
+async function flush(key, text, cfg) {
+  let redactSecrets = (t) => [t, false];
+  try { ({ redactSecrets } = require('../lib/redact')); } catch {}
+  const [redacted] = redactSecrets(text);
+  if (!cfg.scope || !cfg.owner || !cfg.tenant) return; // buffer only until configured
+
+  const BACKEND = process.env.LORE_BACKEND_URL || cfg.backendUrl || 'http://localhost:8099';
+  const ac    = new AbortController();
+  const timer = setTimeout(() => ac.abort(), POST_TIMEOUT);
+  try {
+    await fetch(`${BACKEND}/capture`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        session_id: key,
+        title:      `Codex Session ${key.slice(6, 14)}`,
+        text:       redacted,
+        scope:      cfg.scope,
+        owner:      cfg.owner,
+        tenant:     cfg.tenant,
+        mode:       'codex',
+      }),
+      signal: ac.signal,
+    });
+    clearTimeout(timer);
+  } catch {
+    clearTimeout(timer);
+  }
+}
+
+// ---------- main ----------
+async function main() {
+  try { fs.mkdirSync(SESSIONS_DIR, { recursive: true }); } catch {}
+
+  const { previousNotify, payloadRaw } = parseArgs(process.argv.slice(2));
+
+  let payload = {};
+  try { if (payloadRaw && payloadRaw.trim()) payload = JSON.parse(payloadRaw); } catch { /* keep {} */ }
+
+  // Chain the previous notifier first (fire-and-forget) so it runs regardless of our work.
+  chainPrevious(previousNotify, payloadRaw);
+
+  if (payload.type && payload.type !== 'agent-turn-complete') return; // only capture completed turns
+
+  const cwd = payload.cwd || process.cwd();
+  const key = `codex-${sha1(cwd)}`;
+  const distilled = distil(payload);
+  if (!distilled) return;
+
+  const bufPath = path.join(SESSIONS_DIR, `${key}.md`);
+  const ts = new Date().toISOString();
+  try { fs.appendFileSync(bufPath, `\n## Turn [${ts}]\n\n${distilled}\n`, 'utf8'); } catch {}
+
+  let buf = '';
+  try { buf = fs.readFileSync(bufPath, 'utf8'); } catch {}
+  if (buf.trim()) await flush(key, buf, loadLoreConfig());
+}
+
+// Always exit 0 — never break Codex.
+main().catch((e) => { log(`fatal: ${e}`); }).finally(() => process.exit(0));
