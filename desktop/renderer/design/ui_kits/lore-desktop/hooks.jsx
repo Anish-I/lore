@@ -13,12 +13,13 @@ const HK_S = {
   hint: { fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 },
 };
 
-function HK_Section({ icon, title, children }) {
+function HK_Section({ icon, title, action, children }) {
   return (
     <div style={HK_S.section}>
       <div style={HK_S.secHead}>
         <HK_Icon name={icon} size={15} style={{ color: 'var(--brand-fg)' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>{title}</span>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>{title}</span>
+        {action}
       </div>
       {children}
     </div>
@@ -62,6 +63,25 @@ lore capture --session <id> --title "<title>" --scope <scope> --owner <owner> --
 curl -X POST http://localhost:8099/capture \\
   -H "Content-Type: application/json" \\
   -d '{"session_id":"<id>","title":"<title>","text":"...","scope":"<scope>","owner":"<owner>","tenant":"<tenant>"}'`;
+
+// A copy-paste prompt for wiring ANY other LLM/agent tool into Lore manually —
+// the "give me a prompt and files" escape hatch for tools we don't have a native
+// installer for. `{scope}`/`{tenant}` are filled in from the user's current identity.
+function HK_genericPrompt(scope, tenant) {
+  return `You are being connected to Lore, a local knowledge base running at http://localhost:8099.
+
+After each work session (or after each significant reply), POST a summary of what happened to Lore so it's remembered:
+
+curl -X POST http://localhost:8099/capture \\
+  -H "Content-Type: application/json" \\
+  -d '{"session_id":"<a stable id for this session>","title":"<short title>","text":"<distilled summary: what was asked, what you did, what you found>","scope":"${scope || '<scope>'}","owner":"<your identity/username>","tenant":"${tenant || '<tenant>'}"}'
+
+Rules:
+- session_id should stay the same across multiple messages in one conversation (POSTing again with the same id updates the note, it does not duplicate it).
+- Keep "text" a distilled summary, not a raw transcript dump — a few sentences is enough.
+- Secrets (API keys, tokens, passwords) are redacted server-side, but avoid including them anyway.
+- This is write-only: it does not read from Lore. To recall from Lore, POST to http://localhost:8099/search with {"query":"...", "scopes":["${scope || '<scope>'}"], "tenant_id":"${tenant || '<tenant>'}", "k":5} and use the results as context.`;
+}
 
 function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg, onToggle, onMode, onScope, scopeOptions, identityReady, last }) {
   const known       = HK_KNOWN[id] || {};
@@ -122,11 +142,23 @@ function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg,
           {cfg.error}
         </div>
       )}
+      {cfg.detail && (
+        <div style={{ width: '100%', marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--jade-400)', paddingLeft: 0, lineHeight: 1.5 }}>
+          {cfg.detail}
+        </div>
+      )}
     </HK_Row>
   );
 }
 
-function HooksView({ scopeOptions = [], identityReady = false, onOpenSetup }) {
+// What each install actually writes to disk, for the success-detail line —
+// answers "did it really create the hook files" without the user having to check.
+const HK_INSTALL_DETAIL = {
+  claude: 'Created ~/.lore/hooks/lore-capture.js + lore-inject.js, ~/.lore/lib/redact.js — wired into ~/.claude/settings.json',
+  codex:  'Created ~/.lore/hooks/lore-codex-notify.js — wired into ~/.codex/config.toml notify (chained with any existing notifier)',
+};
+
+function HooksView({ scopeOptions = [], identityReady = false, tenant = null, scope = null, onOpenSetup }) {
   // toolMap: id -> detect() entry (or stub)
   const [toolMap, setToolMap]     = React.useState({});
   const [statuses, setStatuses]   = React.useState([]);
@@ -203,9 +235,9 @@ function HooksView({ scopeOptions = [], identityReady = false, onOpenSetup }) {
         try {
           const r = await window.lore.hooks.install({ tool: id, mode: cfg.mode, scope: cfg.scope || null });
           if (r && r.ok === false) {
-            patchCfg(id, { enabled: false, installing: false, error: r.reason || 'Install failed.' });
+            patchCfg(id, { enabled: false, installing: false, error: r.reason || 'Install failed.', detail: '' });
           } else {
-            patchCfg(id, { enabled: true, installing: false, error: '' });
+            patchCfg(id, { enabled: true, installing: false, error: '', detail: HK_INSTALL_DETAIL[id] || '' });
           }
         } catch (e) {
           patchCfg(id, { enabled: false, installing: false, error: String(e) });
@@ -219,9 +251,34 @@ function HooksView({ scopeOptions = [], identityReady = false, onOpenSetup }) {
       if (window.lore?.hooks?.uninstall) {
         try { await window.lore.hooks.uninstall(id); } catch { /* non-fatal */ }
       }
-      patchCfg(id, { enabled: false, installing: false, error: '' });
+      patchCfg(id, { enabled: false, installing: false, error: '', detail: '' });
       await refreshStatuses();
     }
+  };
+
+  // Re-run detect()+status() on demand — the view already refreshes on mount and
+  // after every install/uninstall, but a manual recheck is the fastest way to
+  // resolve any staleness (e.g. hooks installed by onboarding before this view
+  // was ever opened).
+  const [rechecking, setRechecking] = React.useState(false);
+  const recheck = async () => {
+    if (!window.lore?.hooks?.detect) return;
+    setRechecking(true);
+    try {
+      const detected = await window.lore.hooks.detect();
+      const map = {};
+      for (const t of (detected || [])) map[t.id] = t;
+      setToolMap(map);
+      setToolCfg((prev) => {
+        const next = { ...prev };
+        for (const id of Object.keys(map)) {
+          next[id] = { ...(next[id] || { mode: 'session-end', scope: '', installing: false, error: '' }), enabled: !!map[id].installed };
+        }
+        return next;
+      });
+      await refreshStatuses();
+    } catch { /* non-fatal */ }
+    setRechecking(false);
   };
 
   const copySnippet = () => {
@@ -229,6 +286,17 @@ function HooksView({ scopeOptions = [], identityReady = false, onOpenSetup }) {
       navigator.clipboard.writeText(HK_CAPTURE_SNIPPET).then(() => {
         setCopied(true);
         setTimeout(() => setCopied(false), 1800);
+      }).catch(() => {});
+    }
+  };
+
+  const [promptCopied, setPromptCopied] = React.useState(false);
+  const genericPrompt = React.useMemo(() => HK_genericPrompt(scope, tenant), [scope, tenant]);
+  const copyPrompt = () => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(genericPrompt).then(() => {
+        setPromptCopied(true);
+        setTimeout(() => setPromptCopied(false), 1800);
       }).catch(() => {});
     }
   };
@@ -288,11 +356,15 @@ function HooksView({ scopeOptions = [], identityReady = false, onOpenSetup }) {
                 <HK_Button variant="secondary" size="sm" onClick={onOpenSetup}>Configure</HK_Button>
               </div>
             )}
-            <HK_Section icon="plug" title="AI tool hooks">
-              {allToolIds.map((id, i) => {
+            <HK_Section icon="plug" title="AI tool hooks" action={
+              <HK_Button variant="ghost" size="sm" icon="refresh-cw" disabled={rechecking} onClick={recheck}>
+                {rechecking ? 'Checking…' : 'Recheck'}
+              </HK_Button>
+            }>
+              {allToolIds.filter((id) => id !== 'generic').map((id, i, arr) => {
                 const tool = toolMap[id] || { id, name: HK_KNOWN[id]?.label || id, description: '', detected: false, installed: false, status: 'detecting' };
                 const cfg  = toolCfg[id] || { mode: 'session-end', scope: '', enabled: false, installing: false, error: '' };
-                const isLast = i === allToolIds.length - 1;
+                const isLast = i === arr.length - 1;
                 return (
                   <HK_ToolRow
                     key={id}
@@ -316,6 +388,14 @@ function HooksView({ scopeOptions = [], identityReady = false, onOpenSetup }) {
 
             {/* Generic escape hatch */}
             <HK_Section icon="terminal" title="Any other tool">
+              <HK_Row label="Setup prompt" hint="Paste this into any LLM/agent (ChatGPT, Gemini, a custom bot) so it wires itself into Lore — no native install needed.">
+                <HK_Button variant="secondary" size="sm" icon={promptCopied ? 'check' : 'copy'} onClick={copyPrompt}>
+                  {promptCopied ? 'Copied' : 'Copy prompt'}
+                </HK_Button>
+              </HK_Row>
+              <div style={{ margin: '0 16px 14px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                <pre style={{ margin: 0, padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{genericPrompt}</pre>
+              </div>
               <HK_Row label="HTTP endpoint" hint="POST JSON to capture any session into Lore. Scoped and indexed like a normal note.">
                 <HK_Badge tone="neutral">localhost:8099</HK_Badge>
               </HK_Row>

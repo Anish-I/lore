@@ -109,7 +109,15 @@ function parseNote(raw, p) {
   if (fm) {
     const meta = fm[1];
     const sc = meta.match(/^scope:\s*(.+)$/m); if (sc) scope = String(sc[1]).trim().replace(/^['"]|['"]$/g, '') || null;
-    const tg = meta.match(/^tags:\s*\[(.*?)\]/m); if (tg) tags = tg[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+    // Two YAML tag forms in the wild: inline array `tags: [a, b]` and the more
+    // common Obsidian-style block list `tags:\n  - a\n  - b`.
+    const tgInline = meta.match(/^tags:\s*\[(.*?)\]/m);
+    if (tgInline) {
+      tags = tgInline[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+    } else {
+      const tgBlock = meta.match(/^tags:\s*\r?\n((?:^\s*-\s*.+\r?\n?)+)/m);
+      if (tgBlock) tags = [...tgBlock[1].matchAll(/^\s*-\s*(.+)$/gm)].map((m) => m[1].trim().replace(/['"]/g, '')).filter(Boolean);
+    }
     body = body.slice(fm[0].length);
   }
   const base = p.split(/[\\/]/).pop();
@@ -721,9 +729,12 @@ function App() {
     if (flags.openImport) setShowImportModal(true);
   }, [loadTree, updateProgress]);
 
-  // Load real graph data when graph view is active and identity is configured.
+  // Load real graph data once identity is configured — NOT gated on the Graph tab
+  // being open. The note editor's ContextPane (backlinks/connections) also reads
+  // graphData, so fetching it only on view==='graph' meant every note falsely
+  // showed "No connections yet" until the user had visited the Graph view once.
   React.useEffect(() => {
-    if (view !== 'graph' || !window.lore?.graph) return;
+    if (!window.lore?.graph) return;
     setGraphLoading(true);
     const scopes = persona.scopes || [];
     if (!identityReady) {
@@ -734,7 +745,7 @@ function App() {
     window.lore.graph({ tenant, scopes }).then((g) => {
       setGraphData(g); setGraphLoading(false);
     }).catch(() => setGraphLoading(false));
-  }, [view, tenant, identityReady, (persona.scopes || []).join('\u0000'), graphNonce]);
+  }, [tenant, identityReady, (persona.scopes || []).join('\u0000'), graphNonce]);
 
   // After an import: refresh the graph and the file tree so new nodes/files show up.
   const reloadAfterImport = React.useCallback(() => {
@@ -961,7 +972,7 @@ function App() {
         )}
         {view === 'buckets' && (<React.Fragment><BucketsView buckets={M.buckets} onAsk={() => setAskOpen(true)} onOpen={openBucket} onChanged={reloadAfterImport} />{askOpen && askPanel}</React.Fragment>)}
         {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onOpenSetup={() => setShowOnboarding(true)} />}
-        {view === 'hooks' && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} onOpenSetup={() => setShowOnboarding(true)} />}
+        {view === 'hooks' && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} tenant={tenant} scope={persona.scopes && persona.scopes[0]} onOpenSetup={() => setShowOnboarding(true)} />}
         </LoreErrorBoundary>
 
         {searchOpen && <SearchPalette notes={allNotes} onPick={openNote} onClose={() => setSearchOpen(false)} />}
