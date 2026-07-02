@@ -17,9 +17,21 @@ const OB_PURPOSES = [
 
 const OB_AI_CHOICES = [
   { id: 'claude', icon: 'terminal', title: 'Claude Code', description: 'Capture prompts and coding sessions.' },
-  { id: 'chatgpt', icon: 'message-square', title: 'ChatGPT', description: 'Tune answers for ChatGPT workflows.' },
-  { id: 'gemini', icon: 'sparkles', title: 'Gemini', description: 'Keep Google AI context in mind.' },
-  { id: 'copilot', icon: 'bot', title: 'Copilot', description: 'Track IDE assistant work.' },
+  { id: 'codex', icon: 'cpu', title: 'Codex CLI', description: 'Capture Codex CLI turns and context.' },
+  { id: 'copilot', icon: 'bot', title: 'Copilot', description: 'Track IDE assistant work.', comingSoon: true },
+];
+
+// Provider cards for the "provider" step — ported from settings.jsx ST_PROVIDERS.
+const OB_PROVIDERS = [
+  { id: 'codex', icon: 'terminal', label: 'Codex subscription', hint: 'Uses your Codex CLI login. No API key.', install: 'npm i -g @openai/codex   # then: codex login' },
+  { id: 'claude', icon: 'sparkles', label: 'Claude subscription', hint: 'Uses your Claude Code CLI login. No API key.', install: 'npm i -g @anthropic-ai/claude-code   # then: claude (sign in)' },
+  { id: 'byok', icon: 'key', label: 'Bring your own key', hint: 'Any OpenAI-compatible key (Together default).', install: 'set LORE_LLM_API_KEY=...   (optionally LORE_LLM_BASE_URL / LORE_LLM_MODEL)' },
+];
+
+const OB_TEAM_CHOICES = [
+  { id: 'personal', icon: 'user', title: 'Personal', description: 'Just for you — no sign-in needed.' },
+  { id: 'create', icon: 'users', title: 'Create a team', description: 'Start a shared library for your team.' },
+  { id: 'join', icon: 'user-plus', title: 'Join a team', description: 'Connect to a team that already exists.' },
 ];
 
 const OB_APP_CHOICES = [
@@ -29,10 +41,11 @@ const OB_APP_CHOICES = [
 ];
 
 const OB_STEPS = [
-  { id: 'account', eyebrow: 'Optional', title: 'How do you want to start?', next: 'Create a library' },
   { id: 'vault', eyebrow: 'Library', title: 'Where should Lore keep your library?', next: 'Tell Lore the purpose' },
   { id: 'purpose', eyebrow: 'Purpose', title: 'What is this library for?', next: 'Choose AIs' },
-  { id: 'ai', eyebrow: 'AI', title: 'Which AIs should Lore connect to?', next: 'Import apps and files' },
+  { id: 'ai', eyebrow: 'AI', title: 'Which AIs should Lore connect to?', next: 'Pick an AI provider' },
+  { id: 'provider', eyebrow: 'Provider', title: 'How should Lore power enrichment?', next: 'Set up your team' },
+  { id: 'team', eyebrow: 'Team', title: 'Who is this library for?', next: 'Import apps and files' },
   { id: 'sources', eyebrow: 'Sources', title: 'What should Lore import first?', next: null },
 ];
 
@@ -199,6 +212,13 @@ function OB_Onboarding({ onDone }) {
   const [purpose, setPurpose] = React.useState('');
   const [selectedAI, setSelectedAI] = React.useState([]);
   const [backfillClaude, setBackfillClaude] = React.useState(false);
+  const [llmProvider, setLlmProvider] = React.useState(null);
+  const [providers, setProviders] = React.useState(null);
+  const [teamIntent, setTeamIntent] = React.useState('personal');
+  const [teamName, setTeamName] = React.useState('');
+  const [teamEmail, setTeamEmail] = React.useState('');
+  const [teamAuthBusy, setTeamAuthBusy] = React.useState(false);
+  const [teamAuthError, setTeamAuthError] = React.useState('');
   const [selectedApps, setSelectedApps] = React.useState([]);
   const [pendingImportPaths, setPendingImportPaths] = React.useState([]);
   const [dragging, setDragging] = React.useState(false);
@@ -213,6 +233,34 @@ function OB_Onboarding({ onDone }) {
 
   const toggleListValue = (setter, value) => {
     setter((items) => items.includes(value) ? items.filter((x) => x !== value) : [...items, value]);
+  };
+
+  React.useEffect(() => {
+    if (window.lore?.enrich?.providers) {
+      window.lore.enrich.providers().then((p) => setProviders(p || null)).catch(() => {});
+    }
+  }, []);
+
+  const classifyAuthReason = (reason) => {
+    const r = String(reason || '').toLowerCase();
+    if (!r) return 'Sign-in failed.';
+    if (r.includes('enoent') || r.includes('no such file') || r.includes('google_oauth_client') || r.includes('unavailable')) return 'unavailable';
+    if (r.includes('econnrefused') || r.includes('fetch failed') || r.includes('network') || r.includes('backend')) return 'backend-starting';
+    return reason;
+  };
+
+  const teamSignIn = async () => {
+    setTeamAuthError('');
+    if (!window.lore?.auth?.login) { setTeamAuthError('unavailable'); return; }
+    setTeamAuthBusy(true);
+    try {
+      const r = await window.lore.auth.login();
+      if (r && r.ok) { setTeamEmail(r.email || ''); setTeamAuthError(''); }
+      else setTeamAuthError(classifyAuthReason(r && r.reason));
+    } catch (e) {
+      setTeamAuthError(classifyAuthReason((e && e.message) || e));
+    }
+    setTeamAuthBusy(false);
   };
 
   const openExistingVault = async () => {
@@ -305,7 +353,13 @@ function OB_Onboarding({ onDone }) {
       preferredAIProviders: selectedAI.slice(),
       backfillClaudePrompts: backfillClaude,
       connectedApps: selectedApps.slice(),
-      setupVersion: 5,
+      llmProvider: llmProvider,
+      team: {
+        intent: teamIntent,
+        ...(teamIntent !== 'personal' && teamName.trim() ? { name: teamName.trim() } : {}),
+        ...(teamEmail ? { email: teamEmail } : {}),
+      },
+      setupVersion: 6,
       onboardedAt: new Date().toISOString(),
     };
   };
@@ -371,7 +425,7 @@ function OB_Onboarding({ onDone }) {
       owner: null,
       tenant: null,
       sync: false,
-      setupVersion: 5,
+      setupVersion: 6,
       skippedSetupAt: new Date().toISOString(),
     };
     if (window.lore?.config?.set) { try { await window.lore.config.set(cfg); } catch { /* non-fatal */ } }
@@ -381,15 +435,23 @@ function OB_Onboarding({ onDone }) {
 
   const handleFinish = async () => {
     setError('');
-    if (!vaultPath) { setStepIndex(1); setError('Choose a library folder to continue.'); return; }
-    if (!purpose) { setStepIndex(2); setError('Choose what this library is for.'); return; }
+    if (!vaultPath) { setStepIndex(0); setError('Choose a library folder to continue.'); return; }
+    if (!purpose) { setStepIndex(1); setError('Choose what this library is for.'); return; }
 
     setSaving(true);
     const cfg = buildCfg();
     if (window.lore?.config?.set) { try { await window.lore.config.set(cfg); } catch { /* non-fatal */ } }
 
-    if (backfillClaude && selectedAI.includes('claude') && window.lore?.hooks?.install) {
-      try { await window.lore.hooks.install({ tool: 'claude', scope: cfg.scope }); } catch { /* non-fatal */ }
+    // Every selected capture-target tool gets its hooks + MCP entry installed on finish.
+    // The backfill toggle no longer gates this — it only drives the promptHistory scan below.
+    const installTargets = selectedAI.filter((id) => id === 'claude' || id === 'codex');
+    for (const tool of installTargets) {
+      if (window.lore?.hooks?.install) {
+        try { await window.lore.hooks.install({ tool, scope: cfg.scope, tenant: cfg.tenant }); } catch { /* non-fatal */ }
+      }
+      if (window.lore?.mcp?.install) {
+        try { await window.lore.mcp.install(tool); } catch { /* non-fatal */ }
+      }
     }
 
     if (pendingImportPaths.length && window.lore?.importFiles) {
@@ -404,36 +466,6 @@ function OB_Onboarding({ onDone }) {
   };
 
   const renderStep = () => {
-    if (step.id === 'account') {
-      return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-          <div style={{ minHeight: 240, display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 220px', gap: 16, padding: 20, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', background: 'var(--surface-inset)' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 14 }}>
-              <span style={{ width: 54, height: 54, borderRadius: 'var(--radius-md)', background: 'var(--brand-bg)', color: 'var(--text-onbrand)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                <OB_Icon name="laptop" size={25} />
-              </span>
-              <div>
-                <div style={{ fontFamily: 'var(--font-serif)', fontSize: 24, color: 'var(--text-strong)', fontWeight: 700, lineHeight: 1.15 }}>No account required.</div>
-                <div style={{ marginTop: 8, maxWidth: 460, fontSize: 14, color: 'var(--text-subtle)', lineHeight: 1.55 }}>Lore starts local on this Mac. You can sign up or log in later from Settings if you want sync, sharing, or account features.</div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: 10 }}>
-              {[
-                ['check', 'No password now'],
-                ['folder-open', 'Create a library next'],
-                ['settings', 'Account later'],
-              ].map(([icon, label]) => (
-                <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '10px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-raised)', color: 'var(--text-muted)', fontSize: 12.5, fontWeight: 700 }}>
-                  <OB_Icon name={icon} size={14} style={{ color: 'var(--brand-fg)' }} />
-                  {label}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     if (step.id === 'vault') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -512,17 +544,26 @@ function OB_Onboarding({ onDone }) {
     if (step.id === 'ai') {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
             {OB_AI_CHOICES.map((item) => (
               <OB_Choice
                 key={item.id}
-                selected={selectedAI.includes(item.id)}
+                selected={!item.comingSoon && selectedAI.includes(item.id)}
                 icon={item.icon}
                 title={item.title}
                 description={item.description}
-                onClick={() => toggleListValue(setSelectedAI, item.id)}
-              />
+                disabled={item.comingSoon}
+                onClick={item.comingSoon ? undefined : () => toggleListValue(setSelectedAI, item.id)}
+              >
+                {item.comingSoon && (
+                  <span style={{ display: 'inline-block', marginTop: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-faint)', background: 'var(--surface-raised)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}>Coming soon</span>
+                )}
+              </OB_Choice>
             ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-subtle)' }}>
+            <OB_Icon name="info" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} />
+            <span>Selecting a tool installs its Lore capture hooks and MCP entry when you finish setup.</span>
           </div>
           <button
             type="button"
@@ -550,7 +591,7 @@ function OB_Onboarding({ onDone }) {
             </span>
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: 'block', fontSize: 14, fontWeight: 800, color: 'var(--text-strong)' }}>Backfill Claude prompts</span>
-              <span style={{ display: 'block', marginTop: 3, fontSize: 12.5, color: 'var(--text-subtle)' }}>Import prior Claude Code prompt history into this library.</span>
+              <span style={{ display: 'block', marginTop: 3, fontSize: 12.5, color: 'var(--text-subtle)' }}>Import prior Claude Code prompt history into this library. Capture hooks install separately, above.</span>
             </span>
             <span style={{ width: 38, height: 22, borderRadius: 'var(--radius-full)', background: backfillClaude ? 'var(--brand-bg)' : 'var(--surface-raised)', border: '1px solid var(--border-strong)', position: 'relative', flexShrink: 0 }}>
               <span style={{ position: 'absolute', top: 2, left: backfillClaude ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: backfillClaude ? 'var(--text-onbrand)' : 'var(--text-faint)', transition: 'left 150ms var(--ease-out)' }} />
@@ -559,7 +600,104 @@ function OB_Onboarding({ onDone }) {
           {backfillClaude && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)', fontSize: 12, color: 'var(--text-subtle)' }}>
               <OB_Icon name="info" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} />
-              <span>Claude Code capture + prompt backfill will be set up when you finish.</span>
+              <span>Prompt history will be scanned and imported when you finish.</span>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (step.id === 'provider') {
+      const selectedProvider = OB_PROVIDERS.find((p) => p.id === llmProvider) || null;
+      const selectedAvail = selectedProvider ? (providers ? !!providers[selectedProvider.id] : null) : null;
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+            {OB_PROVIDERS.map((p) => {
+              const avail = providers ? !!providers[p.id] : null;
+              return (
+                <OB_Choice
+                  key={p.id}
+                  selected={llmProvider === p.id}
+                  icon={p.icon}
+                  title={p.label}
+                  description={p.hint}
+                  onClick={() => { setLlmProvider(p.id); setError(''); }}
+                >
+                  <span style={{ display: 'inline-block', marginTop: 6, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: avail ? 'var(--brand-fg)' : 'var(--text-faint)', background: avail ? 'var(--brand-soft-bg)' : 'var(--surface-raised)', border: `1px solid ${avail ? 'var(--brand-soft-border)' : 'var(--border)'}`, borderRadius: 'var(--radius-sm)', padding: '2px 6px' }}>
+                    {avail === null ? 'Checking…' : avail ? 'Detected' : 'Not found'}
+                  </span>
+                </OB_Choice>
+              );
+            })}
+            <OB_Choice
+              selected={llmProvider === null}
+              icon="skip-forward"
+              title="Skip — connect later"
+              description="Choose a provider anytime from Settings."
+              onClick={() => { setLlmProvider(null); setError(''); }}
+            />
+          </div>
+          {selectedProvider && selectedAvail === false && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '10px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-subtle)' }}>
+              <span>{selectedProvider.label} isn’t set up yet. Install / sign in:</span>
+              <pre style={{ margin: 0, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'pre-wrap' }}>{selectedProvider.install}</pre>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (step.id === 'team') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
+            {OB_TEAM_CHOICES.map((item) => (
+              <OB_Choice
+                key={item.id}
+                selected={teamIntent === item.id}
+                icon={item.icon}
+                title={item.title}
+                description={item.description}
+                onClick={() => { setTeamIntent(item.id); setError(''); setTeamAuthError(''); }}
+              />
+            ))}
+          </div>
+          {teamIntent !== 'personal' && (
+            <div style={{ minHeight: 120, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', background: 'var(--surface-inset)', padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <OB_Input
+                id="ob-team-name"
+                label={teamIntent === 'create' ? 'Team name' : 'Team name or invite code'}
+                value={teamName}
+                onChange={(v) => setTeamName(v)}
+                placeholder={teamIntent === 'create' ? 'Acme Corp' : 'Team name'}
+                autoComplete="off"
+              />
+              {teamEmail ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 12px', border: '1px solid var(--brand-soft-border)', borderRadius: 'var(--radius-md)', background: 'var(--brand-soft-bg)' }}>
+                  <OB_Icon name="check-circle-2" size={16} style={{ color: 'var(--brand-fg)' }} />
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--brand-fg)' }}>{teamEmail}</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Team sync is coming — your intent is saved.</span>
+                </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <OB_Button variant="secondary" icon="log-in" disabled={teamAuthBusy} onClick={teamSignIn}>
+                    {teamAuthBusy ? 'Opening browser...' : 'Sign in with Google'}
+                  </OB_Button>
+                  {teamAuthError === 'unavailable' && (
+                    <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Sign-in unavailable in this build — skip for now.</span>
+                  )}
+                  {teamAuthError === 'backend-starting' && (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-subtle)' }}>
+                      backend starting…
+                      <OB_Button variant="ghost" icon="refresh-cw" disabled={teamAuthBusy} onClick={teamSignIn}>Retry</OB_Button>
+                    </span>
+                  )}
+                  {teamAuthError && teamAuthError !== 'unavailable' && teamAuthError !== 'backend-starting' && (
+                    <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>{teamAuthError}</span>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -601,10 +739,11 @@ function OB_Onboarding({ onDone }) {
   };
 
   const supportText = {
-    account: 'You can skip account setup. Lore works locally first.',
     vault: 'This is the one local folder Lore will organize.',
     purpose: 'Purpose helps Lore pick the right default scope.',
     ai: 'This is optional. You can connect more AIs later.',
+    provider: 'Pick how Lore infers relationships in your graph. You can change this later in Settings.',
+    team: 'Personal keeps everything local. Create or join a team to prepare for shared sync.',
     sources: 'Imports are optional. Drop files now or start clean.',
   }[step.id];
 

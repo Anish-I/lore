@@ -590,7 +590,7 @@ function App() {
         try { if (await loadTree(root)) { loadedRoot = true; break; } } catch { /* try next */ }
       }
       if (window.lore.onVaultChanged) window.lore.onVaultChanged(() => { if (treeData) loadTree(treeData.root); });
-      const needsSetupRefresh = !existingCfg || Number(existingCfg.setupVersion || 0) < 5;
+      const needsSetupRefresh = !existingCfg || Number(existingCfg.setupVersion || 0) < 6;
       if (needsSetupRefresh || !loadedRoot) setShowOnboarding(true);
     })();
     const onKey = (e) => {
