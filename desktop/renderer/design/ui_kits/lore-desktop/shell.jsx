@@ -145,18 +145,25 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
 
 // VS Code-style file tree row — replaces FileTreeItem for tighter, denser layout.
 const TREE_INDENT = 12; // px per depth level
-function TreeNode({ node, activeNote, onOpen, onToggle }) {
+function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMenu, onRenameCommit, onRenameCancel }) {
   const [hover, setHover] = React.useState(false);
   const isFolder = node.kind === 'folder';
   const isActive = node.kind === 'note' && node.id === activeNote;
   const depth = node.depth || 0;
+  const isRenaming = renamingId === node.id;
+  const [renameValue, setRenameValue] = React.useState(node.name);
+  const commitGuard = React.useRef(false);
+  React.useEffect(() => {
+    if (isRenaming) { setRenameValue(node.name); commitGuard.current = false; }
+  }, [isRenaming, node.name]);
 
   return (
     <React.Fragment>
       <div
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}
-        onClick={() => isFolder ? onToggle(node.id) : onOpen(node.id)}
+        onClick={() => { if (isRenaming) return; isFolder ? onToggle(node.id) : onOpen(node.id); }}
+        onContextMenu={(ev) => { ev.preventDefault(); ev.stopPropagation(); if (onContextMenu) onContextMenu(node); }}
         style={{
           position: 'relative',
           display: 'flex',
@@ -203,33 +210,62 @@ function TreeNode({ node, activeNote, onOpen, onToggle }) {
             flexShrink: 0,
           }}
         />
-        {/* Label */}
-        <span style={{
-          flex: 1,
-          fontSize: 12.5,
-          lineHeight: 1,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          color: isActive ? 'var(--text-strong)' : 'var(--text-body)',
-          fontWeight: isActive ? 600 : 400,
-          letterSpacing: '0.01em',
-        }}>
-          {node.name}
-        </span>
+        {/* Label — becomes an inline editable input while renaming (VS Code style) */}
+        {isRenaming ? (
+          <input
+            autoFocus
+            value={renameValue}
+            onClick={(ev) => ev.stopPropagation()}
+            onChange={(ev) => setRenameValue(ev.target.value)}
+            onKeyDown={(ev) => {
+              if (ev.key === 'Enter') { ev.preventDefault(); commitGuard.current = true; onRenameCommit(node, renameValue); }
+              else if (ev.key === 'Escape') { ev.preventDefault(); commitGuard.current = true; onRenameCancel(node); }
+            }}
+            onBlur={() => { if (!commitGuard.current) onRenameCommit(node, renameValue); }}
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 12.5,
+              lineHeight: 1,
+              color: 'var(--text-strong)',
+              fontFamily: 'inherit',
+              letterSpacing: '0.01em',
+              background: 'var(--surface-inset)',
+              border: '1px solid var(--brand-fg)',
+              borderRadius: 3,
+              padding: '1px 4px',
+              outline: 'none',
+            }}
+          />
+        ) : (
+          <span style={{
+            flex: 1,
+            fontSize: 12.5,
+            lineHeight: 1,
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            color: isActive ? 'var(--text-strong)' : 'var(--text-body)',
+            fontWeight: isActive ? 600 : 400,
+            letterSpacing: '0.01em',
+          }}>
+            {node.name}
+          </span>
+        )}
         {/* Right-side indicators: scope icons */}
         {node.scope === 'private' && <Icon name="lock" size={10} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />}
         {node.scope === 'team' && <Icon name="users" size={10} style={{ color: 'var(--scope-team-fg)', flexShrink: 0 }} />}
         {node.scope === 'enterprise' && <Icon name="building-2" size={10} style={{ color: 'var(--scope-ent-fg)', flexShrink: 0 }} />}
       </div>
       {isFolder && node.open && node.children && node.children.map((c) => (
-        <TreeNode key={c.id} node={c} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle} />
+        <TreeNode key={c.id} node={c} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}
+          renamingId={renamingId} onContextMenu={onContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
       ))}
     </React.Fragment>
   );
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote }) {
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
 
   // "Add group" inline form state — hooks must run before any early return.
@@ -344,7 +380,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
         {tree.map((n) => (
-          <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle} />
+          <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}
+            renamingId={renamingId} onContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
         ))}
       </div>
       <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', flexDirection: 'column', gap: 7 }}>

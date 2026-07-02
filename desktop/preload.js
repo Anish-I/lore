@@ -13,6 +13,19 @@ contextBridge.exposeInMainWorld('lore', {
   writeNote:      (path, text) => ipcRenderer.invoke('note:write', { path, text }),
   onVaultChanged: (cb)         => ipcRenderer.on('vault:changed', (_e, payload) => cb(payload)),
 
+  // --- sidebar context menu (native, main-process) ---
+  // treeContextMenu(id, kind, root) → pops a native right-click menu for a note/folder row.
+  //   Pure-fs actions (new note/folder, duplicate, copy, trash) run in main; actions that need
+  //   renderer state (open a tab, start an inline rename) arrive via onTreeAction(cb).
+  // treeRename(oldPath, newName, kind) → commits an inline rename; resolves {ok, newPath?, reason?}.
+  treeContextMenu: (id, kind, root)        => ipcRenderer.invoke('tree:context-menu', { id, kind, root }),
+  treeRename:      (oldPath, newName, kind) => ipcRenderer.invoke('tree:rename', { oldPath, newName, kind }),
+  onTreeAction: (cb) => {
+    const handler = (_e, payload) => cb(payload);
+    ipcRenderer.on('tree:action', handler);
+    return () => ipcRenderer.removeListener('tree:action', handler);
+  },
+
   // --- config (persisted to userData/lore-config.json) ---
   config: {
     // Returns the full config object, or null on first run.

@@ -20,6 +20,18 @@ function flatten(tree, acc = []) {
 }
 function firstNote(tree) { return flatten(tree)[0] || null; }
 
+// Forces open every folder that is an ancestor of (or equal to) targetId, so a
+// freshly created/renamed item is guaranteed visible after a tree reload.
+function forceOpenAncestors(tree, targetId) {
+  return tree.map((n) => {
+    if (n.kind !== 'folder') return n;
+    const sep = n.id.includes('/') ? '/' : '\\';
+    const isAncestor = targetId === n.id || targetId.startsWith(n.id.replace(/[\\/]+$/, '') + sep);
+    const children = n.children ? forceOpenAncestors(n.children, targetId) : n.children;
+    return isAncestor ? { ...n, open: true, children } : { ...n, children };
+  });
+}
+
 function cleanScope(scope) {
   return scope == null ? '' : String(scope).trim();
 }
@@ -251,6 +263,7 @@ function App() {
   const [graphNonce, setGraphNonce] = React.useState(0);
   const [kbFilter, setKbFilter] = React.useState([]);   // selected knowledge bases (top-level folders); [] = all
   const [showImportModal, setShowImportModal] = React.useState(false);
+  const [renamingId, setRenamingId] = React.useState(null); // sidebar node currently showing an inline rename input
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
   const timer = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
@@ -403,6 +416,91 @@ function App() {
     if (f) openNote(f.id);
     return true;
   }, [openNote]);
+
+  // Right-click on a sidebar row: hand off to the native Electron context menu (main process).
+  const onTreeContextMenu = React.useCallback((node) => {
+    if (!window.lore?.treeContextMenu || !treeData) return;
+    window.lore.treeContextMenu(node.id, node.kind, treeData.root);
+  }, [treeData]);
+
+  // Closes a note wherever it's open (tab + active editor), used when the note is
+  // trashed out from under the editor so the UI never points at a dead path.
+  const closeNoteEverywhere = React.useCallback((id) => {
+    setTabs((ts) => {
+      const idx = ts.findIndex((t) => t.id === id);
+      if (idx === -1) return ts;
+      const next = ts.filter((t) => t.id !== id);
+      if (id === activeId) {
+        const n = next[Math.max(0, idx - 1)] || next[0] || null;
+        setActiveId(n ? n.id : null);
+        if (n && n.kind === 'note') loadNote(n.id);
+      }
+      return next;
+    });
+    setNotes((m) => { if (!(id in m)) return m; const c = { ...m }; delete c[id]; return c; });
+    setDrafts((m) => { if (!(id in m)) return m; const c = { ...m }; delete c[id]; return c; });
+  }, [activeId, loadNote]);
+
+  const onRenameCancel = React.useCallback(() => setRenamingId(null), []);
+
+  // Commits an inline rename (Enter or blur). Remaps any open tabs / loaded note state
+  // from the old path to the new one so a rename of the active note never leaves a
+  // stale/broken reference — folders remap every descendant note under the old prefix too.
+  const onRenameCommit = React.useCallback(async (node, newName) => {
+    const trimmed = (newName || '').trim();
+    setRenamingId(null);
+    if (!trimmed || trimmed === node.name) return;
+    if (!window.lore?.treeRename) return;
+    let res;
+    try { res = await window.lore.treeRename(node.id, trimmed, node.kind); } catch { res = null; }
+    if (!res || res.ok === false) { if (treeData) loadTree(treeData.root); return; }
+    const oldId = node.id, newPath = res.newPath;
+    if (newPath !== oldId) {
+      const remap = (id) => {
+        if (node.kind === 'note') return id === oldId ? newPath : id;
+        if (id === oldId) return newPath;
+        const sep = id.includes('/') ? '/' : '\\';
+        const oldPrefix = oldId.replace(/[\\/]+$/, '') + sep;
+        return id.startsWith(oldPrefix) ? newPath + sep + id.slice(oldPrefix.length) : id;
+      };
+      setTabs((ts) => ts.map((t) => t.kind === 'note' ? { ...t, id: remap(t.id) } : t));
+      setNotes((m) => { const c = {}; for (const k of Object.keys(m)) c[remap(k)] = { ...m[k], id: remap(k) }; return c; });
+      setDrafts((m) => { const c = {}; for (const k of Object.keys(m)) c[remap(k)] = m[k]; return c; });
+      setActiveId((a) => (a ? remap(a) : a));
+    }
+    if (treeData) await loadTree(treeData.root);
+  }, [treeData, loadTree]);
+
+  // Handles events pushed from main after a context-menu action: opening a note,
+  // starting an inline rename (both for existing items and freshly-created ones),
+  // and cleaning up after a trash.
+  React.useEffect(() => {
+    if (!window.lore?.onTreeAction) return;
+    const unsub = window.lore.onTreeAction(async (payload) => {
+      const { action, id, kind } = payload || {};
+      if (action === 'open') { openNote(id); return; }
+      if (action === 'rename-start') {
+        if (treeData) await loadTree(treeData.root);
+        setTreeData((td) => td ? { ...td, tree: forceOpenAncestors(td.tree, id) } : td);
+        setRenamingId(id);
+        return;
+      }
+      if (action === 'trashed') {
+        if (kind === 'folder') {
+          const sep = id.includes('/') ? '/' : '\\';
+          const prefix = id.replace(/[\\/]+$/, '') + sep;
+          tabs.filter((t) => t.kind === 'note' && (t.id === id || t.id.startsWith(prefix))).forEach((t) => closeNoteEverywhere(t.id));
+        } else {
+          closeNoteEverywhere(id);
+        }
+        if (treeData) await loadTree(treeData.root);
+        setRenamingId((r) => (r === id ? null : r));
+        return;
+      }
+      // 'trash-failed' — fail soft, nothing to reconcile client-side.
+    });
+    return unsub;
+  }, [treeData, tabs, openNote, loadTree, closeNoteEverywhere]);
 
   React.useEffect(() => {
     (async () => {
@@ -710,7 +808,8 @@ function App() {
         {view === 'workspace' && (
           <React.Fragment>
             <Sidebar tree={shownTree} activeNote={activeId} workspace={workspace} onOpen={onNodeClick} onToggle={(id) => setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) }))}
-              bases={bases} baseScopes={baseScopes} kbFilter={kbFilter} onToggleBase={toggleBase} onClearBases={() => setKbFilter([])} wizard={activeBucket} onCreateNote={onCreateNote} />
+              bases={bases} baseScopes={baseScopes} kbFilter={kbFilter} onToggleBase={toggleBase} onClearBases={() => setKbFilter([])} wizard={activeBucket} onCreateNote={onCreateNote}
+              renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
             <PaneResizer side="sidebar" />
             {activeBucket
               ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onOpen={() => setAskOpen(true)} />

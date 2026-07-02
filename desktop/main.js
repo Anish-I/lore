@@ -1,7 +1,7 @@
 // Lore desktop — Electron main process.
 // Owns the OS: file explorer (fs), spawns the Python `lore` retrieval backend,
 // and serves IPC for the renderer's window.lore bridge.
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, clipboard } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -343,6 +343,135 @@ ipcMain.handle('note:write', (_e, { path: p, text }) => {
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };
+  }
+});
+
+// ---------- IPC: tree context menu (VS Code-style right-click on sidebar) ----------
+// Pure-fs actions (create/duplicate/copy/trash) run here; actions needing renderer
+// state (open a tab, start an inline rename) go out over 'tree:action'.
+function sendTreeAction(payload) {
+  if (win && !win.isDestroyed()) win.webContents.send('tree:action', payload);
+}
+
+function sanitizeFileName(name) {
+  return String(name || '').replace(/[\/\\:\x00-\x1F]/g, '').trim();
+}
+
+// Returns a non-colliding "<dir>/<base>[ N]<ext>" path, e.g. Untitled.md, Untitled 2.md, …
+function uniqueSiblingPath(dir, base, ext) {
+  let candidate = path.join(dir, base + ext);
+  if (!fs.existsSync(candidate)) return candidate;
+  for (let i = 2; i < 1000; i++) {
+    candidate = path.join(dir, `${base} ${i}${ext}`);
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+  return path.join(dir, `${base} ${Date.now()}${ext}`);
+}
+
+function ctxNewNote(dir) {
+  try {
+    pathGuard(dir);
+    const cfg = loadConfig() || {};
+    const p = uniqueSiblingPath(dir, 'Untitled', '.md');
+    fs.writeFileSync(p, `---\nscope: ${cfg.scope || ''}\n---\n`, 'utf8');
+    sendTreeAction({ action: 'rename-start', id: p, kind: 'note' });
+  } catch { /* fail soft */ }
+}
+
+function ctxNewFolder(dir) {
+  try {
+    pathGuard(dir);
+    const p = uniqueSiblingPath(dir, 'Untitled', '');
+    fs.mkdirSync(p);
+    sendTreeAction({ action: 'rename-start', id: p, kind: 'folder' });
+  } catch { /* fail soft */ }
+}
+
+function ctxDuplicateNote(notePath) {
+  try {
+    pathGuard(notePath);
+    const dir = path.dirname(notePath);
+    const base = path.basename(notePath, '.md');
+    const p = uniqueSiblingPath(dir, `${base} copy`, '.md');
+    fs.copyFileSync(notePath, p);
+    sendTreeAction({ action: 'rename-start', id: p, kind: 'note' });
+  } catch { /* fail soft */ }
+}
+
+function ctxTrash(p, kind) {
+  shell.trashItem(p)
+    .then(() => sendTreeAction({ action: 'trashed', id: p, kind }))
+    .catch((e) => sendTreeAction({ action: 'trash-failed', id: p, kind, reason: String((e && e.message) || e) }));
+}
+
+function ctxReindex(notePath) {
+  const cfg = loadConfig() || {};
+  fetch(`${BACKEND_URL}/reindex`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: notePath, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }),
+  }).catch(() => { /* fail soft — backend may be down */ });
+}
+
+ipcMain.handle('tree:context-menu', (_e, args) => {
+  try {
+    const { id, kind, root } = args || {};
+    if (!id || (kind !== 'note' && kind !== 'folder')) return { ok: false, reason: 'Missing id/kind' };
+    const isNote = kind === 'note';
+    const dir = isNote ? path.dirname(id) : id;
+    const relRoot = root || '';
+    const relPath = relRoot ? path.relative(relRoot, id) : id;
+    const noteName = isNote ? path.basename(id, '.md') : path.basename(id);
+    const template = isNote ? [
+      { label: 'Open', click: () => sendTreeAction({ action: 'open', id }) },
+      { label: 'Reveal in Finder', click: () => shell.showItemInFolder(id) },
+      { type: 'separator' },
+      { label: 'New Note', click: () => ctxNewNote(dir) },
+      { label: 'Duplicate', click: () => ctxDuplicateNote(id) },
+      { label: 'Rename…', click: () => sendTreeAction({ action: 'rename-start', id, kind: 'note' }) },
+      { type: 'separator' },
+      { label: 'Copy Path', click: () => clipboard.writeText(id) },
+      { label: 'Copy Relative Path', click: () => clipboard.writeText(relPath) },
+      { label: 'Copy Wiki Link', click: () => clipboard.writeText(`[[${noteName}]]`) },
+      { type: 'separator' },
+      { label: 'Re-index Note', click: () => ctxReindex(id) },
+      { type: 'separator' },
+      { label: 'Move to Trash', click: () => ctxTrash(id, 'note') },
+    ] : [
+      { label: 'New Note', click: () => ctxNewNote(dir) },
+      { label: 'New Folder', click: () => ctxNewFolder(dir) },
+      { type: 'separator' },
+      { label: 'Reveal in Finder', click: () => shell.showItemInFolder(id) },
+      { type: 'separator' },
+      { label: 'Copy Path', click: () => clipboard.writeText(id) },
+      { label: 'Copy Relative Path', click: () => clipboard.writeText(relPath) },
+      { label: 'Rename…', click: () => sendTreeAction({ action: 'rename-start', id, kind: 'folder' }) },
+      { type: 'separator' },
+      { label: 'Move to Trash', click: () => ctxTrash(id, 'folder') },
+    ];
+    Menu.buildFromTemplate(template).popup({ window: win });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: String((e && e.message) || e) };
+  }
+});
+
+// Commits an inline rename started via 'rename-start'. newName is the bare display
+// name (no directory, and for notes, no .md suffix — it is added back here).
+ipcMain.handle('tree:rename', (_e, { oldPath, newName, kind }) => {
+  try {
+    pathGuard(oldPath);
+    const clean = sanitizeFileName(newName);
+    if (!clean) return { ok: false, reason: 'Name cannot be empty' };
+    const dir = path.dirname(oldPath);
+    const newPath = kind === 'note' ? path.join(dir, clean.replace(/\.md$/i, '') + '.md') : path.join(dir, clean);
+    if (newPath !== oldPath) {
+      if (fs.existsSync(newPath)) return { ok: false, reason: 'A file or folder with that name already exists' };
+      fs.renameSync(oldPath, newPath);
+    }
+    return { ok: true, newPath };
+  } catch (e) {
+    return { ok: false, reason: String((e && e.message) || e) };
   }
 });
 
