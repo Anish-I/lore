@@ -1,13 +1,14 @@
 {
   "name": "lore-desktop",
   "version": "0.1.0",
-  "description": "Lore — Knowledge OS desktop app (file explorer + cited recall)",
+  "description": "Lore \u2014 Knowledge OS desktop app (file explorer + cited recall)",
   "main": "main.js",
   "author": "Anish Ivaturi",
   "license": "UNLICENSED",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
   },
   "devDependencies": {
     "electron": "^31.3.0",
@@ -50,6 +51,14 @@
     },
     "directories": {
       "output": "dist"
+    },
+    "mac": {
+      "icon": "assets/icon.png",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
     }
   }
 }

@@ -1,7 +1,7 @@
 // Lore desktop — Electron main process.
 // Owns the OS: file explorer (fs), spawns the Python `lore` retrieval backend,
 // and serves IPC for the renderer's window.lore bridge.
-const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -1120,6 +1120,13 @@ async function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  // App icon — in dev (`electron .`) the dock/taskbar shows Electron's default
+  // icon; set ours explicitly. Packaged builds get it from electron-builder config.
+  try {
+    const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
+    if (!icon.isEmpty() && app.dock && app.dock.setIcon) app.dock.setIcon(icon);
+  } catch { /* non-fatal */ }
+
   const cfg = loadConfig();
   if (cfg && cfg.upkeepAuto === true && cfg.tenant) startUpkeepInterval(cfg.tenant);
 

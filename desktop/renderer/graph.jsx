@@ -17,6 +17,19 @@ function grScopeList(nodes) {
   return out.sort((a, b) => a.localeCompare(b));
 }
 function grScopeVar(scope) { return GR_SCOPE_VAR[scope] || '--brand-fg'; }
+
+// Reasoned (LLM/cue-inferred) edge kinds → color + human label. Single source of
+// truth for both the canvas draw and the on-screen legend.
+const GR_EDGE_KINDS = [
+  { kind: 'depends_on',  color: '#5b8def', label: 'depends on' },
+  { kind: 'supersedes',  color: '#a36bd6', label: 'supersedes' },
+  { kind: 'causes',      color: '#e0883a', label: 'causes' },
+  { kind: 'supports',    color: '#3fa85f', label: 'supports' },
+  { kind: 'contradicts', color: '#d6504f', label: 'contradicts' },
+  { kind: 'implements',  color: '#3fa89a', label: 'implements' },
+  { kind: 'relates_to',  color: '#888888', label: 'relates to' },
+];
+const GR_EDGE_COLORS = Object.fromEntries(GR_EDGE_KINDS.map((e) => [e.kind, e.color]));
 // Daily-thread / journal notes named by date — hidden by default so topics dominate the graph.
 const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 
@@ -43,6 +56,18 @@ function GraphView({ graph, onOpen }) {
   const graphSig = React.useMemo(() => {
     const ns = graph.nodes || [];
     return ns.length + '|' + ((graph.edges || []).length) + '|' + ns.map((n) => n.id).join(',');
+  }, [graph]);
+
+  // Which reasoned edge kinds are actually present → the legend only lists relevant
+  // colors (and whether there are any plain structural links).
+  const legend = React.useMemo(() => {
+    const present = new Set();
+    let hasStructural = false;
+    for (const e of (graph.edges || [])) {
+      const k = e[2] || 'link';
+      if (GR_EDGE_COLORS[k]) present.add(k); else hasStructural = true;
+    }
+    return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)), hasStructural };
   }, [graph]);
   const [filters, setFilters] = React.useState({});
   React.useEffect(() => {
@@ -90,11 +115,8 @@ function GraphView({ graph, onOpen }) {
     };
     readPalette();
 
-    // ---- semantic edge kind → color map ----
-    const EDGE_KIND_COLORS = {
-      depends_on: '#5b8def', supersedes: '#a36bd6', causes: '#e0883a',
-      supports: '#3fa85f', contradicts: '#d6504f', implements: '#3fa89a', relates_to: '#888888',
-    };
+    // ---- semantic edge kind → color map (shared with the legend) ----
+    const EDGE_KIND_COLORS = GR_EDGE_COLORS;
     const STRUCTURAL_KINDS = new Set(['link', 'folder', 'tag', 'topic']);
 
     // ---- data (d3 mutates node objects in place) ----
@@ -342,6 +364,24 @@ function GraphView({ graph, onOpen }) {
         <button onClick={fit} title="Fit to view" style={pill(true)}><GrIcon name="maximize" size={12} />fit</button>
         <button onClick={reheat} title="Shake" style={pill(true)}><GrIcon name="sparkles" size={12} />shake</button>
       </div>
+
+      {(legend.kinds.length > 0 || legend.hasStructural) && (
+        <div style={{ position: 'absolute', left: 18, bottom: 18, zIndex: 2, padding: '9px 11px', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', maxWidth: 190 }}>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em', marginBottom: 6 }}>Connection types</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {legend.kinds.map((e) => (
+              <div key={e.kind} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--text-muted)' }}>
+                <span style={{ width: 14, height: 2.5, borderRadius: 2, background: e.color, flexShrink: 0 }} />{e.label}
+              </div>
+            ))}
+            {legend.hasStructural && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--text-faint)' }}>
+                <span style={{ width: 14, height: 2.5, borderRadius: 2, background: 'var(--border-strong)', flexShrink: 0 }} />linked (wiki/tag/folder)
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {selNode && (
         <div style={{ position: 'absolute', right: 18, bottom: 18, width: 240, padding: 14, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 3 }}>
