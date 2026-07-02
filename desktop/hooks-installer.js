@@ -1,6 +1,6 @@
 // Lore desktop — hooks installer (main-process module, required by main.js).
-// Manages lifecycle of the lore-capture.js Claude Code hook:
-//   materialize files → additive-merge settings.json → atomic write.
+// Manages lifecycle of the lore-capture.js (write) and lore-inject.js (read)
+// Claude Code hooks: materialize files → additive-merge settings.json → atomic write.
 // Exported: detectTools, installClaude, uninstallClaude, captureStatus
 'use strict';
 const fs   = require('fs');
@@ -13,10 +13,12 @@ const LORE_DIR    = path.join(os.homedir(), '.lore');
 const HOOKS_DIR   = path.join(LORE_DIR, 'hooks');
 const LIB_DIR     = path.join(LORE_DIR, 'lib');
 const HOOK_SCRIPT = path.join(HOOKS_DIR, 'lore-capture.js');
+const INJECT_SCRIPT = path.join(HOOKS_DIR, 'lore-inject.js');
 const HOOK_REDACT = path.join(LIB_DIR,   'redact.js');
 
 // Source files shipped with the Electron app.
 const CAPTURE_SRC = path.join(__dirname, 'assets', 'lore-capture.js');
+const INJECT_SRC  = path.join(__dirname, 'assets', 'lore-inject.js');
 const REDACT_SRC  = path.join(__dirname, 'lib',    'redact.js');
 
 const BACKEND_URL = 'http://localhost:8099';
@@ -94,18 +96,21 @@ function detectTools() {
 
 // Returns true when a hook entry was written by Lore.
 function isLoreEntry(h) {
-  return h && (h._lore === true || (typeof h.command === 'string' && h.command.includes('lore-capture.js')));
+  return h && (h._lore === true || (typeof h.command === 'string' &&
+    (h.command.includes('lore-capture.js') || h.command.includes('lore-inject.js'))));
 }
 
-// Copy the hook script and redact.js into ~/.lore/hooks/ and ~/.lore/lib/ respectively.
+// Copy the hook scripts and redact.js into ~/.lore/hooks/ and ~/.lore/lib/ respectively.
 // Must be called BEFORE touching any tool's settings file.
 function materializeHookFiles() {
   fs.mkdirSync(HOOKS_DIR, { recursive: true });
   fs.mkdirSync(LIB_DIR,   { recursive: true });
   fs.copyFileSync(CAPTURE_SRC, HOOK_SCRIPT);
+  fs.copyFileSync(INJECT_SRC,  INJECT_SCRIPT);
   fs.copyFileSync(REDACT_SRC,  HOOK_REDACT);
-  // Make the hook executable on POSIX (no-op on Windows, harmless).
+  // Make the hooks executable on POSIX (no-op on Windows, harmless).
   try { fs.chmodSync(HOOK_SCRIPT, 0o755); } catch {}
+  try { fs.chmodSync(INJECT_SCRIPT, 0o755); } catch {}
 }
 
 // ---------- installClaude ----------
@@ -120,9 +125,17 @@ function materializeHookFiles() {
 //   4. Writes atomically via a temp file + rename.
 //   5. NEVER removes or modifies non-Lore entries (obsidian, gemma4, etc.).
 //
+// Unless `opts.inject === false`, also appends a UserPromptSubmit entry for
+// lore-inject.js (Claude reads FROM Lore) alongside the existing capture entry
+// (Claude writes INTO Lore). Both entries are tagged `_lore:true` and are
+// removed/re-appended together by the idempotent filter above.
+//
 // @param {object} [opts]
+// @param {boolean} [opts.inject=true] - install the lore-inject.js recall hook
 // @returns {{ ok: boolean, reason?: string }}
-function installClaude() {
+function installClaude(opts) {
+  const injectEnabled = !(opts && opts.inject === false);
+
   try {
     materializeHookFiles();
   } catch (e) {
@@ -171,6 +184,17 @@ function installClaude() {
     };
     if (event !== 'Stop') entry.matcher = '';
     settings.hooks[event].push(entry);
+  }
+
+  // Additionally wire the recall hook (Claude reads FROM Lore) into
+  // UserPromptSubmit, alongside the capture entry appended above — unless
+  // the caller explicitly opted out via { inject: false }.
+  if (injectEnabled) {
+    settings.hooks.UserPromptSubmit.push({
+      matcher: '',
+      hooks: [{ type: 'command', command: `node "${INJECT_SCRIPT}"` }],
+      _lore: true,
+    });
   }
 
   // Atomic write: write to a temp file, then rename over the target.
