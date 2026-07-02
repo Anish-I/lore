@@ -140,6 +140,11 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode,
                 style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 180px)', resize: 'none', border: 'none', borderRadius: 0, background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--brand-fg)' }} />
             </div>
           : <div style={edS.col}>
+              {note.tags && note.tags.length > 0 && (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
+                  {note.tags.map((t) => <EdBadge key={t} tone="info">#{t}</EdBadge>)}
+                </div>
+              )}
               {note.body.map((b, i) => <Block key={i} b={b} note={note} onOpen={onOpen} />)}
             </div>}
       </div>
@@ -148,10 +153,16 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode,
 }
 
 // Small free-form (force-directed) "local graph" of a note's connections (center = this note).
+// Nodes are draggable — dragging pins a node to the pointer and reheats the
+// simulation, so the layout physically reacts (push/settle) like the main graph.
 function EdMiniGraph({ connections, onOpen, centerLabel }) {
   const [hover, setHover] = React.useState(null);
   const [, tickRender] = React.useReducer((x) => (x + 1) % 1e9, 0);
   const dataRef = React.useRef({ nodes: [], links: [] });
+  const simRef = React.useRef(null);
+  const svgRef = React.useRef(null);
+  const draggingRef = React.useRef(null);
+  const movedRef = React.useRef(false);
   const W = 120, H = 112, cx = 60, cy = 52;
   const colOf = (k) => k === 'tag' ? 'var(--amber-400)' : k === 'folder' ? 'var(--jade-500)' : 'var(--azure-500)';
   const items = connections.slice(0, 18);
@@ -171,7 +182,8 @@ function EdMiniGraph({ connections, onOpen, centerLabel }) {
       .force('y', d3.forceY(cy).strength(0.05))
       .alpha(1).alphaDecay(0.045);
     sim.on('tick', tickRender);
-    return () => { sim.on('tick', null); sim.stop(); };
+    simRef.current = sim;
+    return () => { sim.on('tick', null); sim.stop(); simRef.current = null; };
   }, [connections]);
 
   const { nodes, links } = dataRef.current;
@@ -181,8 +193,42 @@ function EdMiniGraph({ connections, onOpen, centerLabel }) {
   const self = byId['__self'];
   const hov = hover ? byId[hover] : null;
 
+  // Convert a pointer event's client coords to the SVG's local viewBox space.
+  const toLocal = (clientX, clientY) => {
+    const svg = svgRef.current;
+    if (!svg) return { x: cx, y: cy };
+    const rect = svg.getBoundingClientRect();
+    if (!rect.width || !rect.height) return { x: cx, y: cy };
+    return { x: ((clientX - rect.left) / rect.width) * W, y: ((clientY - rect.top) / rect.height) * H };
+  };
+
+  const startDrag = (n) => (e) => {
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* not supported */ }
+    draggingRef.current = n.nid;
+    movedRef.current = false;
+    if (simRef.current) simRef.current.alphaTarget(0.5).restart();
+    const p = toLocal(e.clientX, e.clientY);
+    n.fx = p.x; n.fy = p.y;
+    tickRender();
+  };
+  const onDrag = (n) => (e) => {
+    if (draggingRef.current !== n.nid) return;
+    movedRef.current = true;
+    const p = toLocal(e.clientX, e.clientY);
+    n.fx = p.x; n.fy = p.y;
+    tickRender();
+  };
+  const endDrag = (n) => (e) => {
+    if (draggingRef.current !== n.nid) return;
+    draggingRef.current = null;
+    n.fx = null; n.fy = null; // release back into the simulation instead of staying pinned
+    if (simRef.current) simRef.current.alphaTarget(0);
+    if (!movedRef.current) onOpen(n.path); // a click, not a drag
+  };
+
   return (
-    <svg viewBox="0 0 120 112" style={{ width: '100%', height: 168, display: 'block' }}>
+    <svg ref={svgRef} viewBox="0 0 120 112" style={{ width: '100%', height: 168, display: 'block', touchAction: 'none' }}>
       {links.map((l, i) => {
         const tid = (l.target && l.target.nid) || l.target;
         const a = self, b = byId[tid];
@@ -195,9 +241,9 @@ function EdMiniGraph({ connections, onOpen, centerLabel }) {
         if (n.x == null) return null;
         const lit = hover === n.nid;
         return <circle key={n.nid} cx={clampX(n.x)} cy={clampY(n.y)} r={lit ? 5.6 : 4} fill={colOf(n.kind)}
-          stroke="var(--surface-panel)" strokeWidth={0.6} opacity={hover && !lit ? 0.4 : 1} style={{ cursor: 'pointer' }}
+          stroke="var(--surface-panel)" strokeWidth={0.6} opacity={hover && !lit ? 0.4 : 1} style={{ cursor: 'grab' }}
           onMouseEnter={() => setHover(n.nid)} onMouseLeave={() => setHover((h) => h === n.nid ? null : h)}
-          onClick={() => onOpen(n.path)} />;
+          onPointerDown={startDrag(n)} onPointerMove={onDrag(n)} onPointerUp={endDrag(n)} onPointerCancel={endDrag(n)} />;
       })}
       {self && self.x != null && <circle cx={clampX(self.x)} cy={clampY(self.y)} r={6.5} fill="var(--brand-fg)" stroke="var(--surface-panel)" strokeWidth={1} />}
       <text x={cx} y={107} textAnchor="middle" style={{ fontFamily: 'var(--font-sans)', fontSize: 6.4, fontWeight: 600, fill: 'var(--text-strong)', pointerEvents: 'none' }}>
@@ -216,7 +262,6 @@ function ContextPane({ note, onAsk, connections, onOpenNote }) {
         <EdTabs value={tab} onChange={setTab} tabs={[
           { value: 'backlinks', label: 'Backlinks', count: conns.length },
           { value: 'outline', label: 'Outline' },
-          { value: 'tags', label: 'Tags', count: note.tags.length },
         ]} />
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
@@ -254,11 +299,6 @@ function ContextPane({ note, onAsk, connections, onOpenNote }) {
         {tab === 'outline' && note.outline.map((h, i) => (
           <div key={i} style={{ padding: '6px 8px', paddingLeft: 8 + (i === 0 ? 0 : 14), fontSize: 13, color: i === 0 ? 'var(--text-strong)' : 'var(--text-muted)', fontWeight: i === 0 ? 600 : 400, cursor: 'pointer' }}>{h}</div>
         ))}
-        {tab === 'tags' && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {note.tags.map((t) => <EdBadge key={t} tone="info">#{t}</EdBadge>)}
-          </div>
-        )}
       </div>
       <div style={{ padding: 12, borderTop: '1px solid var(--divider)' }}>
         <button onClick={onAsk} style={{
