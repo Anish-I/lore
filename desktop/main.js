@@ -9,9 +9,15 @@ const { runScrape } = require('./scraper');
 const installer    = require('./hooks-installer');
 const mcpInstaller = require('./mcp-installer');
 const googleOauth  = require('./lib/google-oauth');
+const runtime      = require('./lib/runtime');
 
-const BACKEND_PORT = 8099;
-const BACKEND_URL = `http://localhost:${BACKEND_PORT}`;
+// Backend URL/port are wiring values, not constants: resolved lazily (env var > cfg
+// field > default) via desktop/lib/runtime.js so a config edit or LORE_PORT/
+// LORE_BACKEND_URL override takes effect without a source change. Functions rather
+// than top-level consts because loadConfig() needs app.getPath('userData'), which is
+// only valid after app is ready (see configPath() below).
+function BACKEND_PORT() { return runtime.backendPort(loadConfig); }
+function BACKEND_URL() { return runtime.backendUrl(loadConfig); }
 const CORE_DIR = path.join(__dirname, '..', 'core');
 const ENV_VAULT_ROOT = process.env.LORE_VAULT || null;
 
@@ -22,15 +28,17 @@ let upkeepInterval = null;
 let embeddedPgStop = null; // set when config.serverMode === true
 
 // ---------- upkeep auto-scheduler ----------
-// Fires a background /upkeep/run every 30 minutes when auto-mode is on.
-const UPKEEP_INTERVAL_MS = 30 * 60 * 1000;
-
+// Fires a background /upkeep/run every cfg.upkeepIntervalMinutes (default 30) when
+// auto-mode is on. Interval length is read at schedule time (not a fixed constant) so
+// a config change takes effect the next time the interval is (re)started.
 function startUpkeepInterval(tenant) {
   if (!tenant) return;
   if (upkeepInterval) { clearInterval(upkeepInterval); upkeepInterval = null; }
+  const cfg = loadConfig() || {};
+  const intervalMs = (cfg.upkeepIntervalMinutes || 30) * 60_000;
   upkeepInterval = setInterval(async () => {
     try {
-      await fetch(`${BACKEND_URL}/upkeep/run`, {
+      await fetch(`${BACKEND_URL()}/upkeep/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tenant }),
@@ -38,7 +46,7 @@ function startUpkeepInterval(tenant) {
       if (win && !win.isDestroyed())
         win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'upkeep complete', errors: 0 });
     } catch { /* backend may not be up; silently skip */ }
-  }, UPKEEP_INTERVAL_MS);
+  }, intervalMs);
 }
 
 function stopUpkeepInterval() {
@@ -93,7 +101,7 @@ function saveConfig(cfg) {
 
 // ---------- backend lifecycle ----------
 async function isBackendUp() {
-  try { const r = await fetch(`${BACKEND_URL}/presets`); return r.ok; } catch { return false; }
+  try { const r = await fetch(`${BACKEND_URL()}/presets`); return r.ok; } catch { return false; }
 }
 
 async function ensureBackend() {
@@ -124,7 +132,7 @@ async function ensureBackend() {
     const qdrantPath = path.join(app.getPath('userData'), 'lore-qdrant');
     try { fs.mkdirSync(qdrantPath, { recursive: true }); } catch { /* ignore */ }
     childEnv.QDRANT_PATH = qdrantPath;
-    childEnv.LORE_PORT = String(BACKEND_PORT); // frozen exe binds this port
+    childEnv.LORE_PORT = String(BACKEND_PORT()); // frozen exe binds this port
     backendProc = spawn(exe, [], {
       env: childEnv,
       stdio: 'ignore',
@@ -134,7 +142,7 @@ async function ensureBackend() {
     // Dev: system Python + uvicorn from the source CORE_DIR (Docker PG / Qdrant).
     if (!fs.existsSync(CORE_DIR)) return 'no-core'; // dev source tree missing
     const py = process.platform === 'win32' ? 'python' : 'python3';
-    backendProc = spawn(py, ['-m', 'uvicorn', 'lore.api:app', '--port', String(BACKEND_PORT)], {
+    backendProc = spawn(py, ['-m', 'uvicorn', 'lore.api:app', '--port', String(BACKEND_PORT())], {
       cwd: CORE_DIR,
       env: childEnv,
       stdio: 'ignore',
@@ -408,7 +416,7 @@ function ctxTrash(p, kind) {
 function ctxReindex(notePath) {
   try { pathGuard(notePath); } catch { return; }
   const cfg = loadConfig() || {};
-  fetch(`${BACKEND_URL}/reindex`, {
+  fetch(`${BACKEND_URL()}/reindex`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ path: notePath, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }),
@@ -623,7 +631,7 @@ ipcMain.handle('auth:login', async () => {
     const clientCfg = loadGoogleClient();
     const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url));
     if (!tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
-    const r = await fetch(`${BACKEND_URL}/auth/google`, {
+    const r = await fetch(`${BACKEND_URL()}/auth/google`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ id_token: tokens.id_token }),
@@ -642,7 +650,7 @@ ipcMain.handle('auth:status', async () => {
   const sess = loadSession();
   if (!sess || !sess.token) return null;
   try {
-    const r = await fetch(`${BACKEND_URL}/auth/me`, { headers: { Authorization: `Bearer ${sess.token}` } });
+    const r = await fetch(`${BACKEND_URL()}/auth/me`, { headers: { Authorization: `Bearer ${sess.token}` } });
     if (!r.ok) return null;
     const me = await r.json();
     return { user_id: me.user_id, email: sess.email, scopes: me.scopes };
@@ -772,7 +780,7 @@ ipcMain.handle('wizards:uninstall', async (_e, id) => {
   if (w && root && cfg.tenant) {
     const dirFwd = path.join(root, 'Wizards', safeName(w.name)).replace(/\\/g, '/');
     try {
-      const fr = await fetch(`${BACKEND_URL}/forget`, {
+      const fr = await fetch(`${BACKEND_URL()}/forget`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tenant: cfg.tenant, path_prefix: dirFwd }),
@@ -849,7 +857,7 @@ ipcMain.handle('notes:get', async (_e, id) => {
     const cfg = loadConfig() || {};
     if (!cfg.tenant) return { error: 'tenant is not configured' };
     const qs = `?tenant=${encodeURIComponent(cfg.tenant)}`;
-    const r = await fetch(`${BACKEND_URL}/notes/${encodeURIComponent(id)}${qs}`);
+    const r = await fetch(`${BACKEND_URL()}/notes/${encodeURIComponent(id)}${qs}`);
     return r.json();
   } catch (e) {
     return { error: String(e) };
@@ -862,7 +870,7 @@ ipcMain.handle('search', async (_e, { query, scopes, k }) => {
   try {
     const cfg = loadConfig() || {};
     if (!cfg.tenant) return { error: 'tenant is not configured' };
-    const r = await fetch(`${BACKEND_URL}/search`, {
+    const r = await fetch(`${BACKEND_URL()}/search`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ query, scopes, k, tenant_id: cfg.tenant }),
@@ -879,7 +887,7 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
   const { tenant, scope } = opts || {};
   if (!tenant) return { error: 'tenant is required' };
   try {
-    const r = await fetch(`${BACKEND_URL}/upkeep/run`, {
+    const r = await fetch(`${BACKEND_URL()}/upkeep/run`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tenant, scope }),
@@ -897,7 +905,7 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
 // ---------- IPC: enrichment LLM providers (codex sub / claude sub / byok) ----------
 ipcMain.handle('enrich:providers', async () => {
   try {
-    const r = await fetch(`${BACKEND_URL}/enrich/providers`);
+    const r = await fetch(`${BACKEND_URL()}/enrich/providers`);
     return await r.json();   // { codex, claude, byok }
   } catch (e) { return { codex: false, claude: false, byok: false, error: String(e) }; }
 });
@@ -906,7 +914,7 @@ ipcMain.handle('enrich:run', async (_e, opts) => {
   const { tenant, limit, provider } = opts || {};
   if (!tenant) return { error: 'tenant is required' };
   try {
-    const r = await fetch(`${BACKEND_URL}/enrich`, {
+    const r = await fetch(`${BACKEND_URL()}/enrich`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ tenant, limit: limit || 8, provider }),
@@ -920,7 +928,7 @@ ipcMain.handle('enrich:run', async (_e, opts) => {
 
 ipcMain.handle('upkeep:status', async () => {
   try {
-    const r = await fetch(`${BACKEND_URL}/upkeep/status`);
+    const r = await fetch(`${BACKEND_URL()}/upkeep/status`);
     return r.json();
   } catch (e) {
     return { error: String(e) };
@@ -947,10 +955,72 @@ ipcMain.handle('graph:get', async (_e, opts) => {
   if (tenant) params.set('tenant', tenant);
   if (scopes) params.set('scopes', Array.isArray(scopes) ? scopes.join(',') : scopes);
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const r = await fetch(`${BACKEND_URL}/graph${qs}`);
+  const r = await fetch(`${BACKEND_URL()}/graph${qs}`);
   if (!r.ok) throw new Error(`backend /graph returned ${r.status}`);
   return r.json();
 });
+
+// ---------- boot-time disk<->index reconcile ----------
+// A store swap (e.g. Postgres -> SQLite) or a fresh machine can leave the on-disk
+// vault far ahead of what's actually indexed, with nothing that ever re-scans
+// automatically. This runs once per app launch, right after the backend becomes
+// reachable, to detect that gap and self-heal with a background re-index.
+//
+// Contract: fire-and-forget. MUST NOT delay window or backend startup, MUST NOT
+// throw (every failure path is caught + logged), and MUST NOT run twice in one
+// process (reconcileStarted guard below).
+const RECONCILE_THRESHOLD_DEFAULT = 10;
+let reconcileStarted = false;
+
+async function reconcileIndex(bootStatus) {
+  if (reconcileStarted) return;
+  // Only reconcile when the backend actually came up — a 'timeout'/'no-core'
+  // result means there is nothing to query and nothing to re-index against.
+  if (bootStatus !== 'already-running' && bootStatus !== 'spawned') return;
+  reconcileStarted = true;
+  try {
+    const cfg = loadConfig();
+    if (!cfg || cfg.autoReconcile === false) return;
+    const roots = Array.isArray(cfg.roots) ? cfg.roots : [];
+    if (!roots.length || !cfg.tenant) return;
+
+    let diskCount = 0;
+    for (const root of roots) diskCount += countNotes(buildTree(root));
+
+    const r = await fetch(`${BACKEND_URL()}/stats?tenant=${encodeURIComponent(cfg.tenant)}`);
+    if (!r.ok) return;
+    const stats = await r.json();
+    const indexedCount = (stats && typeof stats.notes === 'number') ? stats.notes : 0;
+
+    const threshold = cfg.reconcileThreshold || RECONCILE_THRESHOLD_DEFAULT;
+    if (diskCount - indexedCount <= threshold) return; // in sync (or index ahead) — nothing to do
+
+    console.log(`[reconcile] disk=${diskCount} indexed=${indexedCount} (threshold ${threshold}) — starting background re-index`);
+    const summary = await runScrape({
+      roots,
+      excludes:  cfg.excludes,
+      extensions: cfg.extensions,
+      maxFiles:  cfg.maxFiles,
+      maxBytes:  cfg.maxBytes,
+      scope:     cfg.scope,
+      owner:     cfg.owner,
+      tenant:    cfg.tenant,
+      full:      false,
+      promptHistory: false,
+      // Reuse the existing scrape:progress renderer plumbing so the app's progress
+      // banner shows this exactly like a user-initiated scrape.
+      onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
+    });
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('scrape:progress', {
+        phase: 'done', done: summary.files, total: summary.files,
+        current: 'reconcile complete', errors: summary.errors, summary,
+      });
+    }
+  } catch (e) {
+    console.error('[reconcile] error (non-fatal):', e);
+  }
+}
 
 // ---------- window ----------
 async function createWindow() {
@@ -1007,7 +1077,11 @@ app.whenReady().then(async () => {
 
   // Best-effort, non-blocking: the renderer works locally and shows a banner if backend
   // search is unavailable, so startup never blocks the window (origin/master behavior).
-  ensureBackend().catch((e) => console.error('backend startup error', e));
+  // Once the backend resolves, kick off the async disk<->index reconcile in the
+  // background (see reconcileIndex above) — never awaited, never blocks the window.
+  ensureBackend()
+    .then((status) => { reconcileIndex(status).catch((e) => console.error('[reconcile] uncaught', e)); })
+    .catch((e) => console.error('backend startup error', e));
   await createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });

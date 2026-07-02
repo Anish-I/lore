@@ -278,6 +278,32 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
         "edges": [[src, dst, kind, round(weight or 0, 2)] for src, dst, kind, weight in filtered_edges],
     }
 
+@app.get("/stats")
+def stats(tenant: Optional[str] = None):
+    """Cheap per-tenant counts used by the desktop app's boot-time disk<->index
+    reconcile (M1 Task R): compares this against an on-disk note count to detect a
+    stale index (e.g. after a store swap) and trigger a background re-scrape.
+
+    Query params:
+        tenant: tenant_id to count. Returns all-zero counts when omitted — mirrors
+                /graph's "no tenant assumed" behavior; never leaks cross-tenant counts.
+
+    Response: {"notes": n, "chunks": c, "edges": e} — counts only, no content, no scopes.
+    """
+    if not tenant:
+        return {"notes": 0, "chunks": 0, "edges": 0}
+    notes = _conn.execute(
+        "select count(*) from notes where tenant_id=%s", (tenant,)
+    ).fetchone()[0]
+    chunks = _conn.execute(
+        "select count(*) from chunks c join notes n on c.note_id = n.id where n.tenant_id=%s",
+        (tenant,),
+    ).fetchone()[0]
+    edges = _conn.execute(
+        "select count(*) from edges where tenant_id=%s", (tenant,)
+    ).fetchone()[0]
+    return {"notes": notes, "chunks": chunks, "edges": edges}
+
 class CaptureReq(BaseModel):
     session_id: str
     title: str

@@ -30,7 +30,6 @@ const os     = require('os');
 const crypto = require('crypto');
 
 const MODE          = process.argv[2] || 'userprompt';
-const BACKEND       = 'http://localhost:8099';
 const LORE_DIR      = path.join(os.homedir(), '.lore');
 const SESSIONS_DIR  = path.join(LORE_DIR, 'sessions');
 const POST_DEBOUNCE = 20_000; // ms — posttool flush threshold
@@ -132,6 +131,10 @@ async function flush(key, meta, text, cfg) {
   if (!cfg.scope || !cfg.owner || !cfg.tenant) {
     return;
   }
+
+  // Wiring value: env var (LORE_BACKEND_URL) > cfg.backendUrl (already loaded above) >
+  // default. cfg is loadLoreConfig()'s output, so no extra file read needed here.
+  const BACKEND = process.env.LORE_BACKEND_URL || cfg.backendUrl || 'http://localhost:8099';
 
   const ac    = new AbortController();
   const timer = setTimeout(() => ac.abort(), 800);

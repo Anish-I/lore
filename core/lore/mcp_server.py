@@ -21,7 +21,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 
-BASE_URL = "http://localhost:8099"
+BASE_URL = os.environ.get("LORE_BACKEND_URL", "http://localhost:8099")
 _HTTP_TIMEOUT = 15   # seconds; applied to every real API call (not just health check)
 
 _BACKEND_DOWN_MSG = (

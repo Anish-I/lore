@@ -6,6 +6,7 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const runtime = require('./lib/runtime');
 
 // ---------- paths ----------
 
@@ -20,8 +21,6 @@ const HOOK_REDACT = path.join(LIB_DIR,   'redact.js');
 const CAPTURE_SRC = path.join(__dirname, 'assets', 'lore-capture.js');
 const INJECT_SRC  = path.join(__dirname, 'assets', 'lore-inject.js');
 const REDACT_SRC  = path.join(__dirname, 'lib',    'redact.js');
-
-const BACKEND_URL = 'http://localhost:8099';
 
 // Claude Code settings file.
 const CLAUDE_SETTINGS        = path.join(os.homedir(), '.claude', 'settings.json');
@@ -251,7 +250,7 @@ function uninstallClaude() {
 // @returns {Promise<object>}
 async function captureStatus(sessionId) {
   const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
-  const r = await fetch(`${BACKEND_URL}/capture/status${qs}`);
+  const r = await fetch(`${runtime.backendUrl()}/capture/status${qs}`);
   if (!r.ok) throw new Error(`/capture/status returned ${r.status}`);
   return r.json();
 }

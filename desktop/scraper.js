@@ -7,8 +7,13 @@ const path = require('path');
 const crypto = require('crypto');
 const os   = require('os');
 const { looksLikeSecretFile, redactSecrets } = require('./lib/redact');
+const runtime = require('./lib/runtime');
 
-const BACKEND_URL = 'http://localhost:8099';
+// Wiring value, not a constant: env var (LORE_BACKEND_URL) > lore-config.json field
+// (backendUrl) > default. Resolved fresh on every call so a config change or env
+// override takes effect without a source change. No Electron import here — scraper.js
+// must stay requireable from a plain Node context too.
+function BACKEND_URL() { return runtime.backendUrl(); }
 
 // Extensions routed to /reindex in Lite/Standard mode (backend owns frontmatter + chunking).
 // In Full mode ALL text files go to /ingest so redaction is applied before embedding.
@@ -202,7 +207,7 @@ async function ingestPromptHistory({ maxFiles, scope, owner, tenant, onProgress,
       const rel   = path.relative(claudeDir, jsonlPath);
       const title = `Claude Session: ${rel.replace(/\.jsonl$/, '').replace(/[\\\/]+/g, ' / ')}`;
 
-      const r = await postJSON(`${BACKEND_URL}/ingest`, {
+      const r = await postJSON(`${BACKEND_URL()}/ingest`, {
         source_id:    sha1(jsonlPath),
         title,
         text,
@@ -351,7 +356,7 @@ async function runScrape({
           const [redacted, wasRedacted] = redactSecrets(text);
           if (wasRedacted) summary.redacted++;
 
-          const r = await postJSON(`${BACKEND_URL}/ingest`, {
+          const r = await postJSON(`${BACKEND_URL()}/ingest`, {
             source_id:    sha1(filePath),
             title:        path.basename(filePath),
             text:         redacted,
@@ -371,7 +376,7 @@ async function runScrape({
 
         } else if (reindexExts.has(ext)) {
           // Lite/Standard: /reindex for .md/.txt (backend handles frontmatter + chunking).
-          const r = await postJSON(`${BACKEND_URL}/reindex`, {
+          const r = await postJSON(`${BACKEND_URL()}/reindex`, {
             path:      filePath,
             owner_id:  owner,
             scope_id:  scope,
@@ -385,7 +390,7 @@ async function runScrape({
           try { text = fs.readFileSync(filePath, 'utf8'); }
           catch { summary.skipped++; done++; continue; }
 
-          const r = await postJSON(`${BACKEND_URL}/ingest`, {
+          const r = await postJSON(`${BACKEND_URL()}/ingest`, {
             source_id:    sha1(filePath),
             title:        path.basename(filePath),
             text,
@@ -422,7 +427,7 @@ async function runScrape({
 
   // --- Phase: edges (best-effort; backend does incremental edges on ingest) ---
   onProgress({ phase: 'edges', done: summary.files, total: summary.files, current: '', errors: summary.errors });
-  try { await postJSON(`${BACKEND_URL}/graph/rebuild_edges`, {}); }
+  try { await postJSON(`${BACKEND_URL()}/graph/rebuild_edges`, {}); }
   catch { /* optional endpoint — ignore failure */ }
 
   onProgress({ phase: 'done', done: summary.files, total: summary.files, current: '', errors: summary.errors });
