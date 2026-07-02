@@ -3453,9 +3453,12 @@ function SettingsView({
   }, s.account.role), /*#__PURE__*/React.createElement(StButton, {
     variant: "secondary",
     size: "sm"
-  }, "Edit profile")), /*#__PURE__*/React.createElement(Row, {
-    label: "Note scope",
-    hint: "New notes use this permission when configured.",
+  }, "Edit profile"))), /*#__PURE__*/React.createElement(Section, {
+    icon: "lock",
+    title: "Visibility"
+  }, /*#__PURE__*/React.createElement(Row, {
+    label: "Default visibility",
+    hint: "New notes use this visibility when configured.",
     last: true
   }, /*#__PURE__*/React.createElement("div", {
     style: {

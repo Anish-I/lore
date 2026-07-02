@@ -1055,6 +1055,7 @@ async function createWindow() {
     width: 1440, height: 900, minWidth: 1040, minHeight: 640,
     backgroundColor: '#101116', show: false,
     title: 'Lore',
+    icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

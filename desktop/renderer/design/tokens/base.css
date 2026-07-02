@@ -22,6 +22,13 @@ body {
 
 ::selection { background: var(--highlight-bg); color: var(--text-strong); }
 
+/* Native <select> popups paint against Canvas — force readable, theme-matched
+   options so unselected entries aren't near-invisible in the dropdown list. */
+select option, select optgroup {
+  background: var(--surface-raised);
+  color: var(--text-strong);
+}
+
 h1,h2,h3,h4,h5,h6 { margin: 0; font-weight: var(--weight-semibold); color: var(--text-strong); }
 p { margin: 0; }
 a { color: var(--text-link); text-decoration: none; }

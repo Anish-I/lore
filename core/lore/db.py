@@ -14,7 +14,45 @@ except Exception:  # pragma: no cover
 # a threadpool, and SQLite allows only one writer at a time.  Re-entrant so
 # execute() calls inside a held transaction() don't deadlock.
 _SQLITE_WRITE_LOCK = threading.RLock()
-_PLACEHOLDER = re.compile(r"%s")
+
+
+def _translate_placeholders(sql):
+    """Rewrite ``%s`` -> ``?`` only OUTSIDE single/double-quoted string literals,
+    so a literal ``%s`` inside stored text (evidence, note bodies in seed SQL, …)
+    is never mistaken for a bind parameter. Handles doubled-quote escapes
+    (``''`` and ``""``). Returns ``(translated_sql, placeholder_count)`` so the
+    caller can assert the bind-arg count up front instead of getting a confusing
+    off-by-one from sqlite3 at execute time."""
+    out = []
+    i = 0
+    n = len(sql)
+    quote = None
+    count = 0
+    while i < n:
+        ch = sql[i]
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                if i + 1 < n and sql[i + 1] == quote:  # '' or "" escape
+                    out.append(sql[i + 1])
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        if ch == "%" and i + 1 < n and sql[i + 1] == "s":
+            out.append("?")
+            count += 1
+            i += 2
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out), count
 
 
 # core/lore/db.py — parse SQLite `timestamp` columns to tz-aware UTC datetimes
@@ -90,9 +128,12 @@ class _SqliteConn:
         )
 
     def execute(self, sql, params=()):
-        sql = _PLACEHOLDER.sub("?", sql)
+        params = tuple(params)
+        sql, expected = _translate_placeholders(sql)
+        assert expected == len(params), (
+            f"SQL has {expected} placeholder(s) but {len(params)} param(s) given: {sql!r}")
         with _SQLITE_WRITE_LOCK:
-            cur = self._db.execute(sql, tuple(params))
+            cur = self._db.execute(sql, params)
         return _SqliteCursor(cur)
 
     def executescript(self, sql):
