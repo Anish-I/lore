@@ -124,7 +124,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
     try {
       const r = await window.lore.auth.login();
       if (r && r.ok) setAuthUser({ user_id: r.user_id, email: r.email, scopes: r.scopes });
-      else setAuthError((r && r.reason) || 'sign-in failed');
+      else setAuthError((r && (r.detail || r.reason)) || 'sign-in failed');
     } catch (e) { setAuthError(String((e && e.message) || e)); }
     setAuthBusy(false);
   };

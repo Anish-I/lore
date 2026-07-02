@@ -25,7 +25,10 @@ function firstNote(tree) { return flatten(tree)[0] || null; }
 // (a wizard-id Set built from the unfiltered tree) since graph nodes don't carry a wizard flag.
 function passesScopeFilter(filter, scopeValue, wizardHit) {
   if (!filter || filter === 'all') return true;
-  if (filter === 'private') return scopeValue === 'private';
+  // Solo libraries use a purpose-based scope (e.g. "engineering"), not a literal
+  // "private" tag — so "Private" means YOUR own notes: anything that isn't an
+  // installed plugin/wizard and isn't explicitly shared to a team/enterprise.
+  if (filter === 'private') return !wizardHit && scopeValue !== 'team' && scopeValue !== 'enterprise';
   if (filter === 'team') return scopeValue === 'team' || scopeValue === 'enterprise';
   if (filter === 'plugins') return Boolean(wizardHit);
   return true;
@@ -405,6 +408,22 @@ function App() {
     const edges = graphData.edges.filter((e) => ids.has(e[0]) && ids.has(e[1]));
     return { nodes, edges };
   }, [graphData, kbFilter, scopeFilter, wizardIds, baseOf]);
+
+  // Stable graph-node open handler — an inline arrow here re-created GraphView's
+  // onOpen every render, which (via graph.jsx's [graph, onOpen] effect) restarted
+  // the whole force simulation on every parent re-render ("glitching out").
+  const onGraphOpen = React.useCallback((id) => {
+    const n = graphData && graphData.nodes.find((x) => x.id === id);
+    if (n && n.path) {
+      openNote(n.path);
+    } else if (window.lore && window.lore.notes && window.lore.notes.get) {
+      window.lore.notes.get(id).then((nd) => {
+        if (nd) setPreviewNote({ title: nd.title || String(id), body: nd.body || '' });
+      }).catch(() => {});
+    } else {
+      setView('workspace');
+    }
+  }, [graphData, openNote]);
   // Dominant scope per knowledge base (folder), so the switcher chips can be colored by scope.
   const baseScopes = React.useMemo(() => {
     const m = {}, rank = { enterprise: 3, team: 2, private: 1 };
@@ -927,19 +946,7 @@ function App() {
           <React.Fragment>
             {(graphLoading || !filteredGraph || filteredGraph.nodes.length === 0)
               ? <GraphEmptyState loading={graphLoading} />
-              : <GraphView graph={filteredGraph} onOpen={(id) => {
-                  const n = graphData && graphData.nodes.find((x) => x.id === id);
-                  if (n && n.path) {
-                    openNote(n.path);
-                  } else if (window.lore && window.lore.notes && window.lore.notes.get) {
-                    // DB-only node (no source_path) — fetch body and show read-only preview
-                    window.lore.notes.get(id).then((nd) => {
-                      if (nd) setPreviewNote({ title: nd.title || String(id), body: nd.body || '' });
-                    }).catch(() => {});
-                  } else {
-                    setView('workspace');
-                  }
-                }} />
+              : <GraphView graph={filteredGraph} onOpen={onGraphOpen} />
             }
             {askOpen && askPanel}
           </React.Fragment>

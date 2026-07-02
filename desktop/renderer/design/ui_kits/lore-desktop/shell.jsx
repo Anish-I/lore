@@ -426,7 +426,11 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
           )}
         </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
-        {tree.map((n) => (
+        {tree.length === 0 ? (
+          <div style={{ padding: '18px 14px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            No notes match the current filter.
+          </div>
+        ) : tree.map((n) => (
           <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}
             renamingId={renamingId} onContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
         ))}

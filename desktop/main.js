@@ -626,10 +626,16 @@ ipcMain.handle('import:pick', async () => {
 
 // ---------- IPC: Google OAuth (desktop loopback) + Lore session ----------
 // The Google client config (gitignored) lives at <repo>/secrets/google_oauth_client.json.
+// Returns the parsed client config, or null when the gitignored secrets file
+// isn't present (e.g. a dev build without OAuth provisioned) so callers can
+// surface a clean "not configured" message instead of a raw ENOENT.
 function loadGoogleClient() {
   const p = process.env.GOOGLE_OAUTH_CLIENT_FILE
     || path.join(__dirname, '..', 'secrets', 'google_oauth_client.json');
-  const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+  let raw;
+  try { raw = fs.readFileSync(p, 'utf8'); }
+  catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+  const data = JSON.parse(raw);
   return data.installed || data.web || data;
 }
 
@@ -654,6 +660,7 @@ function clearSession() { try { fs.unlinkSync(authStorePath()); } catch { /* ign
 ipcMain.handle('auth:login', async () => {
   try {
     const clientCfg = loadGoogleClient();
+    if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Google sign-in isn’t configured in this build.' };
     const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url));
     if (!tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
     const r = await fetch(`${BACKEND_URL()}/auth/google`, {

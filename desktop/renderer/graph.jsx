@@ -35,6 +35,15 @@ function GraphView({ graph, onOpen }) {
   const selRef = React.useRef(null);
 
   const graphScopes = React.useMemo(() => grScopeList(graph.nodes), [graph]);
+
+  // Content signature: the heavy simulation effect below rebuilds only when the
+  // actual node/edge SET changes, not on every new `graph` object reference — so
+  // a parent re-render that produces an identical filtered graph won't restart
+  // (and re-scatter) the force layout.
+  const graphSig = React.useMemo(() => {
+    const ns = graph.nodes || [];
+    return ns.length + '|' + ((graph.edges || []).length) + '|' + ns.map((n) => n.id).join(',');
+  }, [graph]);
   const [filters, setFilters] = React.useState({});
   React.useEffect(() => {
     setFilters((prev) => {
@@ -295,7 +304,7 @@ function GraphView({ graph, onOpen }) {
       sim.on('tick', null); sim.stop();
       drawRef.current = null;
     };
-  }, [graph, onOpen, setSel]);
+  }, [graphSig, onOpen, setSel]);
 
   const reheat = () => { if (simRef.current) simRef.current.alpha(0.55).restart(); };
   const fit = () => { if (zoomRef.current && zoomRef.current.fit) zoomRef.current.fit(); };
