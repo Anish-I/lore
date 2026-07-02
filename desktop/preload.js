@@ -105,9 +105,10 @@ contextBridge.exposeInMainWorld('lore', {
   // install()   → { ok, backupPath, configPath, reason? }
   // uninstall() → { ok, reason? }
   mcp: {
-    detect:    () => ipcRenderer.invoke('mcp:detect'),
-    install:   () => ipcRenderer.invoke('mcp:install'),
-    uninstall: () => ipcRenderer.invoke('mcp:uninstall'),
+    detect:      () => ipcRenderer.invoke('mcp:detect'),
+    detectTools: () => ipcRenderer.invoke('mcp:detect-tools'),
+    install:     (tool) => ipcRenderer.invoke('mcp:install', tool),
+    uninstall:   (tool) => ipcRenderer.invoke('mcp:uninstall', tool),
   },
 
   // --- notes (backend proxy) ---

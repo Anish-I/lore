@@ -851,9 +851,10 @@ ipcMain.handle('hooks:capture-status', async (_e, sessionId) => {
 // ---------- IPC: MCP ----------
 // Delegates to mcp-installer.js; manages ~/.claude/.mcp.json.
 
-ipcMain.handle('mcp:detect',    () => mcpInstaller.detectMcp());
-ipcMain.handle('mcp:install',   () => mcpInstaller.installMcp());
-ipcMain.handle('mcp:uninstall', () => mcpInstaller.uninstallMcp());
+ipcMain.handle('mcp:detect',       () => mcpInstaller.detectMcp());              // Claude (legacy shape — renderer depends on it)
+ipcMain.handle('mcp:detect-tools', () => mcpInstaller.detectMcpTools());         // per-tool {claude,codex}
+ipcMain.handle('mcp:install',   (_e, tool) => (tool === 'codex' ? mcpInstaller.installCodexMcp() : mcpInstaller.installMcp()));
+ipcMain.handle('mcp:uninstall', (_e, tool) => (tool === 'codex' ? mcpInstaller.uninstallCodexMcp() : mcpInstaller.uninstallMcp()));
 
 // ---------- IPC: notes + search (backend proxies) ----------
 // Proxied in main-process so the renderer never needs to lift CORS headers.

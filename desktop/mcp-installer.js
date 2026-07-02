@@ -8,6 +8,7 @@ const fs             = require('fs');
 const path           = require('path');
 const os             = require('os');
 const { execFileSync } = require('child_process');
+const codexToml      = require('./lib/codex-toml');
 
 // ---------- paths ----------
 
@@ -16,6 +17,25 @@ const MCP_CONFIG_BACKUP = `${MCP_CONFIG}.lore-backup`;
 
 // Absolute path to the repo's core directory (where lore.mcp_server lives).
 const CORE_DIR = path.join(__dirname, '..', 'core');
+
+// ---------- identity ----------
+
+// Reads scope/tenant from lore-config.json (same candidate paths as the hooks),
+// so the MCP tools can default their scopes/tenant from env and be callable argless.
+function loadLoreIdentity() {
+  const candidates = [
+    process.env.APPDATA && path.join(process.env.APPDATA, 'lore-desktop', 'lore-config.json'),
+    path.join(os.homedir(), '.config', 'lore-desktop', 'lore-config.json'),
+    path.join(os.homedir(), 'Library', 'Application Support', 'lore-desktop', 'lore-config.json'),
+  ].filter(Boolean);
+  for (const p of candidates) {
+    try {
+      const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+      return { tenant: c.tenant || '', scope: c.scope || '' };
+    } catch {}
+  }
+  return { tenant: '', scope: '' };
+}
 
 // ---------- python resolution ----------
 
@@ -117,10 +137,13 @@ function installMcp() {
   if (!config.mcpServers || typeof config.mcpServers !== 'object') config.mcpServers = {};
 
   // Set the lore entry (idempotent — replaces any prior lore entry wholesale).
+  // env pins identity so the tools default scopes/tenant and are callable argless.
+  const id = loadLoreIdentity();
   config.mcpServers.lore = {
     command: pythonPath,
     args:    ['-m', 'lore.mcp_server'],
     cwd:     CORE_DIR,
+    env:     { LORE_TENANT: id.tenant, LORE_SCOPES: id.scope },
   };
 
   // Atomic write: write to a temp file, then rename over the target.
@@ -168,4 +191,64 @@ function uninstallMcp() {
   return { ok: true };
 }
 
-module.exports = { detectMcp, installMcp, uninstallMcp };
+// ---------- Codex MCP ----------
+
+// Registers [mcp_servers.lore] + [mcp_servers.lore.env] in ~/.codex/config.toml.
+// Uses the quote-aware codex-toml editor so triple-quoted blocks are never touched.
+// Idempotent (skips if the table already exists). Codex has no `cwd` key — the
+// module is reached via PYTHONPATH=<CORE_DIR> instead.
+function installCodexMcp() {
+  try {
+    const pythonPath = resolvePython();
+    const id = loadLoreIdentity();
+    let text = codexToml.read();
+    codexToml.backupOnce(text);
+    if (!codexToml.hasTable(text, 'mcp_servers.lore')) {
+      text = codexToml.appendTable(text, 'mcp_servers.lore', [
+        `command = ${JSON.stringify(pythonPath)}`,
+        `args = ["-m", "lore.mcp_server"]`,
+      ]);
+    }
+    if (!codexToml.hasTable(text, 'mcp_servers.lore.env')) {
+      text = codexToml.appendTable(text, 'mcp_servers.lore.env', [
+        `PYTHONPATH = ${JSON.stringify(CORE_DIR)}`,
+        `LORE_TENANT = ${JSON.stringify(id.tenant)}`,
+        `LORE_SCOPES = ${JSON.stringify(id.scope)}`,
+      ]);
+    }
+    codexToml.atomicWrite(text);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: `Failed to write Codex MCP config: ${e.message}` };
+  }
+}
+
+function uninstallCodexMcp() {
+  try {
+    let text = codexToml.read();
+    text = codexToml.removeTable(text, 'mcp_servers.lore.env');
+    text = codexToml.removeTable(text, 'mcp_servers.lore');
+    codexToml.atomicWrite(text);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: `Failed to write Codex MCP config: ${e.message}` };
+  }
+}
+
+// Per-tool MCP status: { claude:{detected,installed}, codex:{detected,installed} }.
+function detectMcpTools() {
+  const claude = detectMcp();
+  let codexInstalled = false;
+  const codexPath = codexToml.configPath();
+  const codexDetected = fs.existsSync(codexPath);
+  try { codexInstalled = codexToml.hasTable(codexToml.read(), 'mcp_servers.lore'); } catch {}
+  return {
+    claude: { detected: claude.detected, installed: claude.installed },
+    codex:  { detected: codexDetected, installed: codexInstalled },
+  };
+}
+
+module.exports = {
+  detectMcp, installMcp, uninstallMcp,
+  installCodexMcp, uninstallCodexMcp, detectMcpTools,
+};
