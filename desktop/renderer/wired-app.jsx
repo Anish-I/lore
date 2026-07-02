@@ -321,6 +321,7 @@ function App() {
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
   const [pendingInvites, setPendingInvites] = React.useState([]); // team invites addressed to the signed-in email
   const [inviteBusy, setInviteBusy] = React.useState(null); // invite_id currently being accepted
+  const [sectionProposals, setSectionProposals] = React.useState([]); // background upkeep's proposed/applied Sections
   const timer = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
   const progressDoneTimerRef = React.useRef(null);
@@ -351,6 +352,47 @@ function App() {
     } catch { /* keep the banner so the user can retry */ }
     setInviteBusy(null);
   }, []);
+
+  // Section PROPOSALS — background upkeep (main.js) tags notes and proposes folders,
+  // but NEVER moves a file itself. This is read-only polling; the only paths that ever
+  // move files are the Enable/Undo button handlers below, which the user must click.
+  const loadSections = React.useCallback(async () => {
+    if (!window.lore?.sections?.list) return;
+    try {
+      const r = await window.lore.sections.list();
+      if (r && Array.isArray(r.sections)) setSectionProposals(r.sections);
+    } catch { /* backend offline — keep the last known list */ }
+  }, []);
+
+  React.useEffect(() => {
+    loadSections();
+    const iv = setInterval(loadSections, 5 * 60 * 1000);
+    // scrape:progress fires with phase:'done' after every scrape/upkeep/import run
+    // (see main.js) — a good, cheap trigger to refresh the proposal list.
+    const unsub = window.lore?.scrapeProgress
+      ? window.lore.scrapeProgress((p) => { if (p && p.phase === 'done') loadSections(); })
+      : null;
+    return () => { clearInterval(iv); if (unsub) unsub(); };
+  }, [loadSections]);
+
+  // Enable: moves the section's notes into a new folder (main-process fs, path-guarded)
+  // and re-indexes them — fires ONLY from the sidebar's "Enable" button onClick.
+  const onSectionApply = React.useCallback(async (id) => {
+    if (!window.lore?.sections?.apply) return;
+    try { await window.lore.sections.apply(id); } finally { loadSections(); }
+  }, [loadSections]);
+
+  const onSectionDismiss = React.useCallback(async (id) => {
+    if (!window.lore?.sections?.dismiss) return;
+    try { await window.lore.sections.dismiss(id); } finally { loadSections(); }
+  }, [loadSections]);
+
+  // Undo: moves an applied section's notes back to their recorded original paths —
+  // fires ONLY from the sidebar's "Undo" button onClick.
+  const onSectionUndo = React.useCallback(async (id) => {
+    if (!window.lore?.sections?.undo) return;
+    try { await window.lore.sections.undo(id); } finally { loadSections(); }
+  }, [loadSections]);
 
   const updateProgress = React.useCallback((payload) => {
     const next = normalizeProgress(payload);
@@ -960,7 +1002,8 @@ function App() {
             <Sidebar tree={shownTree} activeNote={activeId} workspace={workspace} onOpen={onNodeClick} onToggle={(id) => setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) }))}
               bases={bases} baseScopes={baseScopes} kbFilter={kbFilter} onToggleBase={toggleBase} onClearBases={() => setKbFilter([])} wizard={activeBucket} onCreateNote={onCreateNote}
               renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
-              roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary} />
+              roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary}
+              sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} />
             <PaneResizer side="sidebar" />
             {activeBucket
               ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onOpen={() => setAskOpen(true)} />

@@ -201,6 +201,28 @@ create table if not exists edges(
 create index if not exists edges_src on edges(src_note_id);
 create index if not exists edges_dst on edges(dst_note_id);
 create index if not exists edges_tenant on edges(tenant_id);
+create table if not exists note_tags(
+  note_id text not null,
+  tenant_id text not null,
+  tag text not null,
+  kind text not null default 'tag',
+  source text default 'heuristic',
+  created_at timestamptz default now(),
+  constraint note_tags_unique unique (tenant_id, note_id, tag, kind));
+create index if not exists note_tags_note on note_tags(note_id);
+create index if not exists note_tags_tenant on note_tags(tenant_id, kind, tag);
+create table if not exists section_proposals(
+  id text primary key,
+  tenant_id text not null,
+  name text not null,
+  topic text not null,
+  note_ids text,
+  original_paths text,
+  status text not null default 'proposed',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create index if not exists sections_tenant on section_proposals(tenant_id);
 """
 
 # Columns added in M1 (Hooks milestone).  ADD COLUMN IF NOT EXISTS is idempotent
@@ -294,6 +316,28 @@ create table if not exists edges(
 create index if not exists edges_src on edges(src_note_id);
 create index if not exists edges_dst on edges(dst_note_id);
 create index if not exists edges_tenant on edges(tenant_id);
+create table if not exists note_tags(
+  note_id text not null,
+  tenant_id text not null,
+  tag text not null,
+  kind text not null default 'tag',
+  source text default 'heuristic',
+  created_at timestamp default current_timestamp,
+  constraint note_tags_unique unique (tenant_id, note_id, tag, kind));
+create index if not exists note_tags_note on note_tags(note_id);
+create index if not exists note_tags_tenant on note_tags(tenant_id, kind, tag);
+create table if not exists section_proposals(
+  id text primary key,
+  tenant_id text not null,
+  name text not null,
+  topic text not null,
+  note_ids text,
+  original_paths text,
+  status text not null default 'proposed',
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp,
+  constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create index if not exists sections_tenant on section_proposals(tenant_id);
 """
 
 
