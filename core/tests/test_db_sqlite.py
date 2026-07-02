@@ -115,3 +115,10 @@ def test_in_clause_and_scope_filter_on_sqlite(tmp_path):
         ["t", *params]).fetchall()
     assert [r[0] for r in rows] == ["n0", "n1"]
     conn.close()
+
+
+def test_sqlite_path_windows_drive_letters():
+    assert db._sqlite_path("sqlite:///C:/Users/x/lore.db") == "C:/Users/x/lore.db"
+    assert db._sqlite_path(r"sqlite:///C:\Users\x\lore.db") == r"C:\Users\x\lore.db"
+    assert db._sqlite_path("sqlite:///tmp/x.db") == "/tmp/x.db"          # POSIX keeps leading slash
+    assert db._sqlite_path("sqlite:////Users/x/lore.db") == "//Users/x/lore.db"

@@ -399,12 +399,14 @@ function ctxDuplicateNote(notePath) {
 }
 
 function ctxTrash(p, kind) {
+  try { pathGuard(p); } catch (e) { sendTreeAction({ action: 'trash-failed', id: p, kind, reason: String((e && e.message) || e) }); return; }
   shell.trashItem(p)
     .then(() => sendTreeAction({ action: 'trashed', id: p, kind }))
     .catch((e) => sendTreeAction({ action: 'trash-failed', id: p, kind, reason: String((e && e.message) || e) }));
 }
 
 function ctxReindex(notePath) {
+  try { pathGuard(notePath); } catch { return; }
   const cfg = loadConfig() || {};
   fetch(`${BACKEND_URL}/reindex`, {
     method: 'POST',
@@ -417,6 +419,7 @@ ipcMain.handle('tree:context-menu', (_e, args) => {
   try {
     const { id, kind, root } = args || {};
     if (!id || (kind !== 'note' && kind !== 'folder')) return { ok: false, reason: 'Missing id/kind' };
+    try { pathGuard(id); } catch (e) { return { ok: false, reason: String((e && e.message) || e) }; }
     const isNote = kind === 'note';
     const dir = isNote ? path.dirname(id) : id;
     const relRoot = root || '';

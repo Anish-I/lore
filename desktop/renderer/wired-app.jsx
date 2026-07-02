@@ -417,29 +417,38 @@ function App() {
     return true;
   }, [openNote]);
 
+  // Mid-session refresh: re-reads the tree WITHOUT touching the active tab.
+  // loadTree's openNote(firstNote) is for initial load only.
+  const reloadTree = React.useCallback(async (root) => {
+    const td = await window.lore.readTree(root);
+    if (td) setTreeData(td);
+  }, []);
+
   // Right-click on a sidebar row: hand off to the native Electron context menu (main process).
   const onTreeContextMenu = React.useCallback((node) => {
     if (!window.lore?.treeContextMenu || !treeData) return;
     window.lore.treeContextMenu(node.id, node.kind, treeData.root);
   }, [treeData]);
 
-  // Closes a note wherever it's open (tab + active editor), used when the note is
-  // trashed out from under the editor so the UI never points at a dead path.
-  const closeNoteEverywhere = React.useCallback((id) => {
+  // Closes every note matching pred (tab + loaded state) in one pass, used when notes
+  // are trashed out from under the editor. Single setTabs + functional setActiveId so
+  // multi-note closes (folder trash) can't race a stale activeId.
+  const closeNotesWhere = React.useCallback((pred) => {
     setTabs((ts) => {
-      const idx = ts.findIndex((t) => t.id === id);
-      if (idx === -1) return ts;
-      const next = ts.filter((t) => t.id !== id);
-      if (id === activeId) {
-        const n = next[Math.max(0, idx - 1)] || next[0] || null;
-        setActiveId(n ? n.id : null);
+      const first = ts.findIndex((t) => t.kind === 'note' && pred(t.id));
+      if (first === -1) return ts;
+      const next = ts.filter((t) => !(t.kind === 'note' && pred(t.id)));
+      setActiveId((a) => {
+        if (!a || !pred(a)) return a;
+        const n = next[Math.max(0, first - 1)] || next[0] || null;
         if (n && n.kind === 'note') loadNote(n.id);
-      }
+        return n ? n.id : null;
+      });
       return next;
     });
-    setNotes((m) => { if (!(id in m)) return m; const c = { ...m }; delete c[id]; return c; });
-    setDrafts((m) => { if (!(id in m)) return m; const c = { ...m }; delete c[id]; return c; });
-  }, [activeId, loadNote]);
+    setNotes((m) => { const c = { ...m }; let ch = false; for (const k of Object.keys(c)) if (pred(k)) { delete c[k]; ch = true; } return ch ? c : m; });
+    setDrafts((m) => { const c = { ...m }; let ch = false; for (const k of Object.keys(c)) if (pred(k)) { delete c[k]; ch = true; } return ch ? c : m; });
+  }, [loadNote]);
 
   const onRenameCancel = React.useCallback(() => setRenamingId(null), []);
 
@@ -453,7 +462,7 @@ function App() {
     if (!window.lore?.treeRename) return;
     let res;
     try { res = await window.lore.treeRename(node.id, trimmed, node.kind); } catch { res = null; }
-    if (!res || res.ok === false) { if (treeData) loadTree(treeData.root); return; }
+    if (!res || res.ok === false) { if (treeData) reloadTree(treeData.root); return; }
     const oldId = node.id, newPath = res.newPath;
     if (newPath !== oldId) {
       const remap = (id) => {
@@ -468,8 +477,8 @@ function App() {
       setDrafts((m) => { const c = {}; for (const k of Object.keys(m)) c[remap(k)] = m[k]; return c; });
       setActiveId((a) => (a ? remap(a) : a));
     }
-    if (treeData) await loadTree(treeData.root);
-  }, [treeData, loadTree]);
+    if (treeData) await reloadTree(treeData.root);
+  }, [treeData, reloadTree]);
 
   // Handles events pushed from main after a context-menu action: opening a note,
   // starting an inline rename (both for existing items and freshly-created ones),
@@ -480,7 +489,7 @@ function App() {
       const { action, id, kind } = payload || {};
       if (action === 'open') { openNote(id); return; }
       if (action === 'rename-start') {
-        if (treeData) await loadTree(treeData.root);
+        if (treeData) await reloadTree(treeData.root);
         setTreeData((td) => td ? { ...td, tree: forceOpenAncestors(td.tree, id) } : td);
         setRenamingId(id);
         return;
@@ -489,18 +498,18 @@ function App() {
         if (kind === 'folder') {
           const sep = id.includes('/') ? '/' : '\\';
           const prefix = id.replace(/[\\/]+$/, '') + sep;
-          tabs.filter((t) => t.kind === 'note' && (t.id === id || t.id.startsWith(prefix))).forEach((t) => closeNoteEverywhere(t.id));
+          closeNotesWhere((tid) => tid === id || tid.startsWith(prefix));
         } else {
-          closeNoteEverywhere(id);
+          closeNotesWhere((tid) => tid === id);
         }
-        if (treeData) await loadTree(treeData.root);
+        if (treeData) await reloadTree(treeData.root);
         setRenamingId((r) => (r === id ? null : r));
         return;
       }
       // 'trash-failed' — fail soft, nothing to reconcile client-side.
     });
     return unsub;
-  }, [treeData, tabs, openNote, loadTree, closeNoteEverywhere]);
+  }, [treeData, openNote, reloadTree, closeNotesWhere]);
 
   React.useEffect(() => {
     (async () => {

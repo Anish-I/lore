@@ -43,7 +43,12 @@ def is_sqlite(url: str) -> bool:
 
 def _sqlite_path(url: str) -> str:
     # sqlite:///abs/path  or  sqlite://relative -> strip the scheme
-    return url[len("sqlite://"):] if url.startswith("sqlite://") else url
+    p = url[len("sqlite://"):] if url.startswith("sqlite://") else url
+    # sqlite:///C:\... on Windows leaves a leading slash before the drive letter,
+    # which sqlite3.connect cannot open. POSIX paths keep their leading slash.
+    if re.match(r"^/[A-Za-z]:", p):
+        p = p[1:]
+    return p
 
 
 class _SqliteCursor:
