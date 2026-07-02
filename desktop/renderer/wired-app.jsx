@@ -808,7 +808,7 @@ function App() {
 
   const D = window.VaultDesignSystem_ffbf58;
   const Titlebar = window.LoreTitlebar, Rail = window.LoreActivityRail, Sidebar = window.LoreSidebar,
-    Editor = window.LoreEditor, ContextPane = window.LoreContextPane, AskPanel = window.LoreAskPanel,
+    Editor = window.LoreEditor, ContextPane = window.LoreContextPane, FloatingGraph = window.LoreFloatingGraph, AskPanel = window.LoreAskPanel,
     ProjectsView = window.LoreProjectsView, GraphView = window.LoreGraphView,
     BucketsView = window.LoreBucketsView, SettingsView = window.LoreSettingsView,
     HooksView = window.LoreHooksView, Onboarding = window.LoreOnboarding,
@@ -934,7 +934,10 @@ function App() {
             {activeBucket
               ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onOpen={() => setAskOpen(true)} />
               : (editorNote
-                ? <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
+                ? <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
+                    <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
+                    {FloatingGraph && <FloatingGraph note={editorNote} connections={connections} onOpenNote={openNote} />}
+                  </div>
                 : <EmptyEditor />)}
             {!askOpen && editorNote && <PaneResizer side="context" />}
             {askOpen ? askPanel : (editorNote && <ContextPane note={editorNote} connections={connections} onOpenNote={openNote} onAsk={() => setAskOpen(true)} />)}

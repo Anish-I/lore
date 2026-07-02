@@ -274,4 +274,37 @@ function ContextPane({ note, onAsk, connections, onOpenNote }) {
   );
 }
 
-Object.assign(window, { LoreEditor: Editor, LoreContextPane: ContextPane });
+// Floating local-graph card — the same EdMiniGraph as the context pane, but
+// floated over the editor ("in the notebook"). Collapsible; hidden when the note
+// has no connections. Positioned by its parent (an absolute-in-relative container).
+function FloatingGraph({ note, connections, onOpenNote }) {
+  const [collapsed, setCollapsed] = React.useState(false);
+  const conns = connections || [];
+  if (!note || conns.length === 0) return null;
+  return (
+    <div style={{
+      position: 'absolute', right: 16, bottom: 16, zIndex: 20,
+      width: collapsed ? 'auto' : 210,
+      background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)',
+      borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-xl)', overflow: 'hidden',
+    }}>
+      <div onClick={() => setCollapsed((c) => !c)}
+        style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 9px', cursor: 'pointer',
+          borderBottom: collapsed ? 'none' : '1px solid var(--divider)' }}>
+        <EdIcon name="network" size={13} style={{ color: 'var(--brand-fg)' }} />
+        <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+          {conns.length} connection{conns.length !== 1 ? 's' : ''}
+        </span>
+        <EdIcon name={collapsed ? 'chevron-up' : 'chevron-down'} size={13} style={{ color: 'var(--text-faint)' }} />
+      </div>
+      {!collapsed && (
+        <div style={{ padding: 6 }}>
+          <EdMiniGraph connections={conns} centerLabel={note.title} onOpen={(p) => onOpenNote && onOpenNote(p)} />
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-faint)', textAlign: 'center', marginTop: 2 }}>click a node to open</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+Object.assign(window, { LoreEditor: Editor, LoreContextPane: ContextPane, LoreFloatingGraph: FloatingGraph });
