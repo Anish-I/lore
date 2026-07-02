@@ -21,6 +21,19 @@ function BACKEND_URL() { return runtime.backendUrl(loadConfig); }
 const CORE_DIR = path.join(__dirname, '..', 'core');
 const ENV_VAULT_ROOT = process.env.LORE_VAULT || null;
 
+// App identity: in dev (`electron .`) Electron shows its own name/icon ("Electron")
+// in the dock/taskbar and window title until we say otherwise. app.setName() must run
+// before whenReady (and before anything reads app.getPath('userData'), since the
+// default userData path is derived from the app name) — packaged builds get this for
+// free from electron-builder's productName, but dev needs it set explicitly.
+app.setName('Lore');
+
+// Multi-instance testing override: point userData at a caller-chosen directory
+// instead of the default (~/Library/Application Support/Lore, %APPDATA%/Lore, …).
+// Must run before ANYTHING reads app.getPath('userData') — configPath(), the
+// embedded-Postgres data dir, and the renderer log all derive from it.
+if (process.env.LORE_USER_DATA) app.setPath('userData', process.env.LORE_USER_DATA);
+
 let win = null;
 let backendProc = null;
 let watcher = null;
@@ -1126,6 +1139,12 @@ app.whenReady().then(async () => {
     const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon.png'));
     if (!icon.isEmpty() && app.dock && app.dock.setIcon) app.dock.setIcon(icon);
   } catch { /* non-fatal */ }
+
+  // macOS "About Lore" panel — without this, the Apple-menu About item (and some
+  // dock hover contexts) fall back to the Electron default identity in dev.
+  if (process.platform === 'darwin' && app.setAboutPanelOptions) {
+    try { app.setAboutPanelOptions({ applicationName: 'Lore' }); } catch { /* non-fatal */ }
+  }
 
   const cfg = loadConfig();
   if (cfg && cfg.upkeepAuto === true && cfg.tenant) startUpkeepInterval(cfg.tenant);
