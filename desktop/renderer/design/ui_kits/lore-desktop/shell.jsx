@@ -149,7 +149,7 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
     { id: 'workspace', icon: 'files', label: 'Files' },
     { id: 'search', icon: 'search', label: 'Search' },
     { id: 'graph', icon: 'network', label: 'Graph' },
-    { id: 'projects', icon: 'layout-grid', label: 'Sagas' },
+    { id: 'projects', icon: 'users', label: 'Teams' },
     { id: 'buckets', icon: 'library', label: 'Wizards' },
     { id: 'hooks', icon: 'plug', label: 'Hooks' },
   ];
@@ -166,7 +166,6 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
         <IconButton icon="sparkles" label="Ask" size="lg" variant={askOpen ? 'primary' : 'ghost'} onClick={onAsk} />
       </Tooltip>
       <div style={{ flex: 1 }} />
-      <Tooltip label="Groups" side="right"><IconButton icon="users" label="Groups" size="lg" onClick={() => onView('projects')} /></Tooltip>
       <Tooltip label="Settings" side="right"><IconButton icon="settings" label="Settings" size="lg" active={view === 'settings'} onClick={() => onView('settings')} /></Tooltip>
     </div>
   );

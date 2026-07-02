@@ -328,7 +328,6 @@ function OB_Onboarding({ onDone }) {
     const scopeId = purpose ? OB_slugify(purpose) : null;
     const tenantId = accountEmail ? OB_domainFromEmail(accountEmail) : 'local';
     return {
-      saga: null,
       tier: null,
       full: false,
       promptHistory: backfillClaude,
@@ -412,7 +411,6 @@ function OB_Onboarding({ onDone }) {
   const handleSkip = async () => {
     setSaving(true);
     const cfg = {
-      saga: null,
       tier: null,
       full: false,
       promptHistory: false,

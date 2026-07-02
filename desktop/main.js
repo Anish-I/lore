@@ -29,10 +29,18 @@ const ENV_VAULT_ROOT = process.env.LORE_VAULT || null;
 // free from electron-builder's productName, but dev needs it set explicitly.
 app.setName('Lore');
 
+// Electron derives the DEFAULT userData path from the app name — so the setName()
+// above would silently fork every existing user's data into a brand-new
+// "~/Library/Application Support/Lore" folder (capital L), leaving their real
+// library/config/index behind in the historical "lore-desktop" folder (this
+// package's name before productName existed). Pin userData explicitly to that
+// historical path so the display-name change never migrates anyone's data.
+app.setPath('userData', path.join(app.getPath('appData'), 'lore-desktop'));
+
 // Multi-instance testing override: point userData at a caller-chosen directory
-// instead of the default (~/Library/Application Support/Lore, %APPDATA%/Lore, …).
-// Must run before ANYTHING reads app.getPath('userData') — configPath(), the
-// embedded-Postgres data dir, and the renderer log all derive from it.
+// instead of the pinned default above. Must run before ANYTHING reads
+// app.getPath('userData') — configPath(), the embedded-Postgres data dir, and the
+// renderer log all derive from it.
 if (process.env.LORE_USER_DATA) app.setPath('userData', process.env.LORE_USER_DATA);
 
 let win = null;
@@ -369,9 +377,9 @@ Lore is your personal knowledge OS — a local-first place to capture, connect, 
 
 A **Library** is a folder on your machine. Every note inside it lives as a plain Markdown file, owned by you. You are in **${libName}** right now. Create more libraries for different contexts (work, personal, research).
 
-## Sagas
+## Teams
 
-**Sagas** are projects — long-running threads of work with their own notes, timelines, and goals. Open the Projects panel from the left rail to create and track them.
+Sign in and create or join a **Team** to share Wizards with others. Open the Teams panel from the left rail to invite people and browse what your team has shared.
 
 ## Wizards
 
@@ -475,7 +483,7 @@ ipcMain.handle('note:read', (_e, p) => {
 ipcMain.handle('note:write', (_e, { path: p, text }) => {
   try {
     pathGuard(p);
-    fs.mkdirSync(path.dirname(p), { recursive: true });  // create parent dirs (e.g. new saga/group folder)
+    fs.mkdirSync(path.dirname(p), { recursive: true });  // create parent dirs (e.g. new group folder)
     fs.writeFileSync(p, text, 'utf8');
     return { ok: true };
   } catch (e) {
