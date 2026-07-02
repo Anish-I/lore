@@ -50,15 +50,42 @@ function Block({ b, note, onOpen }) {
   return <p style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-lg)', lineHeight: 1.65, margin: '0 0 16px', color: 'var(--text-body)' }}>{b.runs ? <Runs runs={b.runs} onOpen={onOpen} /> : b.s}</p>;
 }
 
-function TabStrip({ tabs, activeId, onTab, onCloseTab }) {
+// Overflow: past ED_TAB_MAX open tabs, the strip shows the first ED_TAB_SHOW pills
+// (plus the active tab, pulled forward even when it sits beyond them) and folds the
+// rest into an "N more…" dropdown — endless VS-Code-style pill rows got confusing.
+const ED_TAB_MAX = 6, ED_TAB_SHOW = 5;
+
+function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers }) {
+  const all = tabs || [];
+  const [moreOpen, setMoreOpen] = React.useState(false);
+  const [hoverTab, setHoverTab] = React.useState(null); // reveals the per-tab "close others" icon
+  let visible = all, hidden = [];
+  if (all.length > ED_TAB_MAX) {
+    visible = all.slice(0, ED_TAB_SHOW);
+    hidden = all.slice(ED_TAB_SHOW);
+    const active = hidden.find((t) => t.id === activeId);
+    if (active) {
+      visible = [...visible, active];
+      hidden = hidden.filter((t) => t.id !== activeId);
+    }
+  }
   return (
     <div style={edS.tabbar}>
-      {(tabs || []).map((t) => {
+      {visible.map((t) => {
         const on = t.id === activeId;
         return (
-          <div key={t.id} style={edS.tab(on)} onClick={() => onTab && onTab(t.id)} title={t.title}>
+          <div key={t.id} style={edS.tab(on)} onClick={() => onTab && onTab(t.id)} title={t.title}
+            onMouseEnter={() => setHoverTab(t.id)} onMouseLeave={() => setHoverTab((h) => h === t.id ? null : h)}>
             <EdIcon name={t.kind === 'bucket' ? 'library' : 'file-text'} size={13} style={{ color: on ? 'var(--brand-fg)' : 'var(--text-faint)' }} />
             <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+            {onCloseOthers && all.length > 1 && (
+              <span onClick={(e) => { e.stopPropagation(); onCloseOthers(t.id); }} title="Close other tabs"
+                style={{ display: 'inline-flex', marginLeft: 2, opacity: 0.55, borderRadius: 3, visibility: hoverTab === t.id ? 'visible' : 'hidden' }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = 'var(--surface-hover)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = 0.55; e.currentTarget.style.background = 'transparent'; }}>
+                <EdIcon name="copy-x" size={12} />
+              </span>
+            )}
             <span onClick={(e) => { e.stopPropagation(); onCloseTab && onCloseTab(t.id); }} style={{ display: 'inline-flex', marginLeft: 2, opacity: 0.55, borderRadius: 3 }}
               onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = 'var(--surface-hover)'; }}
               onMouseLeave={(e) => { e.currentTarget.style.opacity = 0.55; e.currentTarget.style.background = 'transparent'; }}>
@@ -67,6 +94,36 @@ function TabStrip({ tabs, activeId, onTab, onCloseTab }) {
           </div>
         );
       })}
+      {hidden.length > 0 && (
+        <div style={{ position: 'relative', height: '100%' }}>
+          <div onClick={() => setMoreOpen((o) => !o)} title={`${hidden.length} more open tab${hidden.length !== 1 ? 's' : ''}`}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, height: '100%', padding: '0 12px', borderRight: '1px solid var(--border-subtle)', cursor: 'pointer', color: 'var(--text-subtle)', fontSize: 12, whiteSpace: 'nowrap' }}>
+            {hidden.length} more…
+            <EdIcon name="chevron-down" size={12} style={{ color: 'var(--text-faint)' }} />
+          </div>
+          {moreOpen && (
+            <React.Fragment>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setMoreOpen(false)} />
+              <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 41, minWidth: 200, maxWidth: 280, maxHeight: 320, overflowY: 'auto', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)', padding: 4 }}>
+                {hidden.map((t) => (
+                  <div key={t.id} onClick={() => { setMoreOpen(false); onTab && onTab(t.id); }} title={t.title}
+                    style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '6px 8px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 12.5, color: 'var(--text-body)' }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                    <EdIcon name={t.kind === 'bucket' ? 'library' : 'file-text'} size={13} style={{ color: 'var(--text-faint)' }} />
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{t.title}</span>
+                    <span onClick={(e) => { e.stopPropagation(); onCloseTab && onCloseTab(t.id); }} style={{ display: 'inline-flex', opacity: 0.55, borderRadius: 3 }}
+                      onMouseEnter={(e) => { e.currentTarget.style.opacity = 1; e.currentTarget.style.background = 'var(--surface-hover)'; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.opacity = 0.55; e.currentTarget.style.background = 'transparent'; }}>
+                      <EdIcon name="x" size={12} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+      )}
       <div style={{ flex: 1 }} />
       <EdIconBtn icon="panel-right-close" label="Toggle pane" size="sm" />
     </div>
@@ -103,18 +160,18 @@ function BucketBody({ bucket: b, onOpen }) {
   );
 }
 
-function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
   if (bucket) {
     return (
       <div style={edS.center}>
-        <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} />
+        <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} />
         <BucketBody bucket={bucket} onOpen={onOpen} />
       </div>
     );
   }
   return (
     <div style={edS.center}>
-      <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} />
+      <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} />
       <div style={edS.toolbar}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{note.path || (note.title + '.md')}</span>
         <div style={{ flex: 1 }} />

@@ -576,6 +576,18 @@ function App() {
     if (t && t.kind === 'note') { setMode('read'); loadNote(id); }
   };
 
+  // "Close others" (tab-strip hover action): keep only the given tab, activating it
+  // when the active tab was among the closed — one pass, so it can't race closeTab.
+  const closeOtherTabs = (id) => {
+    const t = tabs.find((x) => x.id === id);
+    if (!t) return;
+    setTabs((ts) => ts.filter((x) => x.id === id));
+    if (id !== activeId) {
+      setActiveId(id);
+      if (t.kind === 'note') { setMode('read'); loadNote(id); }
+    }
+  };
+
   const onNodeClick = (id) => {
     const n = findNode(tree, id);
     if (n && n.kind === 'folder') setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) }));
@@ -609,6 +621,28 @@ function App() {
     const next = roots[(from + dir + roots.length) % roots.length];
     if (next) loadTree(next);
   }, [appConfig, treeData, loadTree]);
+
+  // Libraries discovered via `.lore` manifests (main scans configured roots +
+  // subfolders) — the sidebar surfaces the ones that are NOT already open/configured
+  // so a known library can be reopened with one click. Manifest reads only; cheap.
+  const [discoveredLibs, setDiscoveredLibs] = React.useState([]);
+  React.useEffect(() => {
+    if (!window.lore?.libraries?.discovered) return;
+    window.lore.libraries.discovered()
+      .then((d) => setDiscoveredLibs(Array.isArray(d) ? d : []))
+      .catch(() => { /* non-fatal */ });
+  }, [appConfig]);
+  const otherLibraries = React.useMemo(() => {
+    const norm = (p) => String(p || '').replace(/[\\/]+$/, '');
+    const known = new Set(((appConfig && Array.isArray(appConfig.roots)) ? appConfig.roots : []).map(norm));
+    if (treeData && treeData.root) known.add(norm(treeData.root));
+    return discoveredLibs.filter((d) => d && d.root && !known.has(norm(d.root)));
+  }, [discoveredLibs, appConfig, treeData]);
+  // Same switch mechanism as the roots chevrons: loadTree opens the library and
+  // lands on its first note. Config is untouched — reopening is not adopting.
+  const openDiscoveredLibrary = React.useCallback((root) => {
+    if (root) loadTree(root);
+  }, [loadTree]);
 
   // Right-click on a sidebar row: hand off to the native Electron context menu (main process).
   const onTreeContextMenu = React.useCallback((node) => {
@@ -1013,13 +1047,14 @@ function App() {
               bases={bases} baseScopes={baseScopes} kbFilter={kbFilter} onToggleBase={toggleBase} onClearBases={() => setKbFilter([])} wizard={activeBucket} onCreateNote={onCreateNote}
               renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
               roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary}
+              discoveredLibraries={otherLibraries} onOpenDiscovered={openDiscoveredLibrary}
               sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} />
             <PaneResizer side="sidebar" />
             {activeBucket
-              ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onOpen={() => setAskOpen(true)} />
+              ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onOpen={() => setAskOpen(true)} />
               : (editorNote
                 ? <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
-                    <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
+                    <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
                     {FloatingGraph && <FloatingGraph note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} />}
                   </div>
                 : <EmptyEditor />)}
