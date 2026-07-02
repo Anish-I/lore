@@ -304,11 +304,38 @@ function App() {
   const [showImportModal, setShowImportModal] = React.useState(false);
   const [renamingId, setRenamingId] = React.useState(null); // sidebar node currently showing an inline rename input
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
+  const [pendingInvites, setPendingInvites] = React.useState([]); // team invites addressed to the signed-in email
+  const [inviteBusy, setInviteBusy] = React.useState(null); // invite_id currently being accepted
   const timer = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
   const progressDoneTimerRef = React.useRef(null);
 
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
+
+  // Pending team invites for the signed-in user — checked on launch and every few
+  // minutes; silently empty when signed out or the backend is unreachable.
+  React.useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      if (!window.lore?.invites?.list) return;
+      try {
+        const r = await window.lore.invites.list();
+        if (alive && r && r.ok && r.body && Array.isArray(r.body.invites)) setPendingInvites(r.body.invites);
+      } catch { /* signed out or offline — no banner */ }
+    };
+    check();
+    const iv = setInterval(check, 5 * 60 * 1000);
+    return () => { alive = false; clearInterval(iv); };
+  }, []);
+
+  const acceptInvite = React.useCallback(async (inviteId) => {
+    setInviteBusy(inviteId);
+    try {
+      const r = await window.lore.invites.accept(inviteId);
+      if (r && r.ok) setPendingInvites((list) => list.filter((i) => i.invite_id !== inviteId));
+    } catch { /* keep the banner so the user can retry */ }
+    setInviteBusy(null);
+  }, []);
 
   const updateProgress = React.useCallback((payload) => {
     const next = normalizeProgress(payload);
@@ -935,6 +962,26 @@ function App() {
                 <D.Icon name="x" size={12} />
               </button>
             )}
+          </div>
+        )}
+
+        {pendingInvites.length > 0 && !showOnboarding && (
+          <div style={{ position: 'absolute', top: showProgress ? 34 : 0, left: 0, right: 0, zIndex: 29, background: 'var(--brand-soft-bg)', borderBottom: '1px solid var(--brand-soft-border)', padding: '7px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {pendingInvites.map((inv) => (
+              <div key={inv.invite_id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--text-body)' }}>
+                <D.Icon name="mail" size={14} style={{ color: 'var(--brand-fg)' }} />
+                <span style={{ flex: 1 }}>
+                  You've been invited to <strong style={{ color: 'var(--text-strong)' }}>{inv.team_name || inv.team_id}</strong>
+                  {inv.invited_by ? <span style={{ color: 'var(--text-subtle)' }}> by {inv.invited_by}</span> : null}
+                </span>
+                <D.Button variant="primary" icon="check" disabled={inviteBusy === inv.invite_id} onClick={() => acceptInvite(inv.invite_id)}>
+                  {inviteBusy === inv.invite_id ? 'Joining…' : 'Accept'}
+                </D.Button>
+                <button onClick={() => setPendingInvites((list) => list.filter((i) => i.invite_id !== inv.invite_id))} title="Dismiss for now" aria-label="Dismiss invite" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', padding: 4 }}>
+                  <D.Icon name="x" size={13} />
+                </button>
+              </div>
+            ))}
           </div>
         )}
 

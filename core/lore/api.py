@@ -12,7 +12,7 @@ from .index import index_note, index_document
 from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
-from . import auth, tenancy
+from . import auth, mailer, tenancy
 
 app = FastAPI(title="Lore Core")
 _conn = db.connect(); db.bootstrap_schema(_conn)
@@ -129,11 +129,21 @@ def teams_create(req: TeamCreateReq, user_id: str = Depends(require_user)):
 @app.post("/teams/{team_id}/invites")
 def teams_invite(team_id: str, req: InviteReq, user_id: str = Depends(require_user)):
     """Invite an email address to the team. Caller must be an active member.
-    Returns the invite; delivering it (email) is the desktop app's job for now."""
+    Sends the invite email when SMTP is configured; the response's `delivered` +
+    `delivery_reason` say honestly whether it went out (invite exists either way)."""
     try:
-        return tenancy.invite_to_team(_conn, team_id, req.email, user_id)
+        invite = tenancy.invite_to_team(_conn, team_id, req.email, user_id)
     except tenancy.InviteError as e:
         raise HTTPException(status_code=403, detail=str(e))
+    team_row = _conn.execute("select name from teams where id=%s", (team_id,)).fetchone()
+    inviter_row = _conn.execute("select name, email from users where id=%s", (user_id,)).fetchone()
+    delivery = mailer.send_invite_email(
+        invite["email"],
+        (team_row[0] if team_row else team_id),
+        (inviter_row[0] or inviter_row[1] if inviter_row else user_id),
+        invite["invite_id"],
+    )
+    return {**invite, "delivered": delivery["delivered"], "delivery_reason": delivery["reason"]}
 
 
 @app.get("/invites")

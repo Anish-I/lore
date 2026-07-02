@@ -684,6 +684,39 @@ ipcMain.handle('auth:status', async () => {
 
 ipcMain.handle('auth:logout', () => { clearSession(); return { ok: true }; });
 
+// ---------- IPC: teams + invites (share a base with another user) ----------
+// Thin authenticated proxies over the backend endpoints; the stored session JWT
+// travels server-side only (renderer never sees the token).
+async function authedFetch(pathname, opts = {}) {
+  const sess = loadSession();
+  if (!sess || !sess.token) return { ok: false, status: 401, body: { detail: 'not signed in' } };
+  try {
+    const r = await fetch(`${BACKEND_URL()}${pathname}`, {
+      ...opts,
+      headers: {
+        'content-type': 'application/json',
+        Authorization: `Bearer ${sess.token}`,
+        ...(opts.headers || {}),
+      },
+    });
+    const body = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, body };
+  } catch (e) {
+    return { ok: false, status: 0, body: { detail: e.message } };
+  }
+}
+
+ipcMain.handle('teams:create', async (_e, name) =>
+  authedFetch('/teams', { method: 'POST', body: JSON.stringify({ name }) }));
+
+ipcMain.handle('teams:invite', async (_e, teamId, email) =>
+  authedFetch(`/teams/${encodeURIComponent(teamId)}/invites`, { method: 'POST', body: JSON.stringify({ email }) }));
+
+ipcMain.handle('invites:list', async () => authedFetch('/invites'));
+
+ipcMain.handle('invites:accept', async (_e, inviteId) =>
+  authedFetch(`/invites/${encodeURIComponent(inviteId)}/accept`, { method: 'POST' }));
+
 // ---------- IPC: wizards (installable knowledge bases / "app store") ----------
 function vaultRoot() {
   const cfg = loadConfig() || {};

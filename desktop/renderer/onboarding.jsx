@@ -461,6 +461,18 @@ function OB_Onboarding({ onDone }) {
       } catch { /* non-fatal */ }
     }
 
+    // Team intent = create + signed in → actually create the base on the server
+    // so its scope exists (and is invitable) the moment the app opens.
+    if (teamIntent === 'create' && teamName.trim() && teamEmail && window.lore?.teams?.create) {
+      try {
+        const r = await window.lore.teams.create(teamName.trim());
+        if (r && r.ok && r.body && r.body.team_id) {
+          cfg.team = { ...cfg.team, team_id: r.body.team_id, scope: r.body.scope };
+          if (window.lore?.config?.set) { try { await window.lore.config.set(cfg); } catch { /* non-fatal */ } }
+        }
+      } catch { /* non-fatal — the base can be created later from Settings */ }
+    }
+
     setSaving(false);
     onDone(cfg, { scan: backfillClaude, openImport: selectedApps.length > 0 && pendingImportPaths.length === 0 });
   };
@@ -677,7 +689,11 @@ function OB_Onboarding({ onDone }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '11px 12px', border: '1px solid var(--brand-soft-border)', borderRadius: 'var(--radius-md)', background: 'var(--brand-soft-bg)' }}>
                   <OB_Icon name="check-circle-2" size={16} style={{ color: 'var(--brand-fg)' }} />
                   <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--brand-fg)' }}>{teamEmail}</span>
-                  <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Team sync is coming — your intent is saved.</span>
+                  <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
+                    {teamIntent === 'create'
+                      ? 'Signed in — your base is created when you finish setup.'
+                      : 'Signed in — pending invites appear once you finish setup.'}
+                  </span>
                 </div>
               ) : (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>

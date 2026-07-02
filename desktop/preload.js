@@ -100,6 +100,17 @@ contextBridge.exposeInMainWorld('lore', {
     logout: () => ipcRenderer.invoke('auth:logout'),
   },
 
+  // --- teams + invites (share a base with another user) ---
+  // Each call returns {ok, status, body} from the backend (401 body when signed out).
+  teams: {
+    create:  (name)            => ipcRenderer.invoke('teams:create', name),
+    invite:  (teamId, email)   => ipcRenderer.invoke('teams:invite', teamId, email),
+  },
+  invites: {
+    list:    ()                => ipcRenderer.invoke('invites:list'),
+    accept:  (inviteId)        => ipcRenderer.invoke('invites:accept', inviteId),
+  },
+
   // --- MCP server ---
   // detect()    → { detected, installed, configPath }
   // install()   → { ok, backupPath, configPath, reason? }
