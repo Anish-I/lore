@@ -242,24 +242,16 @@ function uniqueVaultRoot(parent, baseName) {
   return path.join(parent, `${baseName} ${Date.now()}`);
 }
 
-function finishVaultCreate(root, parent) {
-  try {
-    const stat = fs.existsSync(root) ? fs.statSync(root) : null;
-    if (stat && !stat.isDirectory()) return { ok: false, error: 'A file already exists at that path.' };
-    fs.mkdirSync(root, { recursive: true });
-  } catch (e) {
-    return { ok: false, error: String((e && e.message) || e) };
-  }
-  registerRoot(root);
-  startWatch(root);
-
-  // Generate a fresh tenant id scoped to this new library so its graph starts empty.
-  const libName = path.basename(root);
-  const slug = libName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'lib';
+// A fresh tenant id scoped to a library, so each library's graph starts empty.
+function mintTenant(root) {
+  const slug = path.basename(root).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'lib';
   const suffix = require('crypto').randomBytes(3).toString('hex'); // 6 lowercase hex chars
-  const tenant = `lib-${slug}-${suffix}`;
+  return `lib-${slug}-${suffix}`;
+}
 
-  // Seed a Home note so the library opens with useful content rather than an empty sidebar.
+// Writes a Home.md welcome note into `root` so a new/empty library opens with
+// useful content rather than an empty sidebar. Non-fatal on failure.
+function seedWelcomeNote(root, libName) {
   const homePath = path.join(root, 'Home.md');
   const homeContent = `---
 scope: private
@@ -298,6 +290,22 @@ Install **Lore Hooks** from Settings → Hooks to auto-capture Claude Code sessi
 Start by renaming this note or creating a new one with the **New note** button.
 `;
   try { fs.writeFileSync(homePath, homeContent, 'utf8'); } catch { /* non-fatal: library still opens */ }
+}
+
+function finishVaultCreate(root, parent) {
+  try {
+    const stat = fs.existsSync(root) ? fs.statSync(root) : null;
+    if (stat && !stat.isDirectory()) return { ok: false, error: 'A file already exists at that path.' };
+    fs.mkdirSync(root, { recursive: true });
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+  registerRoot(root);
+  startWatch(root);
+
+  const libName = path.basename(root);
+  const tenant = mintTenant(root);
+  seedWelcomeNote(root, libName);
 
   const tree = buildTree(root);
   return { ok: true, root, name: libName, parent, tree, indexed: countNotes(tree), tenant };
@@ -309,8 +317,20 @@ ipcMain.handle('vault:pick', async () => {
   const root = r.filePaths[0];
   registerRoot(root);   // path-guard: allow reads/writes inside this vault
   startWatch(root);
-  const tree = buildTree(root);
-  return { root, name: path.basename(root), tree, indexed: countNotes(tree) };
+
+  // Empty existing folder: seed a welcome note + mint a tenant so it behaves like a
+  // fresh library. Only when there's no config tenant yet — never rotate an existing one.
+  let tenant;
+  let tree = buildTree(root);
+  if (countNotes(tree) === 0) {
+    const cfg = loadConfig();
+    if (!(cfg && cfg.tenant)) {
+      seedWelcomeNote(root, path.basename(root));
+      tenant = mintTenant(root);
+      tree = buildTree(root);
+    }
+  }
+  return { root, name: path.basename(root), tree, indexed: countNotes(tree), tenant };
 });
 
 ipcMain.handle('vault:create', async (_e, opts) => {
