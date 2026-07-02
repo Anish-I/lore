@@ -6,15 +6,21 @@ const grNS = window.VaultDesignSystem_ffbf58;
 const { Icon: GrIcon, ScopeTag: GrScope, Button: GrButton } = grNS;
 const GR_SCOPE_VAR = { team: '--jade-500', enterprise: '--azure-500', private: '--obsidian-400' };
 function grScopeKey(scope) { return scope == null ? '' : String(scope).trim(); }
+// A solo library's notes carry a PURPOSE scope (e.g. "engineering" — from the
+// onboarding role question, meant to tailor the AI's tone, never a real ACL
+// category) rather than a literal "private" tag. The graph's scope filter must
+// only ever show the three real system scopes — team/enterprise pass through,
+// everything else (including a purpose string) canonicalizes to "private" —
+// matching passesScopeFilter's rule in wired-app.jsx.
+function grCanonicalScope(scope) {
+  const s = grScopeKey(scope).toLowerCase();
+  return (s === 'team' || s === 'enterprise') ? s : 'private';
+}
 function grScopeList(nodes) {
-  const out = [], seen = new Set();
-  for (const n of nodes || []) {
-    const s = grScopeKey(n.scope);
-    if (!s) continue;
-    const key = s.toLowerCase();
-    if (!seen.has(key)) { seen.add(key); out.push(s); }
-  }
-  return out.sort((a, b) => a.localeCompare(b));
+  const seen = new Set();
+  for (const n of nodes || []) seen.add(grCanonicalScope(n.scope));
+  const order = { private: 0, team: 1, enterprise: 2 };
+  return Array.from(seen).sort((a, b) => order[a] - order[b]);
 }
 function grScopeVar(scope) { return GR_SCOPE_VAR[scope] || '--brand-fg'; }
 
@@ -32,10 +38,13 @@ const GR_EDGE_KINDS = [
   { kind: 'supports',    color: '#3fa85f', label: 'supports',    structural: false },
   { kind: 'contradicts', color: '#d6504f', label: 'contradicts', structural: false },
   { kind: 'implements',  color: '#3fa89a', label: 'implements',  structural: false },
-  { kind: 'relates_to',  color: '#888888', label: 'relates to',  structural: false },
+  { kind: 'relates_to',  color: '#c98a56', label: 'relates to',  structural: false },
   { kind: 'link',   color: '#c9a24b', label: 'wikilink',      structural: true },
   { kind: 'tag',    color: '#d6b34a', label: 'shared tag',    structural: true },
-  { kind: 'folder', color: '#5a5e68', label: 'same folder',   structural: true },
+  // Grayscale hexes here would blend into the near-black canvas and read as
+  // "uncolored" — folder is the most common edge kind by far, so it must be a
+  // real, distinguishable hue even muted, not gray.
+  { kind: 'folder', color: '#6c7bb0', label: 'same folder',   structural: true },
   { kind: 'topic',  color: '#3a8f8a', label: 'topic',         structural: true },
 ];
 const GR_EDGE_COLORS = Object.fromEntries(GR_EDGE_KINDS.map((e) => [e.kind, e.color]));
@@ -156,8 +165,8 @@ function GraphView({ graph, onOpen }) {
 
     const visible = (n) => {
       if (!n) return false;
-      const sc = grScopeKey(n.scope);
-      if (sc && filtersRef.current[sc] === false) return false;
+      const sc = grCanonicalScope(n.scope);
+      if (filtersRef.current[sc] === false) return false;
       if (GR_DATE_RE.test(n.label || '')) return false;           // date notes are folded into topics → never shown
       const t = Date.parse(n.created || n.updated);
       if (!isNaN(t) && t > cutoffRef.current) return false;        // version control: hide notes created after the cutoff
