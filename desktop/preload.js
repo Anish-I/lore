@@ -140,6 +140,26 @@ contextBridge.exposeInMainWorld('lore', {
     run:       (opts) => ipcRenderer.invoke('enrich:run', opts || {}),
   },
 
+  // --- sections (auto-proposed note folders) ---
+  // list()     → { sections: [{id, name, topic, status, notes, ...}] }
+  // apply(id)  → user-initiated ONLY: moves the notes into the section folder
+  //              (main-process fs moves under pathGuard) and re-indexes them.
+  // dismiss(id)→ hides the proposal permanently (never re-proposed).
+  // undo(id)   → moves an applied section's notes back to their original paths.
+  sections: {
+    list:    ()   => ipcRenderer.invoke('sections:list'),
+    apply:   (id) => ipcRenderer.invoke('sections:apply', id),
+    dismiss: (id) => ipcRenderer.invoke('sections:dismiss', id),
+    undo:    (id) => ipcRenderer.invoke('sections:undo', id),
+  },
+
+  // --- libraries discovered via `.lore` manifests ---
+  // discovered() → [{root, name, tenant, indexed, topics, tags, lastWork}] for
+  // every folder (configured roots + immediate subfolders) carrying a .lore file.
+  libraries: {
+    discovered: () => ipcRenderer.invoke('libraries:discovered'),
+  },
+
   // --- upkeep ---
   // run(opts?)    → triggers backend /upkeep/run; fires scrapeProgress 'done' when complete
   // status()      → backend GET /upkeep/status response

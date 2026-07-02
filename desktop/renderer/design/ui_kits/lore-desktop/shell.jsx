@@ -298,7 +298,7 @@ function SH_baseName(p) {
   return String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot }) {
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
   // Library up/down switcher — only shown with more than one configured library (root folder).
   const showLibrarySwitcher = Array.isArray(roots) && roots.length > 1 && typeof onSwitchRoot === 'function';
@@ -313,6 +313,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
   const [grpInput, setGrpInput] = React.useState(false);
   const [grpName, setGrpName] = React.useState('');
   const [grpStatus, setGrpStatus] = React.useState('');
+  // Section proposal currently being applied/undone (disables its buttons).
+  const [secBusy, setSecBusy] = React.useState(null);
 
   const handleAddGroup = async () => {
     const name = grpName.trim();
@@ -425,6 +427,56 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', padding: '2px 0' }}>No groups yet — click + to add one.</div>
           )}
         </div>
+      {/* Proposed sections — Lore's background upkeep noticed topic clusters. Nothing
+          moves unless the user clicks Enable; Undo restores the recorded original paths. */}
+      {(() => {
+        const visible = (sectionProposals || []).filter((s) => s.status !== 'dismissed');
+        if (!visible.length) return null;
+        const secBtn = (tone) => ({
+          border: `1px solid ${tone === 'primary' ? 'var(--brand-soft-border)' : 'var(--border)'}`,
+          borderRadius: 'var(--radius-sm)', padding: '2px 8px', cursor: 'pointer',
+          background: tone === 'primary' ? 'var(--brand-soft-bg)' : 'transparent',
+          color: tone === 'primary' ? 'var(--brand-fg)' : 'var(--text-faint)',
+          fontFamily: 'var(--font-sans)', fontSize: 10.5, whiteSpace: 'nowrap',
+        });
+        const run = async (id, fn) => {
+          if (!fn || secBusy) return;
+          setSecBusy(id);
+          try { await fn(id); } finally { setSecBusy(null); }
+        };
+        return (
+          <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <Icon name="folder-plus" size={11} style={{ color: 'var(--text-faint)' }} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Proposed sections</span>
+              <HelpHint size={13} tip="Lore noticed groups of notes on the same topic and proposes a folder for each. Nothing is moved until you click Enable — and Undo puts every note back where it was." />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {visible.map((s) => {
+                const busy = secBusy === s.id;
+                const applied = s.status === 'applied';
+                return (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Icon name={applied ? 'folder-check' : 'folder'} size={12} style={{ color: applied ? 'var(--jade-400)' : 'var(--text-subtle)', flexShrink: 0 }} />
+                    <span title={(s.notes || []).map((n) => n.title || n.id).join('\n')} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--text-body)' }}>
+                      {s.name}
+                      <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 }}> · {(s.notes || []).length}</span>
+                    </span>
+                    {applied ? (
+                      <button disabled={busy} onClick={() => run(s.id, onSectionUndo)} title="Move these notes back to their original locations" style={secBtn()}>{busy ? '…' : 'Undo'}</button>
+                    ) : (
+                      <React.Fragment>
+                        <button disabled={busy} onClick={() => run(s.id, onSectionApply)} title={`Create a "${s.name}" folder and move these notes into it`} style={secBtn('primary')}>{busy ? '…' : 'Enable'}</button>
+                        <button disabled={busy} onClick={() => run(s.id, onSectionDismiss)} title="Dismiss this proposal (it won't be suggested again)" style={secBtn()}>✕</button>
+                      </React.Fragment>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
         {tree.map((n) => (
           <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}

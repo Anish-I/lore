@@ -10,6 +10,7 @@ const installer    = require('./hooks-installer');
 const mcpInstaller = require('./mcp-installer');
 const googleOauth  = require('./lib/google-oauth');
 const runtime      = require('./lib/runtime');
+const loreManifest = require('./lib/lore-manifest');
 
 // Backend URL/port are wiring values, not constants: resolved lazily (env var > cfg
 // field > default) via desktop/lib/runtime.js so a config edit or LORE_PORT/
@@ -38,11 +39,19 @@ function startUpkeepInterval(tenant) {
   const intervalMs = (cfg.upkeepIntervalMinutes || 30) * 60_000;
   upkeepInterval = setInterval(async () => {
     try {
+      // auto_classify only tags notes + records Section PROPOSALS server-side.
+      // No files ever move from this background run — apply is a user click.
+      const c = loadConfig() || {};
       await fetch(`${BACKEND_URL()}/upkeep/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tenant }),
+        body: JSON.stringify({
+          tenant,
+          auto_classify: c.autoClassify === true,
+          section_threshold: c.sectionThreshold || 5,
+        }),
       });
+      refreshManifests('upkeep-auto', 'background upkeep run');
       if (win && !win.isDestroyed())
         win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'upkeep complete', errors: 0 });
     } catch { /* backend may not be up; silently skip */ }
@@ -98,6 +107,85 @@ function saveConfig(cfg) {
   // Register any scrape roots so the path-guard accepts them.
   if (Array.isArray(cfg.roots)) cfg.roots.forEach(registerRoot);
 }
+
+// ---------- .lore manifests (per-folder discovery/breadcrumb cache) ----------
+// After every scrape / reconcile / upkeep / import / section change, each library
+// root gets its `.lore` manifest refreshed + a worklog entry appended, so a fresh
+// startup can rediscover where Lore has worked (see discoverLibraries below).
+function postJSON(url, body) {
+  return fetch(url, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function refreshManifests(action, summaryText) {
+  try {
+    const cfg = loadConfig() || {};
+    const roots = Array.isArray(cfg.roots) ? cfg.roots : [];
+    if (!roots.length) return;
+    let topics = [], tags = [];
+    if (cfg.tenant) {
+      try {
+        const r = await fetch(`${BACKEND_URL()}/tags?tenant=${encodeURIComponent(cfg.tenant)}`);
+        if (r.ok) { const b = await r.json(); topics = b.topics || []; tags = b.tags || []; }
+      } catch { /* backend down — still write counts + worklog */ }
+    }
+    for (const root of roots) {
+      try {
+        if (!fs.existsSync(root)) continue;
+        loreManifest.write(root, {
+          tenant: cfg.tenant || null,
+          scope: cfg.scope || null,
+          indexed: { count: countNotes(buildTree(root)), updatedAt: new Date().toISOString() },
+          topics, tags,
+        });
+        if (action) loreManifest.appendWorklog(root, { action, summary: summaryText || action });
+      } catch { /* a breadcrumb writer must never break the app */ }
+    }
+  } catch { /* never throw */ }
+}
+
+// Scan the configured roots (and their immediate subfolders, plus the default
+// library parent) for `.lore` files — lightweight: reads manifests only, never
+// re-walks note trees. Powers the renderer's "reopen a known library" surface.
+function discoverLibraries() {
+  const found = new Map();
+  const cfg = loadConfig() || {};
+  const parents = new Set(Array.isArray(cfg.roots) ? cfg.roots : []);
+  if (ENV_VAULT_ROOT) parents.add(ENV_VAULT_ROOT);
+  try { parents.add(defaultVaultParent()); } catch { /* app not ready yet */ }
+  for (const parent of parents) {
+    const candidates = [parent];
+    try {
+      for (const e of fs.readdirSync(parent, { withFileTypes: true })) {
+        if (e.isDirectory() && !e.name.startsWith('.')) candidates.push(path.join(parent, e.name));
+      }
+    } catch { /* parent missing — skip */ }
+    for (const dir of candidates) {
+      const key = path.normalize(dir);
+      if (found.has(key)) continue;
+      const m = loreManifest.read(dir);
+      if (!m) continue;
+      found.set(key, {
+        root: dir,
+        name: path.basename(dir),
+        tenant: m.tenant || null,
+        scope: m.scope || null,
+        indexed: m.indexed || null,
+        topics: Array.isArray(m.topics) ? m.topics : [],
+        tags: Array.isArray(m.tags) ? m.tags : [],
+        lastWork: Array.isArray(m.worklog) && m.worklog.length ? m.worklog[m.worklog.length - 1] : null,
+      });
+    }
+  }
+  return [...found.values()];
+}
+
+ipcMain.handle('libraries:discovered', () => {
+  try { return discoverLibraries(); } catch { return []; }
+});
 
 // ---------- backend lifecycle ----------
 async function isBackendUp() {
@@ -537,6 +625,7 @@ ipcMain.handle('scrape:start', (_e, scrapeConfig) => {
       if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt);
     },
   }).then((summary) => {
+    refreshManifests('scrape', `indexed ${summary.files} file(s), ${summary.errors} error(s)`);
     if (win && !win.isDestroyed())
       win.webContents.send('scrape:progress', { phase: 'done', done: summary.files, total: summary.files, current: '', errors: summary.errors, summary });
   }).catch((e) => {
@@ -612,6 +701,7 @@ async function runImport(paths) {
         onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
       });
     } catch { summary.errors++; }
+    refreshManifests('import', `imported ${summary.copied} file(s), ${summary.errors} error(s)`);
     if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', { phase: 'done', done: summary.copied, total: summary.copied, current: 'import complete', errors: summary.errors, summary });
   }
   return { ok: true, ...summary };
@@ -947,12 +1037,20 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
   const { tenant, scope } = opts || {};
   if (!tenant) return { error: 'tenant is required' };
   try {
+    // cfg.autoClassify opts into tagging + Section PROPOSALS (state only — the
+    // backend never moves files; applying a section is a separate user action).
+    const cfg = loadConfig() || {};
     const r = await fetch(`${BACKEND_URL()}/upkeep/run`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ tenant, scope }),
+      body: JSON.stringify({
+        tenant, scope,
+        auto_classify: cfg.autoClassify === true,
+        section_threshold: cfg.sectionThreshold || 5,
+      }),
     });
     const result = await r.json();
+    refreshManifests('upkeep', `upkeep run — folded ${result.folded || 0}, topics ${result.topics || 0}`);
     // Notify the renderer so it can refresh the graph / status panel.
     if (win && !win.isDestroyed())
       win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'upkeep complete', errors: 0, summary: result });
@@ -960,6 +1058,130 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
   } catch (e) {
     return { error: String(e) };
   }
+});
+
+// ---------- IPC: sections (auto-proposed note folders) ----------
+// SAFEGUARD: section proposals are computed in the background, but files move
+// ONLY inside sections:apply / sections:undo below — i.e. only when the user
+// clicks Enable/Undo in the renderer. Every move runs under pathGuard and the
+// backend merely tracks state + original paths.
+
+ipcMain.handle('sections:list', async () => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { sections: [] };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`);
+    return await r.json();
+  } catch (e) {
+    return { sections: [], error: String(e) };
+  }
+});
+
+ipcMain.handle('sections:dismiss', async (_e, id) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { ok: false, error: 'tenant is not configured' };
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(id)}/dismiss`, { tenant: cfg.tenant });
+    const body = await r.json();
+    return r.ok ? body : { ok: false, error: body.detail || `backend ${r.status}` };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+// Moves one file (already pathGuard-ed) and keeps the index in sync:
+// /forget the old path (its note id is path-derived), /reindex the new one.
+async function moveAndReindex(from, to, cfg) {
+  fs.mkdirSync(path.dirname(to), { recursive: true });
+  fs.renameSync(from, to);
+  const fromFwd = from.replace(/\\/g, '/');
+  try { await postJSON(`${BACKEND_URL()}/forget`, { tenant: cfg.tenant, path_prefix: fromFwd }); } catch { /* index catches up on reconcile */ }
+  try { await postJSON(`${BACKEND_URL()}/reindex`, { path: to, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }); } catch { /* ditto */ }
+}
+
+ipcMain.handle('sections:apply', async (_e, id) => {
+  const cfg = loadConfig() || {};
+  const root = vaultRoot();
+  if (!root || !cfg.tenant) return { ok: false, error: 'No library/tenant configured' };
+
+  // Resolve the section name so the destination folder can be computed up front.
+  let section;
+  try {
+    const lr = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`);
+    const body = await lr.json();
+    section = (body.sections || []).find((s) => s.id === id);
+  } catch (e) { return { ok: false, error: String(e) }; }
+  if (!section) return { ok: false, error: 'Section not found' };
+  const destDir = path.join(root, safeVaultName(section.name, 'Section'));
+
+  // Backend transition proposed -> applied; records each note's ORIGINAL path
+  // for undo and returns the move plan. It does not touch the filesystem.
+  let plan;
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(id)}/apply`,
+      { tenant: cfg.tenant, dest_dir: destDir.replace(/\\/g, '/') });
+    plan = await r.json();
+    if (!r.ok) return { ok: false, error: plan.detail || `backend ${r.status}` };
+  } catch (e) { return { ok: false, error: String(e) }; }
+
+  // Execute the plan — the ONLY place proposed-section files move, and only
+  // because the user clicked Enable. Never overwrites an existing file.
+  try { fs.mkdirSync(destDir, { recursive: true }); } catch { /* exists */ }
+  let moved = 0, skipped = 0;
+  for (const mv of (plan.moves || [])) {
+    try {
+      const from = path.normalize(mv.from);
+      const to = mv.to ? path.normalize(mv.to) : path.join(destDir, path.basename(from));
+      pathGuard(from); pathGuard(to);
+      if (!fs.existsSync(from) || fs.existsSync(to)) { skipped++; continue; }
+      await moveAndReindex(from, to, cfg);
+      moved++;
+    } catch { skipped++; }
+  }
+  try { loreManifest.appendWorklog(root, { action: 'section-apply', summary: `applied section "${section.name}" — moved ${moved} note(s)` }); } catch { /* ignore */ }
+  refreshManifests();
+  if (win && !win.isDestroyed())
+    win.webContents.send('scrape:progress', { phase: 'done', done: moved, total: (plan.moves || []).length, current: `section "${section.name}" applied`, errors: skipped });
+  return { ok: true, moved, skipped, folder: destDir };
+});
+
+ipcMain.handle('sections:undo', async (_e, id) => {
+  const cfg = loadConfig() || {};
+  const root = vaultRoot();
+  if (!root || !cfg.tenant) return { ok: false, error: 'No library/tenant configured' };
+
+  // Backend transition applied -> proposed; returns the recorded original paths.
+  let plan;
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(id)}/undo`, { tenant: cfg.tenant });
+    plan = await r.json();
+    if (!r.ok) return { ok: false, error: plan.detail || `backend ${r.status}` };
+  } catch (e) { return { ok: false, error: String(e) }; }
+
+  // Move each file back to its recorded original path (user-initiated only).
+  let moved = 0, skipped = 0;
+  const sectionDirs = new Set();
+  for (const mv of (plan.moves || [])) {
+    try {
+      const from = path.normalize(mv.from);                     // original location
+      const current = mv.to ? path.normalize(mv.to) : null;     // where apply put it
+      if (!current) { skipped++; continue; }
+      pathGuard(current); pathGuard(from);
+      if (!fs.existsSync(current) || fs.existsSync(from)) { skipped++; continue; }
+      sectionDirs.add(path.dirname(current));
+      await moveAndReindex(current, from, cfg);
+      moved++;
+    } catch { skipped++; }
+  }
+  // Tidy up now-empty section folders (best-effort; never recursive).
+  for (const dir of sectionDirs) {
+    try { if (fs.readdirSync(dir).length === 0) fs.rmdirSync(dir); } catch { /* keep it */ }
+  }
+  try { loreManifest.appendWorklog(root, { action: 'section-undo', summary: `undid section "${plan.name || id}" — restored ${moved} note(s)` }); } catch { /* ignore */ }
+  refreshManifests();
+  if (win && !win.isDestroyed())
+    win.webContents.send('scrape:progress', { phase: 'done', done: moved, total: (plan.moves || []).length, current: 'section undo complete', errors: skipped });
+  return { ok: true, moved, skipped };
 });
 
 // ---------- IPC: enrichment LLM providers (codex sub / claude sub / byok) ----------
@@ -1071,6 +1293,7 @@ async function reconcileIndex(bootStatus) {
       // banner shows this exactly like a user-initiated scrape.
       onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
     });
+    refreshManifests('reconcile', `re-indexed ${summary.files} file(s), ${summary.errors} error(s)`);
     if (win && !win.isDestroyed()) {
       win.webContents.send('scrape:progress', {
         phase: 'done', done: summary.files, total: summary.files,

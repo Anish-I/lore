@@ -590,20 +590,97 @@ class UpkeepRunReq(BaseModel):
     tenant: str
     scope: Optional[str] = None
     use_llm: bool = False   # when True: Ollama-assisted topic extraction (slower, capped at 25 notes)
+    auto_classify: bool = False      # opt-in (cfg.autoClassify): tag notes + propose Sections
+    section_threshold: int = 5       # notes on one topic before a Section is proposed
 
 @app.post("/upkeep/run")
 def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     """Fold ephemeral date/session notes into durable topic nodes.
 
-    Body: {tenant, scope?, use_llm?:bool=False}
-    Returns: {dateNotes, topics, folded}
+    With auto_classify=true also tags untagged notes and upserts Section PROPOSALS —
+    state only; no files are ever moved by upkeep (apply is an explicit user action).
+
+    Body: {tenant, scope?, use_llm?:bool=False, auto_classify?:bool=False, section_threshold?:int=5}
+    Returns: {dateNotes, topics, folded, ...}
     """
     from .upkeep import run_upkeep
     global _upkeep_last_run, _upkeep_last_stats
-    stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm)
+    stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm,
+                       auto_classify=req.auto_classify,
+                       section_threshold=req.section_threshold)
     _upkeep_last_run = datetime.datetime.utcnow().isoformat()
     _upkeep_last_stats = stats
     return stats
+
+
+# --- Sections (auto-proposed note folders) ---------------------------------
+# SAFEGUARD: these endpoints track state and return move PLANS only. The
+# backend never moves files — the desktop main process executes plans under
+# its path-guard, and only when the user explicitly applies/undoes a section.
+
+class SectionApplyReq(BaseModel):
+    tenant: str
+    dest_dir: Optional[str] = None   # desktop-supplied destination folder for the plan
+
+class SectionReq(BaseModel):
+    tenant: str
+
+
+@app.get("/sections")
+def sections_list(tenant: Optional[str] = None):
+    """All section proposals (proposed + applied + dismissed) for a tenant.
+    Returns {sections:[{id, name, topic, status, notes:[{id,title,path}], ...}]}"""
+    from . import sections
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return {"sections": sections.list_sections(_conn, tenant)}
+
+
+@app.post("/sections/{section_id}/apply")
+def sections_apply(section_id: str, req: SectionApplyReq):
+    """Mark a proposed section applied; record original paths; return the move plan.
+    Body: {tenant, dest_dir?}. The DESKTOP performs the actual file moves."""
+    from . import sections
+    try:
+        return sections.apply_section(_conn, req.tenant, section_id, dest_dir=req.dest_dir)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/sections/{section_id}/dismiss")
+def sections_dismiss(section_id: str, req: SectionReq):
+    """Dismiss a proposed section (sticky — the topic is never re-proposed)."""
+    from . import sections
+    try:
+        return sections.dismiss_section(_conn, req.tenant, section_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/sections/{section_id}/undo")
+def sections_undo(section_id: str, req: SectionReq):
+    """Revert an applied section to proposed; return the recorded original paths
+    so the DESKTOP can move the files back."""
+    from . import sections
+    try:
+        return sections.undo_section(_conn, req.tenant, section_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/tags")
+def tags_list(tenant: Optional[str] = None):
+    """Distinct tags + topics for a tenant (feeds the desktop's .lore manifest).
+    Returns {tags:[...], topics:[...]}"""
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    tags = [r[0] for r in _conn.execute(
+        "select distinct tag from note_tags where tenant_id=%s and kind='tag' order by tag",
+        (tenant,)).fetchall()]
+    topics = [r[0] for r in _conn.execute(
+        "select distinct tag from note_tags where tenant_id=%s and kind='topic' order by tag",
+        (tenant,)).fetchall()]
+    return {"tags": tags, "topics": topics}
 
 
 class EnrichReq(BaseModel):
