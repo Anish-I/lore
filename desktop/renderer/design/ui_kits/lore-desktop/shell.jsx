@@ -297,7 +297,7 @@ function SH_baseName(p) {
   return String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo }) {
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, discoveredLibraries, onOpenDiscovered, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
   // Library up/down switcher — only shown with more than one configured library (root folder).
   const showLibrarySwitcher = Array.isArray(roots) && roots.length > 1 && typeof onSwitchRoot === 'function';
@@ -308,10 +308,16 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
     nextLibraryName = SH_baseName(roots[(idx + 1) % roots.length]);
   }
 
+  // Libraries discovered via `.lore` manifests but not currently configured/open —
+  // surfaced in a small popover so a known library can be reopened with one click.
+  const otherLibs = Array.isArray(discoveredLibraries) ? discoveredLibraries : [];
+  const showOtherLibs = otherLibs.length > 0 && typeof onOpenDiscovered === 'function';
+
   // "Add group" inline form state — hooks must run before any early return.
   const [grpInput, setGrpInput] = React.useState(false);
   const [grpName, setGrpName] = React.useState('');
   const [grpStatus, setGrpStatus] = React.useState('');
+  const [libsOpen, setLibsOpen] = React.useState(false);
   // Section proposal currently being applied/undone (disables its buttons).
   const [secBusy, setSecBusy] = React.useState(null);
 
@@ -386,6 +392,33 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
           <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <IconButton icon="chevron-up" label={`Previous library — ${prevLibraryName}`} size="sm" onClick={() => onSwitchRoot(-1)} />
             <IconButton icon="chevron-down" label={`Next library — ${nextLibraryName}`} size="sm" onClick={() => onSwitchRoot(1)} />
+          </div>
+        )}
+        {showOtherLibs && (
+          <div style={{ position: 'relative' }}>
+            <IconButton icon="library" label={`Other libraries found (${otherLibs.length})`} size="sm" onClick={() => setLibsOpen((o) => !o)} />
+            {libsOpen && (
+              <React.Fragment>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setLibsOpen(false)} />
+                <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, width: 250, maxHeight: 300, overflowY: 'auto', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)' }}>
+                  <div style={{ padding: '7px 10px', borderBottom: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Other libraries found</div>
+                  {otherLibs.map((d) => (
+                    <div key={d.root} onClick={() => { setLibsOpen(false); onOpenDiscovered(d.root); }} title={d.root}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer' }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                      <Icon name="library" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+                          {d.indexed && d.indexed.count != null ? `${d.indexed.count} notes · ` : ''}{d.root}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </React.Fragment>
+            )}
           </div>
         )}
         <IconButton icon="plus" label="New note" size="sm" onClick={onCreateNote} />

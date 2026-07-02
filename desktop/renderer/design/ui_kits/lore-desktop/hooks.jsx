@@ -83,6 +83,18 @@ Rules:
 - This is write-only: it does not read from Lore. To recall from Lore, POST to http://localhost:8099/search with {"query":"...", "scopes":["${scope || '<scope>'}"], "tenant_id":"${tenant || '<tenant>'}", "k":5} and use the results as context.`;
 }
 
+// The capture-scope dropdown used to show bare internal values ("none / engineering /
+// private") with zero context — user feedback: "WHAT IS ENGINEERING?". Scopes like
+// "engineering" are the onboarding purpose answer (the user's role, so the connected
+// AI can pitch its answers right); label each option with what it actually means.
+const HK_PURPOSE_SCOPES = new Set(['engineering', 'research', 'writing', 'team-memory']);
+function HK_scopeOption(s) {
+  if (s === 'private') return { value: s, label: 'private (only you)' };
+  if (HK_PURPOSE_SCOPES.has(s)) return { value: s, label: `${s} (your role)` };
+  return { value: s, label: s };
+}
+const HK_SCOPE_TIP = 'Which scope captured sessions are filed under. "none" leaves them unscoped; "private" keeps them local-only, visible just to you; a role scope like "engineering" (your purpose from setup) tells the connected AI who is using Lore so answers match your work.';
+
 function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg, onToggle, onMode, onScope, scopeOptions, identityReady, last }) {
   const known       = HK_KNOWN[id] || {};
   const label       = known.label || name || id;
@@ -91,7 +103,7 @@ function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg,
   const enabled     = cfg.enabled;
   const installing  = cfg.installing;
   const cannotEnable = experimental || !detected || !identityReady;
-  const scopeSelectOptions = [{ value: '', label: 'none' }, ...(scopeOptions || []).map((s) => ({ value: s, label: s }))];
+  const scopeSelectOptions = [{ value: '', label: 'none (unscoped)' }, ...(scopeOptions || []).map(HK_scopeOption)];
 
   // Derive badge from live status + statusEntry
   const liveStatus  = statusEntry
@@ -117,6 +129,7 @@ function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg,
               onChange={(e) => onMode(e.target.value)}
               options={['live', 'session-end']}
             />
+            {window.LoreHelpHint && <window.LoreHelpHint size={13} tip={HK_SCOPE_TIP} />}
             <HK_Select
               value={cfg.scope}
               onChange={(e) => onScope(e.target.value)}
