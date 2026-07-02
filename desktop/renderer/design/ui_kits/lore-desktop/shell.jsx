@@ -81,7 +81,35 @@ function SH_uniqScopes(values) {
   return out;
 }
 
-function Titlebar({ theme, onToggleTheme, onSearch, onAsk, onSettings, onProfile, onImport }) {
+// Top-bar scope filter — "All / Private / Team / Plugins". Applied by the caller (wired-app)
+// to BOTH the file tree and the graph; this component only renders the pill control.
+const SCOPE_FILTERS = [
+  { id: 'all', label: 'All' },
+  { id: 'private', label: 'Private' },
+  { id: 'team', label: 'Team' },
+  { id: 'plugins', label: 'Plugins' },
+];
+
+function ScopeFilterBar({ value, onChange }) {
+  const active = value || 'all';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: 2, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', WebkitAppRegion: 'no-drag' }}>
+      {SCOPE_FILTERS.map((f) => {
+        const isActive = active === f.id;
+        return (
+          <button key={f.id} onClick={() => onChange(f.id)} title={`Show ${f.label.toLowerCase()} notes`} style={{
+            border: 'none', padding: '4px 10px', borderRadius: 'var(--radius-full)', cursor: 'pointer',
+            background: isActive ? 'var(--surface-raised)' : 'transparent',
+            color: isActive ? 'var(--brand-fg)' : 'var(--text-muted)',
+            fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: isActive ? 600 : 400, whiteSpace: 'nowrap',
+          }}>{f.label}</button>
+        );
+      })}
+    </div>
+  );
+}
+
+function Titlebar({ theme, onToggleTheme, onSearch, onAsk, onSettings, onProfile, onImport, scopeFilter, onScopeFilter }) {
   return (
     <div style={shellS.titlebar}>
       {isMac && <div style={{ width: 72, flexShrink: 0 }} />}
@@ -100,6 +128,7 @@ function Titlebar({ theme, onToggleTheme, onSearch, onAsk, onSettings, onProfile
           <Kbd>⌘K</Kbd>
         </button>
       </div>
+      {onScopeFilter && <ScopeFilterBar value={scopeFilter} onChange={onScopeFilter} />}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, WebkitAppRegion: 'no-drag' }}>
         <button onClick={onImport} title="Import files, folders, or a .zip — drop anywhere too" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 11px', marginRight: 4, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 12.5, cursor: 'pointer' }}>
           <Icon name="upload" size={14} />Import
@@ -265,8 +294,20 @@ function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMen
   );
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel }) {
+function SH_baseName(p) {
+  return String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
+}
+
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
+  // Library up/down switcher — only shown with more than one configured library (root folder).
+  const showLibrarySwitcher = Array.isArray(roots) && roots.length > 1 && typeof onSwitchRoot === 'function';
+  let prevLibraryName = '', nextLibraryName = '';
+  if (showLibrarySwitcher) {
+    const idx = Math.max(0, roots.indexOf(activeRoot));
+    prevLibraryName = SH_baseName(roots[(idx - 1 + roots.length) % roots.length]);
+    nextLibraryName = SH_baseName(roots[(idx + 1) % roots.length]);
+  }
 
   // "Add group" inline form state — hooks must run before any early return.
   const [grpInput, setGrpInput] = React.useState(false);
@@ -340,6 +381,12 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         <Icon name="folder-open" size={16} style={{ color: 'var(--brand-fg)' }} />
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>{workspace.name}</span>
         {workspace.scope && <ScopeTag scope={workspace.scope} size="sm" showLabel={false} />}
+        {showLibrarySwitcher && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <IconButton icon="chevron-up" label={`Previous library — ${prevLibraryName}`} size="sm" onClick={() => onSwitchRoot(-1)} />
+            <IconButton icon="chevron-down" label={`Next library — ${nextLibraryName}`} size="sm" onClick={() => onSwitchRoot(1)} />
+          </div>
+        )}
         <IconButton icon="plus" label="New note" size="sm" onClick={onCreateNote} />
       </div>
       <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>

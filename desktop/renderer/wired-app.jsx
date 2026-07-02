@@ -20,6 +20,44 @@ function flatten(tree, acc = []) {
 }
 function firstNote(tree) { return flatten(tree)[0] || null; }
 
+// Top-bar scope filter (All / Private / Team / Plugins) — shared predicate used for BOTH the
+// file tree (below) and the graph (see filteredGraph). `wizardHit` is precomputed by the caller
+// (a wizard-id Set built from the unfiltered tree) since graph nodes don't carry a wizard flag.
+function passesScopeFilter(filter, scopeValue, wizardHit) {
+  if (!filter || filter === 'all') return true;
+  if (filter === 'private') return scopeValue === 'private';
+  if (filter === 'team') return scopeValue === 'team' || scopeValue === 'enterprise';
+  if (filter === 'plugins') return Boolean(wizardHit);
+  return true;
+}
+
+// Collects the ids of wizard-installed notes (main.js buildTree sets `wizard: true` from
+// frontmatter) so both the tree filter and the graph filter can detect "Plugins" notes.
+// Ids are lowercased since graph node paths and tree note ids may differ in case.
+function collectWizardIds(tree, out = new Set()) {
+  for (const n of tree || []) {
+    if (n.kind === 'note' && n.wizard) out.add(String(n.id).toLowerCase());
+    if (n.children) collectWizardIds(n.children, out);
+  }
+  return out;
+}
+
+// Recursively filters the tree by the scope-filter predicate — a folder survives if any
+// descendant note survives. Composes with the (separate, top-level-only) kbFilter/Sections
+// filter, which is applied on top of this result.
+function filterTreeByScope(tree, pred) {
+  const out = [];
+  for (const n of tree || []) {
+    if (n.kind === 'folder') {
+      const children = n.children ? filterTreeByScope(n.children, pred) : [];
+      if (children.length) out.push({ ...n, children });
+    } else if (pred(n)) {
+      out.push(n);
+    }
+  }
+  return out;
+}
+
 // Forces open every folder that is an ancestor of (or equal to) targetId, so a
 // freshly created/renamed item is guaranteed visible after a tree reload.
 function forceOpenAncestors(tree, targetId) {
@@ -262,6 +300,7 @@ function App() {
   const [graphLoading, setGraphLoading] = React.useState(false);
   const [graphNonce, setGraphNonce] = React.useState(0);
   const [kbFilter, setKbFilter] = React.useState([]);   // selected knowledge bases (top-level folders); [] = all
+  const [scopeFilter, setScopeFilter] = React.useState('all'); // top-bar segmented filter: all | private | team | plugins
   const [showImportModal, setShowImportModal] = React.useState(false);
   const [renamingId, setRenamingId] = React.useState(null); // sidebar node currently showing an inline rename input
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
@@ -310,22 +349,35 @@ function App() {
     rel = rel.replace(/^[\\/]+/, '');
     return rel.split(/[\\/]/)[0] || null;
   }, [treeData]);
+  // Built from the UNFILTERED tree — main.js buildTree/scopeOf() sets `wizard: true` on notes
+  // whose frontmatter has a `wizard:` key. Graph nodes carry no wizard flag of their own, so
+  // this Set (keyed by lowercased path) is reused to detect "Plugins" notes on both surfaces.
+  const wizardIds = React.useMemo(() => collectWizardIds(tree), [tree]);
+  // Scope filter (All/Private/Team/Plugins) — recursive, prunes empty folders. Applied BEFORE
+  // the Sections (kbFilter) filter below so the two compose rather than one replacing the other.
+  const scopeFilteredTree = React.useMemo(
+    () => filterTreeByScope(tree, (n) => passesScopeFilter(scopeFilter, n.scope, wizardIds.has(String(n.id).toLowerCase()))),
+    [tree, scopeFilter, wizardIds]
+  );
   const shownTree = React.useMemo(() => {
-    if (!kbFilter.length) return tree;
+    if (!kbFilter.length) return scopeFilteredTree;
     const set = new Set(kbFilter);
-    return tree.filter((n) => n.kind === 'folder' ? set.has(n.name) : true);
-  }, [tree, kbFilter]);
+    return scopeFilteredTree.filter((n) => n.kind === 'folder' ? set.has(n.name) : true);
+  }, [scopeFilteredTree, kbFilter]);
   const toggleBase = React.useCallback((name) => {
     setKbFilter((f) => f.includes(name) ? f.filter((x) => x !== name) : [...f, name]);
   }, []);
   const filteredGraph = React.useMemo(() => {
-    if (!graphData || !kbFilter.length) return graphData;
-    const set = new Set(kbFilter);
-    const nodes = graphData.nodes.filter((n) => set.has(baseOf(n.path)));
+    if (!graphData) return graphData;
+    const kbSet = kbFilter.length ? new Set(kbFilter) : null;
+    const nodes = graphData.nodes.filter((n) => {
+      if (kbSet && !kbSet.has(baseOf(n.path))) return false;
+      return passesScopeFilter(scopeFilter, n.scope, wizardIds.has(String(n.path || '').toLowerCase()));
+    });
     const ids = new Set(nodes.map((n) => n.id));
     const edges = graphData.edges.filter((e) => ids.has(e[0]) && ids.has(e[1]));
     return { nodes, edges };
-  }, [graphData, kbFilter, baseOf]);
+  }, [graphData, kbFilter, scopeFilter, wizardIds, baseOf]);
   // Dominant scope per knowledge base (folder), so the switcher chips can be colored by scope.
   const baseScopes = React.useMemo(() => {
     const m = {}, rank = { enterprise: 3, team: 2, private: 1 };
@@ -423,6 +475,18 @@ function App() {
     const td = await window.lore.readTree(root);
     if (td) setTreeData(td);
   }, []);
+
+  // Library up/down switcher (sidebar header chevrons) — cycles appConfig.roots, wrapping
+  // around, and opens the target library via loadTree (its initial-load variant is correct
+  // here: switching libraries should land on that library's first note).
+  const switchLibrary = React.useCallback((dir) => {
+    const roots = (appConfig && Array.isArray(appConfig.roots)) ? appConfig.roots : [];
+    if (roots.length <= 1) return;
+    const curIdx = treeData ? roots.indexOf(treeData.root) : -1;
+    const from = curIdx === -1 ? 0 : curIdx;
+    const next = roots[(from + dir + roots.length) % roots.length];
+    if (next) loadTree(next);
+  }, [appConfig, treeData, loadTree]);
 
   // Right-click on a sidebar row: hand off to the native Electron context menu (main process).
   const onTreeContextMenu = React.useCallback((node) => {
@@ -807,7 +871,7 @@ function App() {
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-sunken)' }}
       onDragOver={(e) => { e.preventDefault(); }} onDrop={onDropImport}>
-      <Titlebar theme={theme} onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')} onSearch={() => setSearchOpen(true)} onAsk={() => setAskOpen(true)} onSettings={() => setView('settings')} onProfile={() => setView('settings')} onImport={onImport} />
+      <Titlebar theme={theme} onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')} onSearch={() => setSearchOpen(true)} onAsk={() => setAskOpen(true)} onSettings={() => setView('settings')} onProfile={() => setView('settings')} onImport={onImport} scopeFilter={scopeFilter} onScopeFilter={setScopeFilter} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         <Rail view={view} askOpen={askOpen}
           onView={(v) => { if (v === 'search') setSearchOpen(true); else setView(v); }}
@@ -818,7 +882,8 @@ function App() {
           <React.Fragment>
             <Sidebar tree={shownTree} activeNote={activeId} workspace={workspace} onOpen={onNodeClick} onToggle={(id) => setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) }))}
               bases={bases} baseScopes={baseScopes} kbFilter={kbFilter} onToggleBase={toggleBase} onClearBases={() => setKbFilter([])} wizard={activeBucket} onCreateNote={onCreateNote}
-              renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
+              renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
+              roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary} />
             <PaneResizer side="sidebar" />
             {activeBucket
               ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onOpen={() => setAskOpen(true)} />

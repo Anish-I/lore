@@ -159,16 +159,20 @@ async function ensureBackend() {
 }
 
 // ---------- file tree ----------
+// Reads the frontmatter head once and returns both scope and the wizard-install flag —
+// avoids a second fs read per note just to detect `wizard:` in frontmatter.
 function scopeOf(filePath) {
   try {
     const head = fs.readFileSync(filePath, 'utf8').slice(0, 600);
     const fm = head.match(/^---\s*[\r\n]([\s\S]*?)[\r\n]---/);
     if (fm) {
       const m = fm[1].match(/^scope:\s*(.+)$/m);
-      if (m) return String(m[1]).trim().replace(/^['"]|['"]$/g, '') || null;
+      const scope = m ? (String(m[1]).trim().replace(/^['"]|['"]$/g, '') || null) : null;
+      const wizard = /^wizard:/m.test(fm[1]);
+      return { scope, wizard };
     }
   } catch { /* ignore */ }
-  return null;
+  return { scope: null, wizard: false };
 }
 
 function buildTree(root, depth = 0) {
@@ -182,7 +186,8 @@ function buildTree(root, depth = 0) {
       const children = buildTree(full, depth + 1);
       if (children.length) folders.push({ id: full, kind: 'folder', name: e.name, depth, open: depth === 0, children });
     } else if (e.name.toLowerCase().endsWith('.md')) {
-      notes.push({ id: full, kind: 'note', name: e.name.replace(/\.md$/i, ''), depth, scope: scopeOf(full) });
+      const meta = scopeOf(full);
+      notes.push({ id: full, kind: 'note', name: e.name.replace(/\.md$/i, ''), depth, scope: meta.scope, wizard: meta.wizard });
     }
   }
   folders.sort((a, b) => a.name.localeCompare(b.name));
