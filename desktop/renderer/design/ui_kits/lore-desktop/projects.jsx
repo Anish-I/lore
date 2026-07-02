@@ -1,45 +1,40 @@
 /* global React */
-// Lore desktop — Projects & Groups browser + knowledge graph
+// Lore desktop — Teams (create/join a team, invites inbox, team-shared Wizards) + knowledge graph
 const prNS = window.VaultDesignSystem_ffbf58;
-const { Icon: PrIcon, IconButton: PrIconBtn, Card, ScopeTag: PrScope, Avatar: PrAvatar, Badge: PrBadge, Button: PrButton, Tabs: PrTabs } = prNS;
+const { Icon: PrIcon, Card, ScopeTag: PrScope, Badge: PrBadge, Button: PrButton, Tabs: PrTabs } = prNS;
 
 const prS = {
   wrap: { flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--surface-canvas)' },
   head: { display: 'flex', alignItems: 'center', gap: 12, padding: '22px 28px 0' },
   body: { padding: '18px 28px 60px', maxWidth: 1040, margin: '0 auto' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 },
 };
 
-function MemberStack({ members }) {
-  return (
-    <div style={{ display: 'flex' }}>
-      {members.slice(0, 3).map((m, i) => (
-        <div key={m} style={{ marginLeft: i ? -7 : 0, border: '2px solid var(--surface-panel)', borderRadius: '50%' }}>
-          <PrAvatar name={m} size={22} />
-        </div>
-      ))}
-      {members.length > 3 && <span style={{ marginLeft: 4, alignSelf: 'center', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>+{members.length - 3}</span>}
-    </div>
-  );
-}
+function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, inviteBusy, onAcceptInvite, onRefreshInvites }) {
+  const [tab, setTab] = React.useState('teams');
+  const [authUser, setAuthUser] = React.useState(null); // {user_id, email, scopes} | null
+  const [busy, setBusy] = React.useState('');            // '' | 'create' | 'join' | 'invite'
+  const [error, setError] = React.useState('');
+  const [createInput, setCreateInput] = React.useState(false);
+  const [teamDraft, setTeamDraft] = React.useState('');
+  const [inviteEmail, setInviteEmail] = React.useState('');
+  const [inviteStatus, setInviteStatus] = React.useState('');
 
-function ProjectsView({ projects, groups, onOpen }) {
-  const [tab, setTab] = React.useState('projects');
-  const [sagaInput, setSagaInput] = React.useState(false);
-  const [sagaName, setSagaName] = React.useState('');
-  const [sagaStatus, setSagaStatus] = React.useState('');
-  const [localSagas, setLocalSagas] = React.useState([]);
-  const [grpInput, setGrpInput] = React.useState(false);
-  const [grpName, setGrpName] = React.useState('');
-  const [grpStatus, setGrpStatus] = React.useState('');
-  const [localGroups, setLocalGroups] = React.useState([]);
+  React.useEffect(() => {
+    let alive = true;
+    if (window.lore?.auth?.status) {
+      window.lore.auth.status().then((u) => { if (alive) setAuthUser(u || null); }).catch(() => {});
+    }
+    return () => { alive = false; };
+  }, []);
 
-  const getVaultRoot = async () => {
-    try {
-      const cfg = window.lore && window.lore.config && await window.lore.config.get();
-      return (cfg && Array.isArray(cfg.roots) && cfg.roots[0]) || null;
-    } catch (e) { return null; }
-  };
+  const team = (config && config.team && config.team.team_id) ? config.team : null;
+  const teamScopes = (authUser && Array.isArray(authUser.scopes)) ? authUser.scopes : [];
+  const inTeam = Boolean(team) || teamScopes.length > 0;
+  const teamLabel = (team && (team.name || team.team_id)) || teamScopes[0] || 'Your team';
+  const invites = pendingInvites || [];
+  const teamWizards = (buckets || []).filter((b) => b.scope === 'team' || b.scope === 'enterprise');
+  const WizardCard = window.LoreWizardParts && window.LoreWizardParts.BucketCard;
 
   const inpStyle = {
     padding: '5px 9px', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-sm)',
@@ -47,154 +42,201 @@ function ProjectsView({ projects, groups, onOpen }) {
     fontFamily: 'var(--font-sans)', fontSize: 13, outline: 'none', minWidth: 180,
   };
 
-  // Track the active library root; if it changes, drop stale optimistic items so they
-  // don't leak across library switches (Codex review).
-  const rootRef = React.useRef(null);
-  const syncRoot = (root) => {
-    if (rootRef.current !== null && rootRef.current !== root) {
-      setLocalSagas([]); setLocalGroups([]);
-    }
-    rootRef.current = root;
+  // Signs in via the Google loopback flow if there is no session yet; returns the user or null.
+  const ensureSignedIn = async () => {
+    if (authUser) return authUser;
+    if (!window.lore?.auth?.login) { setError('Sign-in is unavailable in this build.'); return null; }
+    const r = await window.lore.auth.login();
+    if (!r || !r.ok) { setError((r && r.reason) || 'Sign-in failed.'); return null; }
+    const user = { user_id: r.user_id, email: r.email, scopes: r.scopes || [] };
+    setAuthUser(user);
+    return user;
   };
 
-  const handleNewSaga = async () => {
-    const name = sagaName.trim();
+  // Create team: sign in first if needed, create the team server-side, then persist the
+  // team into config (same shape the onboarding team step writes) so it survives restarts.
+  const handleCreate = async () => {
+    const name = teamDraft.trim();
     if (!name) return;
-    setSagaStatus('Creating…');
+    setBusy('create'); setError('');
     try {
-      const root = await getVaultRoot();
-      if (!root) { setSagaStatus('Open a library first.'); return; }
-      syncRoot(root);
-      const sep = root.includes('/') ? '/' : '\\';
-      const path = root.replace(/[\\/]+$/, '') + sep + name + sep + '_index.md';
-      const res = await window.lore.writeNote(path, '---\ntype: saga\n---\n\n# ' + name + '\n\n');
-      if (!res || res.ok === false) { setSagaStatus('Error: ' + ((res && res.error) || 'could not create saga')); return; }
-      setLocalSagas((prev) => prev.some((s) => s.id === path) ? prev
-        : [...prev, { id: path, name, desc: '', scope: 'private', members: ['you'], notes: 0, updated: 'just now' }]);
-      setSagaName(''); setSagaInput(false); setSagaStatus('');
-    } catch (e) { setSagaStatus('Error: ' + ((e && e.message) || String(e))); }
+      const user = await ensureSignedIn();
+      if (!user) { setBusy(''); return; }
+      const res = await window.lore.teams.create(name);
+      if (!res || !res.ok) { setError((res && res.body && res.body.detail) || 'Could not create the team.'); setBusy(''); return; }
+      const teamCfg = { intent: 'create', name, team_id: res.body.team_id, scope: res.body.scope, ...(user.email ? { email: user.email } : {}) };
+      if (window.lore.config?.set) {
+        try { const next = await window.lore.config.set({ team: teamCfg }); if (onConfig) onConfig(next); } catch { /* non-fatal */ }
+      }
+      setCreateInput(false); setTeamDraft('');
+      if (window.lore.auth?.status) { try { setAuthUser((await window.lore.auth.status()) || user); } catch { /* keep current */ } }
+    } catch (e) { setError(String((e && e.message) || e)); }
+    setBusy('');
   };
 
-  const handleNewGroup = async () => {
-    const name = grpName.trim();
-    if (!name) return;
-    setGrpStatus('Creating…');
+  // Join team: sign in, then refresh the invites inbox — accepting a pending invite is
+  // how you actually join (there is no join-by-name endpoint).
+  const handleJoin = async () => {
+    setBusy('join'); setError('');
     try {
-      const root = await getVaultRoot();
-      if (!root) { setGrpStatus('Open a library first.'); return; }
-      syncRoot(root);
-      const sep = root.includes('/') ? '/' : '\\';
-      const path = root.replace(/[\\/]+$/, '') + sep + name + sep + '_index.md';
-      const res = await window.lore.writeNote(path, '---\ntype: group\n---\n\n# ' + name + '\n\n');
-      if (!res || res.ok === false) { setGrpStatus('Error: ' + ((res && res.error) || 'could not create group')); return; }
-      setLocalGroups((prev) => prev.some((g) => g.id === path) ? prev
-        : [...prev, { id: path, name, scope: 'team', members: 1, vaults: 1 }]);
-      setGrpName(''); setGrpInput(false); setGrpStatus('');
-    } catch (e) { setGrpStatus('Error: ' + ((e && e.message) || String(e))); }
+      const user = await ensureSignedIn();
+      if (user && onRefreshInvites) await onRefreshInvites();
+    } catch (e) { setError(String((e && e.message) || e)); }
+    setBusy('');
   };
 
-  // Dedupe by id in case a tree-derived prop and an optimistic local item coincide.
-  const _byId = (arr) => { const m = new Map(); for (const x of arr) m.set(x.id, x); return [...m.values()]; };
-  const allProjects = _byId([...projects, ...localSagas]);
-  const allGroups = _byId([...groups, ...localGroups]);
+  const handleInvite = async () => {
+    const email = inviteEmail.trim();
+    if (!email || !team) return;
+    setBusy('invite'); setInviteStatus('');
+    try {
+      const res = await window.lore.teams.invite(team.team_id, email);
+      if (res && res.ok) { setInviteStatus(`Invite sent to ${email}.`); setInviteEmail(''); }
+      else setInviteStatus((res && res.body && res.body.detail) || 'Could not send the invite.');
+    } catch (e) { setInviteStatus(String((e && e.message) || e)); }
+    setBusy('');
+  };
+
+  const invitesInbox = invites.length > 0 && (
+    <Card style={{ display: 'flex', flexDirection: 'column', gap: 10, width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <PrIcon name="mail" size={15} style={{ color: 'var(--brand-fg)' }} />
+        <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-strong)' }}>Pending invites</span>
+        <PrBadge tone="info">{invites.length}</PrBadge>
+      </div>
+      {invites.map((inv) => (
+        <div key={inv.invite_id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: 'var(--text-body)' }}>
+          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <strong style={{ color: 'var(--text-strong)' }}>{inv.team_name || inv.team_id}</strong>
+            {inv.invited_by ? <span style={{ color: 'var(--text-subtle)' }}> · invited by {inv.invited_by}</span> : null}
+          </span>
+          <PrButton variant="primary" icon="check" disabled={inviteBusy === inv.invite_id} onClick={() => onAcceptInvite && onAcceptInvite(inv.invite_id)}>
+            {inviteBusy === inv.invite_id ? 'Joining…' : 'Accept'}
+          </PrButton>
+        </div>
+      ))}
+    </Card>
+  );
+
+  const wizardsTabLabel = inTeam ? 'Team Wizards' : (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, opacity: 0.55 }}>
+      <PrIcon name="lock" size={12} />Team Wizards
+    </span>
+  );
 
   return (
     <div style={prS.wrap}>
       <div style={prS.head}>
         <div>
-          <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>Sagas
-            {window.LoreHelpHint && <window.LoreHelpHint size={16} tip="A Saga is a project — a body of work with a goal (e.g. Wingman, Kalshi Bot). A note belongs to ONE Saga. Contrast with a Wizard (knowledge base): a cross-project collection a note can appear in many of." />}
+          <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>Teams
+            {window.LoreHelpHint && <window.LoreHelpHint size={16} tip="A Team is a shared space. Sign in, create or join one, and Wizards saved with team scope become visible to everyone on the team." />}
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' }}>Focused workspaces that gather notes, people, and an Ask thread.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' }}>Create or join a team to share Wizards and ask across shared knowledge.</p>
         </div>
         <div style={{ flex: 1 }} />
-        {tab === 'projects' && !sagaInput && (
-          <PrButton variant="primary" icon="plus" onClick={() => { setSagaInput(true); setSagaName(''); setSagaStatus(''); }}>New saga</PrButton>
-        )}
-        {tab === 'projects' && sagaInput && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input autoFocus value={sagaName} onChange={(e) => setSagaName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleNewSaga(); if (e.key === 'Escape') setSagaInput(false); }}
-              placeholder="Saga name…" style={inpStyle} />
-            <PrButton variant="primary" size="sm" onClick={handleNewSaga}>Create</PrButton>
-            <PrButton variant="ghost" size="sm" onClick={() => setSagaInput(false)}>Cancel</PrButton>
-          </div>
-        )}
-        {tab === 'groups' && !grpInput && (
-          <PrButton variant="primary" icon="plus" onClick={() => { setGrpInput(true); setGrpName(''); setGrpStatus(''); }}>Add group</PrButton>
-        )}
-        {tab === 'groups' && grpInput && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input autoFocus value={grpName} onChange={(e) => setGrpName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleNewGroup(); if (e.key === 'Escape') setGrpInput(false); }}
-              placeholder="Group name…" style={inpStyle} />
-            <PrButton variant="primary" size="sm" onClick={handleNewGroup}>Create</PrButton>
-            <PrButton variant="ghost" size="sm" onClick={() => setGrpInput(false)}>Cancel</PrButton>
-          </div>
-        )}
       </div>
-      {(sagaStatus || grpStatus) && (
-        <div style={{ padding: '4px 28px', fontSize: 12, color: 'var(--clay-400)', fontFamily: 'var(--font-mono)' }}>
-          {sagaStatus || grpStatus}
-        </div>
-      )}
       <div style={prS.body}>
         <div style={{ marginBottom: 18 }}>
           <PrTabs value={tab} onChange={setTab} tabs={[
-            { value: 'projects', label: 'Sagas', count: allProjects.length },
-            { value: 'groups', label: 'Groups', count: allGroups.length },
+            { value: 'teams', label: 'Teams', ...(invites.length ? { count: invites.length } : {}) },
+            { value: 'wizards', label: wizardsTabLabel, ...(inTeam ? { count: teamWizards.length } : {}) },
           ]} />
         </div>
 
-        {tab === 'projects' && (
-          <div style={prS.grid}>
-            {allProjects.map((p) => (
-              <Card key={p.id} interactive onClick={() => onOpen && onOpen(p)} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-                  <span style={{ width: 30, height: 30, borderRadius: 'var(--radius-sm)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)' }}>
-                    <PrIcon name="layout-grid" size={16} style={{ color: 'var(--brand-fg)' }} />
-                  </span>
-                  <span style={{ flex: 1, fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)' }}>{p.name}</span>
-                  <PrScope scope={p.scope} size="sm" showLabel={false} />
+        {tab === 'teams' && !inTeam && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '32px 0' }}>
+            <Card style={{ width: 'min(520px, 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, padding: '36px 32px', textAlign: 'center', boxSizing: 'border-box' }}>
+              <span style={{ width: 52, height: 52, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
+                <PrIcon name="users" size={26} style={{ color: 'var(--brand-fg)' }} />
+              </span>
+              <div style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--text-strong)' }}>Join a team or create a team</div>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-subtle)', maxWidth: 380 }}>Teams share Wizards — knowledge bases your whole team can browse and ask across. Sign in with Google to get started.</p>
+              {!createInput ? (
+                <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
+                  <PrButton variant="primary" icon="plus" disabled={Boolean(busy)} onClick={() => { setCreateInput(true); setTeamDraft(''); setError(''); }}>Create team</PrButton>
+                  <PrButton variant="secondary" icon="log-in" disabled={Boolean(busy)} onClick={handleJoin}>{busy === 'join' ? 'Opening browser…' : 'Join a team'}</PrButton>
                 </div>
-                <p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--text-muted)', minHeight: 38 }}>{p.desc}</p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 }}>
-                  <MemberStack members={p.members} />
-                  <div style={{ flex: 1 }} />
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
-                    <PrIcon name="file-text" size={12} />{p.notes}
-                  </span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{p.updated}</span>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                  <input autoFocus value={teamDraft} onChange={(e) => setTeamDraft(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleCreate(); if (e.key === 'Escape') setCreateInput(false); }}
+                    placeholder="Team name…" style={inpStyle} />
+                  <PrButton variant="primary" size="sm" disabled={busy === 'create'} onClick={handleCreate}>{busy === 'create' ? 'Creating…' : 'Create'}</PrButton>
+                  <PrButton variant="ghost" size="sm" onClick={() => setCreateInput(false)}>Cancel</PrButton>
                 </div>
-              </Card>
-            ))}
+              )}
+              {authUser && (
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>
+                  Signed in as {authUser.email}{invites.length === 0 ? ' — no pending invites yet. Ask a teammate to invite you.' : ''}
+                </div>
+              )}
+              {error && <div style={{ fontSize: 12, color: 'var(--clay-400)', fontFamily: 'var(--font-mono)' }}>{error}</div>}
+            </Card>
+            {invitesInbox && <div style={{ width: 'min(520px, 100%)' }}>{invitesInbox}</div>}
           </div>
         )}
 
-        {tab === 'groups' && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {allGroups.map((g) => (
-              <Card key={g.id} interactive style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <span style={{ width: 36, height: 36, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: g.scope === 'enterprise' ? 'var(--scope-ent-bg)' : 'var(--scope-team-bg)' }}>
-                  <PrIcon name={g.scope === 'enterprise' ? 'building-2' : 'users'} size={18} style={{ color: g.scope === 'enterprise' ? 'var(--scope-ent-fg)' : 'var(--scope-team-fg)' }} />
-                </span>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>{g.name}</div>
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>{g.members} members · {g.vaults} libraries</div>
+        {tab === 'teams' && inTeam && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <Card style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+              <span style={{ width: 40, height: 40, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--scope-team-bg)' }}>
+                <PrIcon name="users" size={20} style={{ color: 'var(--scope-team-fg)' }} />
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>{teamLabel}</div>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginTop: 2 }}>
+                  {(authUser && authUser.email) || (team && team.email) || 'signed out'}
+                  {teamScopes.length ? ` · ${teamScopes.length} team scope${teamScopes.length !== 1 ? 's' : ''}` : ''}
                 </div>
-                <PrScope scope={g.scope} />
-                <PrButton variant="ghost" iconTrailing="chevron-right">Open</PrButton>
-              </Card>
-            ))}
-            {allGroups.length === 0 && (
-              <div style={{ padding: '32px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-                <PrIcon name="users" size={28} style={{ color: 'var(--text-faint)', opacity: 0.5 }} />
-                <span style={{ fontSize: 13, color: 'var(--text-subtle)' }}>No groups yet.</span>
-                <PrButton variant="secondary" icon="plus" onClick={() => { setGrpInput(true); setGrpName(''); setGrpStatus(''); }}>Add group</PrButton>
               </div>
+              <PrScope scope="team" />
+            </Card>
+            {teamScopes.length > 0 && (
+              <Card style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Shared scopes</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {teamScopes.map((s) => <PrBadge key={s} tone="info">{s}</PrBadge>)}
+                </div>
+              </Card>
             )}
+            {team && (
+              <Card style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <PrIcon name="user-plus" size={15} style={{ color: 'var(--brand-fg)' }} />
+                  <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--text-strong)' }}>Invite a teammate</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') handleInvite(); }}
+                    placeholder="teammate@example.com" type="email" style={{ ...inpStyle, flex: 1 }} />
+                  <PrButton variant="primary" size="sm" icon="send" disabled={busy === 'invite'} onClick={handleInvite}>{busy === 'invite' ? 'Sending…' : 'Send invite'}</PrButton>
+                </div>
+                {inviteStatus && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{inviteStatus}</div>}
+              </Card>
+            )}
+            {invitesInbox}
+            {error && <div style={{ fontSize: 12, color: 'var(--clay-400)', fontFamily: 'var(--font-mono)' }}>{error}</div>}
           </div>
         )}
+
+        {tab === 'wizards' && (!inTeam ? (
+          <div style={{ padding: '56px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+            <PrIcon name="lock" size={30} style={{ color: 'var(--text-faint)', opacity: 0.6 }} />
+            <span style={{ fontSize: 14, color: 'var(--text-subtle)' }}>Join a team to share Wizards</span>
+            <PrButton variant="secondary" icon="users" onClick={() => setTab('teams')}>Go to Teams</PrButton>
+          </div>
+        ) : (
+          teamWizards.length > 0 && WizardCard ? (
+            <div style={prS.grid}>
+              {teamWizards.map((b) => <WizardCard key={b.id} b={b} onOpen={() => onOpenWizard && onOpenWizard(b)} />)}
+            </div>
+          ) : (
+            <div style={{ padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+              <PrIcon name="library" size={28} style={{ color: 'var(--text-faint)', opacity: 0.5 }} />
+              <span style={{ fontSize: 13, color: 'var(--text-subtle)', maxWidth: 420, textAlign: 'center', lineHeight: 1.5 }}>No team Wizards yet. Wizards saved with team scope show up here for everyone in {teamLabel}.</span>
+            </div>
+          )
+        ))}
       </div>
     </div>
   );
@@ -300,4 +342,4 @@ function GraphView({ graph, onOpen }) {
   );
 }
 
-Object.assign(window, { LoreProjectsView: ProjectsView, LoreGraphView: GraphView });
+Object.assign(window, { LoreTeamsView: TeamsView, LoreGraphView: GraphView });

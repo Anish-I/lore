@@ -265,9 +265,9 @@ Lore is your personal knowledge OS — a local-first place to capture, connect, 
 
 A **Library** is a folder on your machine. Every note inside it lives as a plain Markdown file, owned by you. You are in **${libName}** right now. Create more libraries for different contexts (work, personal, research).
 
-## Sagas
+## Teams
 
-**Sagas** are projects — long-running threads of work with their own notes, timelines, and goals. Open the Projects panel from the left rail to create and track them.
+Sign in and create or join a **Team** to share Wizards with others. Open the Teams panel from the left rail to invite people and browse what your team has shared.
 
 ## Wizards
 
@@ -371,7 +371,7 @@ ipcMain.handle('note:read', (_e, p) => {
 ipcMain.handle('note:write', (_e, { path: p, text }) => {
   try {
     pathGuard(p);
-    fs.mkdirSync(path.dirname(p), { recursive: true });  // create parent dirs (e.g. new saga/group folder)
+    fs.mkdirSync(path.dirname(p), { recursive: true });  // create parent dirs (e.g. new group folder)
     fs.writeFileSync(p, text, 'utf8');
     return { ok: true };
   } catch (e) {

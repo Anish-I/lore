@@ -313,7 +313,17 @@ function App() {
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
 
   // Pending team invites for the signed-in user — checked on launch and every few
-  // minutes; silently empty when signed out or the backend is unreachable.
+  // minutes; silently empty when signed out or the backend is unreachable. Also
+  // exposed as refreshInvites so the Teams view can force an immediate re-check
+  // right after sign-in (e.g. the "Join a team" flow).
+  const refreshInvites = React.useCallback(async () => {
+    if (!window.lore?.invites?.list) return;
+    try {
+      const r = await window.lore.invites.list();
+      if (r && r.ok && r.body && Array.isArray(r.body.invites)) setPendingInvites(r.body.invites);
+    } catch { /* signed out or offline — leave prior state */ }
+  }, []);
+
   React.useEffect(() => {
     let alive = true;
     const check = async () => {
@@ -321,7 +331,7 @@ function App() {
       try {
         const r = await window.lore.invites.list();
         if (alive && r && r.ok && r.body && Array.isArray(r.body.invites)) setPendingInvites(r.body.invites);
-      } catch { /* signed out or offline — no banner */ }
+      } catch { /* signed out or offline — no inbox */ }
     };
     check();
     const iv = setInterval(check, 5 * 60 * 1000);
@@ -790,7 +800,7 @@ function App() {
   const D = window.VaultDesignSystem_ffbf58;
   const Titlebar = window.LoreTitlebar, Rail = window.LoreActivityRail, Sidebar = window.LoreSidebar,
     Editor = window.LoreEditor, ContextPane = window.LoreContextPane, AskPanel = window.LoreAskPanel,
-    ProjectsView = window.LoreProjectsView, GraphView = window.LoreGraphView,
+    TeamsView = window.LoreTeamsView, GraphView = window.LoreGraphView,
     BucketsView = window.LoreBucketsView, SettingsView = window.LoreSettingsView,
     HooksView = window.LoreHooksView, Onboarding = window.LoreOnboarding,
     ImportModal = window.LoreImportModal;
@@ -922,7 +932,13 @@ function App() {
           </React.Fragment>
         )}
 
-        {view === 'projects' && (<React.Fragment><ProjectsView projects={M.projects} groups={M.groups} onOpen={() => setView('workspace')} />{askOpen && askPanel}</React.Fragment>)}
+        {view === 'projects' && (
+          <React.Fragment>
+            <TeamsView config={appConfig} onConfig={setAppConfig} buckets={M.buckets} onOpenWizard={(b) => openBucket(b)}
+              pendingInvites={pendingInvites} inviteBusy={inviteBusy} onAcceptInvite={acceptInvite} onRefreshInvites={refreshInvites} />
+            {askOpen && askPanel}
+          </React.Fragment>
+        )}
         {view === 'graph' && (
           <React.Fragment>
             {(graphLoading || !filteredGraph || filteredGraph.nodes.length === 0)
@@ -965,23 +981,13 @@ function App() {
           </div>
         )}
 
-        {pendingInvites.length > 0 && !showOnboarding && (
-          <div style={{ position: 'absolute', top: showProgress ? 34 : 0, left: 0, right: 0, zIndex: 29, background: 'var(--brand-soft-bg)', borderBottom: '1px solid var(--brand-soft-border)', padding: '7px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {pendingInvites.map((inv) => (
-              <div key={inv.invite_id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--text-body)' }}>
-                <D.Icon name="mail" size={14} style={{ color: 'var(--brand-fg)' }} />
-                <span style={{ flex: 1 }}>
-                  You've been invited to <strong style={{ color: 'var(--text-strong)' }}>{inv.team_name || inv.team_id}</strong>
-                  {inv.invited_by ? <span style={{ color: 'var(--text-subtle)' }}> by {inv.invited_by}</span> : null}
-                </span>
-                <D.Button variant="primary" icon="check" disabled={inviteBusy === inv.invite_id} onClick={() => acceptInvite(inv.invite_id)}>
-                  {inviteBusy === inv.invite_id ? 'Joining…' : 'Accept'}
-                </D.Button>
-                <button onClick={() => setPendingInvites((list) => list.filter((i) => i.invite_id !== inv.invite_id))} title="Dismiss for now" aria-label="Dismiss invite" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', padding: 4 }}>
-                  <D.Icon name="x" size={13} />
-                </button>
-              </div>
-            ))}
+        {pendingInvites.length > 0 && !showOnboarding && view !== 'projects' && (
+          <div style={{ position: 'absolute', top: showProgress ? 34 : 0, left: 0, right: 0, zIndex: 29, background: 'var(--brand-soft-bg)', borderBottom: '1px solid var(--brand-soft-border)', padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--text-body)' }}>
+            <D.Icon name="mail" size={14} style={{ color: 'var(--brand-fg)' }} />
+            <span style={{ flex: 1 }}>
+              You have {pendingInvites.length} pending team invite{pendingInvites.length === 1 ? '' : 's'}.
+            </span>
+            <D.Button variant="primary" icon="users" onClick={() => setView('projects')}>Review in Teams</D.Button>
           </div>
         )}
 

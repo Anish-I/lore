@@ -197,7 +197,7 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged }) {
           <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
             <img src="design/assets/sprites/codex-tome.png" alt="" style={{ width: 28, height: 28, objectFit: 'contain', verticalAlign: 'middle' }} onError={(e) => { e.target.style.display = 'none'; }} />
             Wizards
-            {window.LoreHelpHint && <window.LoreHelpHint size={16} tip="A Wizard is a knowledge base — a curated collection of notes pooled across projects that you can ask across (e.g. a Security playbook or Trading strategies). A note can live in many Wizards, unlike a Saga (project) which it belongs to once." />}
+            {window.LoreHelpHint && <window.LoreHelpHint size={16} tip="A Wizard is a knowledge base — a curated collection of notes pooled together that you can ask across (e.g. a Security playbook or Trading strategies). A note can live in many Wizards at once, unlike a folder, which it only sits in one of." />}
           </h1>
           <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' }}>Knowledge bases — curated collections you pool notes into and ask across.</p>
         </div>
