@@ -20,6 +20,12 @@ _SCHEMA = [
     """create table if not exists audit_log (
          id bigserial primary key, ts timestamptz default now(),
          actor_user_id text, action text, scope_ids text, detail text)""",
+    """create table if not exists invites (
+         id text primary key, team_id text not null, email text not null,
+         invited_by text not null, role text default 'member',
+         status text default 'pending',
+         created_at timestamptz default now(), accepted_at timestamptz,
+         accepted_by text)""",
 ]
 
 # SQLite variant of the tenancy DDL: mirrors _SCHEMA above with dialect-legal
@@ -38,6 +44,12 @@ _SCHEMA_SQLITE = [
     """create table if not exists audit_log (
          id integer primary key autoincrement, ts timestamp default current_timestamp,
          actor_user_id text, action text, scope_ids text, detail text)""",
+    """create table if not exists invites (
+         id text primary key, team_id text not null, email text not null,
+         invited_by text not null, role text default 'member',
+         status text default 'pending',
+         created_at timestamp default current_timestamp, accepted_at timestamp,
+         accepted_by text)""",
 ]
 
 
@@ -77,3 +89,100 @@ def authorize_scopes(conn, user_id: str, requested) -> list:
     if not requested:
         return sorted(authorized)
     return sorted(authorized.intersection(requested))
+
+
+# --- Team creation + email invites (the "share your base" flow) -------------
+
+class InviteError(Exception):
+    """Invite/team operation rejected. Message is safe to surface to the caller."""
+
+
+def _audit(conn, actor, action, scope_ids="", detail=""):
+    conn.execute(
+        "insert into audit_log(actor_user_id, action, scope_ids, detail) values(%s,%s,%s,%s)",
+        (actor, action, scope_ids, detail))
+
+
+def create_team(conn, name: str, owner_user_id: str) -> dict:
+    """Create a team (its own single-team org) with the caller as active owner.
+    Returns {team_id, scope, name}."""
+    import secrets
+    name = (name or "").strip()
+    if not name:
+        raise InviteError("team name required")
+    team_id = f"tm-{secrets.token_urlsafe(8)}"
+    conn.execute("insert into orgs(id,name) values(%s,%s)", (f"org-{team_id}", name))
+    conn.execute("insert into teams(id,org_id,name) values(%s,%s,%s)",
+                 (team_id, f"org-{team_id}", name))
+    conn.execute(
+        "insert into memberships(user_id,org_id,team_id,role,status) values(%s,%s,%s,'owner','active')",
+        (owner_user_id, f"org-{team_id}", team_id))
+    _audit(conn, owner_user_id, "team.create", team_scope_id(team_id), name)
+    return {"team_id": team_id, "scope": team_scope_id(team_id), "name": name}
+
+
+def _require_active_member(conn, user_id: str, team_id: str) -> None:
+    row = conn.execute(
+        "select 1 from memberships where user_id=%s and team_id=%s and status='active'",
+        (user_id, team_id)).fetchone()
+    if row is None:
+        raise InviteError("not an active member of this team")
+
+
+def invite_to_team(conn, team_id: str, email: str, invited_by: str, role: str = "member") -> dict:
+    """Invite `email` to a team. Inviter must be an active member. Idempotent per
+    (team, email): re-inviting a pending address returns the existing invite.
+    Returns {invite_id, team_id, email, status} — the invite_id doubles as the token
+    the invitee presents (delivery, e.g. email, is the caller's concern)."""
+    import secrets
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        raise InviteError("valid email required")
+    _require_active_member(conn, invited_by, team_id)
+    existing = conn.execute(
+        "select id from invites where team_id=%s and email=%s and status='pending'",
+        (team_id, email)).fetchone()
+    if existing:
+        return {"invite_id": existing[0], "team_id": team_id, "email": email, "status": "pending"}
+    invite_id = f"inv-{secrets.token_urlsafe(16)}"
+    conn.execute(
+        "insert into invites(id,team_id,email,invited_by,role) values(%s,%s,%s,%s,%s)",
+        (invite_id, team_id, email, invited_by, role))
+    _audit(conn, invited_by, "invite.create", team_scope_id(team_id), email)
+    return {"invite_id": invite_id, "team_id": team_id, "email": email, "status": "pending"}
+
+
+def pending_invites_for(conn, email: str) -> list[dict]:
+    """Pending invites addressed to `email` (what a fresh login sees waiting)."""
+    rows = conn.execute(
+        "select i.id, i.team_id, t.name, i.invited_by, i.role from invites i "
+        "left join teams t on t.id = i.team_id "
+        "where i.email=%s and i.status='pending' order by i.id",
+        ((email or "").strip().lower(),)).fetchall()
+    return [{"invite_id": r[0], "team_id": r[1], "team_name": r[2],
+             "invited_by": r[3], "role": r[4]} for r in rows]
+
+
+def accept_invite(conn, invite_id: str, user_id: str, user_email: str) -> dict:
+    """Accept an invite as the authenticated user. The user's verified login email
+    must match the invited address (case-insensitive) — an invite id alone is not
+    enough to join. Grants an active membership and closes the invite."""
+    row = conn.execute(
+        "select team_id, email, role, status from invites where id=%s", (invite_id,)).fetchone()
+    if row is None:
+        raise InviteError("invite not found")
+    team_id, invited_email, role, status = row
+    if status != "pending":
+        raise InviteError(f"invite already {status}")
+    if (user_email or "").strip().lower() != invited_email:
+        raise InviteError("invite was issued to a different email")
+    org = conn.execute("select org_id from teams where id=%s", (team_id,)).fetchone()
+    conn.execute(
+        "insert into memberships(user_id,org_id,team_id,role,status) values(%s,%s,%s,%s,'active') "
+        "on conflict (user_id,team_id) do update set status='active', role=excluded.role",
+        (user_id, org[0] if org else None, team_id, role))
+    conn.execute(
+        "update invites set status='accepted', accepted_at=now(), accepted_by=%s where id=%s",
+        (user_id, invite_id))
+    _audit(conn, user_id, "invite.accept", team_scope_id(team_id), invited_email)
+    return {"team_id": team_id, "scope": team_scope_id(team_id), "role": role}

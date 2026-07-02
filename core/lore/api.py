@@ -100,6 +100,57 @@ def auth_me(user_id: str = Depends(require_user)):
     """Return the authenticated user's id + their authorized team scopes (from membership)."""
     return {"user_id": user_id, "scopes": tenancy.authorized_team_scope_ids(_conn, user_id)}
 
+
+# --- Teams + email invites (share a base with another user) -----------------
+
+class TeamCreateReq(BaseModel):
+    name: str
+
+class InviteReq(BaseModel):
+    email: str
+
+
+def _user_email(user_id: str) -> str:
+    """Verified login email for an authenticated user (from the users table,
+    written by Google login — never from a client-supplied field)."""
+    row = _conn.execute("select email from users where id=%s", (user_id,)).fetchone()
+    return (row[0] or "") if row else ""
+
+
+@app.post("/teams")
+def teams_create(req: TeamCreateReq, user_id: str = Depends(require_user)):
+    """Create a team ("base") owned by the caller. Returns {team_id, scope, name}."""
+    try:
+        return tenancy.create_team(_conn, req.name, user_id)
+    except tenancy.InviteError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/teams/{team_id}/invites")
+def teams_invite(team_id: str, req: InviteReq, user_id: str = Depends(require_user)):
+    """Invite an email address to the team. Caller must be an active member.
+    Returns the invite; delivering it (email) is the desktop app's job for now."""
+    try:
+        return tenancy.invite_to_team(_conn, team_id, req.email, user_id)
+    except tenancy.InviteError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
+
+@app.get("/invites")
+def invites_list(user_id: str = Depends(require_user)):
+    """Pending invites addressed to the caller's verified login email."""
+    return {"invites": tenancy.pending_invites_for(_conn, _user_email(user_id))}
+
+
+@app.post("/invites/{invite_id}/accept")
+def invites_accept(invite_id: str, user_id: str = Depends(require_user)):
+    """Accept an invite. The caller's verified email must match the invited address.
+    Grants active membership; the new scope shows up in /auth/me immediately."""
+    try:
+        return tenancy.accept_invite(_conn, invite_id, user_id, _user_email(user_id))
+    except tenancy.InviteError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+
 class ReindexReq(BaseModel):
     path: str
     owner_id: str
