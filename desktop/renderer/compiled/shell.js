@@ -507,7 +507,14 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
 
 
     (() => {
-      const visible = (sectionProposals || []).filter((s) => s.status !== 'dismissed');
+      // Dismissed rows never show. Applied sections whose name matches an
+      // existing top-level folder are hidden too — they already appear as a
+      // Section chip above, so listing them here read as duplicates. (They
+      // remain promotable from the Wizards view; Undo still works via API.)
+      const baseSet = new Set((bases || []).map((b) => String(b).toLowerCase()));
+      const visible = (sectionProposals || []).filter((s) =>
+      s.status !== 'dismissed' &&
+      !(s.status === 'applied' && baseSet.has(String(s.name).toLowerCase())));
       if (!visible.length) return null;
       const secBtn = (tone) => ({
         border: `1px solid ${tone === 'primary' ? 'var(--brand-soft-border)' : 'var(--border)'}`,
@@ -548,7 +555,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             React.createElement("span", { style: { color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 } }, " \xB7 ", (s.notes || []).length)
             ),
             applied ? /*#__PURE__*/
-            React.createElement(React.Fragment, null,
+            React.createElement(React.Fragment, null, /*#__PURE__*/
+            React.createElement("button", { disabled: busy, onClick: () => run(s.id, onSectionDismiss), title: "Remove this section record (notes and folder stay untouched)", style: secBtn() }, "\u2715"),
             promoted.has(s.id) ? /*#__PURE__*/
             React.createElement(Badge, { tone: "success", dot: true }, "wizard") : /*#__PURE__*/
 

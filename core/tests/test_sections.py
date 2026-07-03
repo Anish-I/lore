@@ -218,13 +218,13 @@ def test_apply_records_original_paths_and_never_touches_files(tmp_path):
     assert sec["status"] == "applied"
     assert len(sec["original_paths"]) == 5
 
-    # Cannot re-apply or dismiss an applied section.
-    for fn in (apply_section, dismiss_section):
-        try:
-            fn(conn, tenant, sid)
-            assert False, f"{fn.__name__} should have raised on applied section"
-        except SectionError:
-            pass
+    # Cannot re-apply an applied section (dismiss from applied is now legal —
+    # covered by test_dismiss_applied_section_removes_record_not_files).
+    try:
+        apply_section(conn, tenant, sid)
+        assert False, "apply_section should have raised on applied section"
+    except SectionError:
+        pass
 
     # Undo: returns the recorded originals and reverts to proposed.
     undo = undo_section(conn, tenant, sid)
@@ -307,8 +307,6 @@ def test_sections_endpoints_roundtrip(tmp_path):
 
     # 409 on invalid transitions.
     assert client.post(f"/sections/{sid}/apply", json={"tenant": tenant}).status_code == 409
-    assert client.post(f"/sections/{sid}/dismiss", json={"tenant": tenant}).status_code == 409
-
     r = client.post(f"/sections/{sid}/undo", json={"tenant": tenant})
     assert r.status_code == 200 and len(r.json()["moves"]) == 5
     assert client.post(f"/sections/{sid}/undo", json={"tenant": tenant}).status_code == 409
@@ -348,3 +346,28 @@ def test_run_upkeep_auto_classify_proposes_sections():
     # Default runs (auto_classify off) don't add classification keys.
     stats2 = run_upkeep(conn, FakeEmbedder(), tenant, scope=_SCOPE)
     assert "classify" not in stats2
+
+
+def test_dismiss_applied_section_removes_record_not_files(tmp_path):
+    """applied -> dismissed is legal: the record goes away, files never move."""
+    tenant = "sec-dismiss-applied"
+    conn = _conn()
+    files = []
+    for i in range(5):
+        f = tmp_path / f"da-{i}.md"
+        f.write_text(f"Progress on item {i}. #work\n")
+        files.append(str(f))
+        _insert_note(conn, tenant, f"da-{i}", f"Note da {i}",
+                     f"Progress on item {i}. #work\n", path=str(f))
+        conn.execute(
+            "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+            "values(%s,%s,'Applied Dismiss','topic','llm') on conflict do nothing",
+            (f"da-{i}", tenant))
+    propose_sections(conn, tenant)
+    sid = conn.execute(
+        "select id from section_proposals where tenant_id=%s", (tenant,)).fetchone()[0]
+    apply_section(conn, tenant, sid, dest_dir=str(tmp_path / "Applied Dismiss"))
+    out = dismiss_section(conn, tenant, sid)
+    assert out["status"] == "dismissed"
+    for f in files:
+        assert os.path.exists(f)  # SAFEGUARD: dismissal moved nothing

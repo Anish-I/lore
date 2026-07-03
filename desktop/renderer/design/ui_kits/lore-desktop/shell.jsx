@@ -507,7 +507,14 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
       {/* Proposed sections — Lore's background upkeep noticed topic clusters. Nothing
           moves unless the user clicks Enable; Undo restores the recorded original paths. */}
       {(() => {
-        const visible = (sectionProposals || []).filter((s) => s.status !== 'dismissed');
+        // Dismissed rows never show. Applied sections whose name matches an
+        // existing top-level folder are hidden too — they already appear as a
+        // Section chip above, so listing them here read as duplicates. (They
+        // remain promotable from the Wizards view; Undo still works via API.)
+        const baseSet = new Set((bases || []).map((b) => String(b).toLowerCase()));
+        const visible = (sectionProposals || []).filter((s) =>
+          s.status !== 'dismissed' &&
+          !(s.status === 'applied' && baseSet.has(String(s.name).toLowerCase())));
         if (!visible.length) return null;
         const secBtn = (tone) => ({
           border: `1px solid ${tone === 'primary' ? 'var(--brand-soft-border)' : 'var(--border)'}`,
@@ -549,6 +556,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
                     </span>
                     {applied ? (
                       <React.Fragment>
+                        <button disabled={busy} onClick={() => run(s.id, onSectionDismiss)} title="Remove this section record (notes and folder stay untouched)" style={secBtn()}>✕</button>
                         {promoted.has(s.id) ? (
                           <Badge tone="success" dot>wizard</Badge>
                         ) : (

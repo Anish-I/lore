@@ -197,9 +197,15 @@ def apply_section(conn, tenant: str, section_id: str, dest_dir: str = None) -> d
 
 
 def dismiss_section(conn, tenant: str, section_id: str) -> dict:
-    """Transition proposed -> dismissed (sticky; the topic is never re-proposed)."""
+    """Transition proposed|applied -> dismissed (sticky; never re-proposed).
+
+    Dismissing an APPLIED section removes only the record: notes and the folder
+    on disk are untouched (files were only ever moved by an explicit apply, and
+    an applied section that mirrors a pre-existing folder never moved anything).
+    Any Personal Wizard already promoted from it keeps working — membership was
+    copied at promote time."""
     sid, _name, _topic, _ids, _orig, status = _get(conn, tenant, section_id)
-    if status != 'proposed':
+    if status not in ('proposed', 'applied'):
         raise SectionError(f"cannot dismiss a section in status '{status}'")
     conn.execute(
         "update section_proposals set status='dismissed', updated_at=now() "
