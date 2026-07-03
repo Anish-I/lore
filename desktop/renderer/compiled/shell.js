@@ -81,13 +81,15 @@ function SH_uniqScopes(values) {
   return out;
 }
 
-// Top-bar scope filter — "All / Private / Team / Plugins". Applied by the caller (wired-app)
+// Top-bar scope filter — "All / Private / Team / Wizards". Applied by the caller (wired-app)
 // to BOTH the file tree and the graph; this component only renders the pill control.
+// 'plugins' id kept for wired-app's predicate; the label says Wizards because the filter
+// matches installed note bundles (knowledge bases) — "plugins" is reserved for Tools.
 const SCOPE_FILTERS = [
 { id: 'all', label: 'All' },
 { id: 'private', label: 'Private' },
 { id: 'team', label: 'Team' },
-{ id: 'plugins', label: 'Plugins' }];
+{ id: 'plugins', label: 'Wizards' }];
 
 
 function ScopeFilterBar({ value, onChange }) {

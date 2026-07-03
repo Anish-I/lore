@@ -91,6 +91,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
 
   // Indexing & recall state (real wiring: config flag + backend /config/retrieval)
   const [autoIndexOnSave, setAutoIndexOnSave] = React.useState(true); // default ON; explicit false disables
+  const [autoFileObvious, setAutoFileObvious] = React.useState(false); // default OFF; only explicit true enables
   const [retrieval, setRetrieval] = React.useState(null); // {embeddingModel, reranker, contextualRetrieval, localFallback} | {error} | null while loading
   const [importResult, setImportResult] = React.useState(null); // {ok, applied, ignored} | {ok:false, reason}
 
@@ -133,6 +134,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
           setCfg(c || null);
           setDefScope((c && c.scope) || '');
           setAutoIndexOnSave(!(c && c.autoIndexOnSave === false));
+          setAutoFileObvious(!!(c && c.autoFileObvious === true));
           setUpkeepAuto(!(c && c.upkeepAuto === false));
         })
         .catch(() => {});
@@ -171,6 +173,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
     setDefScope((config && config.scope) || '');
     if (config) {
       setAutoIndexOnSave(config.autoIndexOnSave !== false);
+      setAutoFileObvious(config.autoFileObvious === true);
       setUpkeepAuto(config.upkeepAuto !== false);
     }
   }, [config]);
@@ -223,6 +226,13 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
     if (window.lore && window.lore.config && window.lore.config.set) {
       // Persist explicitly (true AND false) so the off-state survives restarts.
       window.lore.config.set({ autoIndexOnSave: !!v }).catch(() => {});
+    }
+  };
+
+  const stSetAutoFile = (v) => {
+    setAutoFileObvious(v);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      window.lore.config.set({ autoFileObvious: !!v }).catch(() => {});
     }
   };
 
@@ -345,6 +355,9 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
         <Section icon="cpu" title="Indexing & recall">
           <Row label="Auto-index on save" hint="Re-index a note automatically when its file changes on disk. Off: re-index manually (right-click a note → Re-index Note).">
             <StSwitch checked={autoIndexOnSave} onChange={stSetAutoIndex} />
+          </Row>
+          <Row label="Auto-file obvious notes" hint="During upkeep, a note that unambiguously belongs to one of your existing sections is moved into that section folder automatically — undoable via the section's Undo, logged to the library worklog. Off (default): every move stays a proposal you approve.">
+            <StSwitch checked={autoFileObvious} onChange={stSetAutoFile} />
           </Row>
           <Row label="Contextual retrieval" hint="Every chunk is stored with a situating context sentence for better recall. Built into the indexing pipeline.">
             <StBadge tone={retrieval === null ? 'neutral' : retrieval.error ? 'neutral' : 'success'} dot={!!(retrieval && !retrieval.error)}>

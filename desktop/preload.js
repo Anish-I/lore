@@ -82,23 +82,29 @@ contextBridge.exposeInMainWorld('lore', {
   importFiles: (paths) => ipcRenderer.invoke('import:files', paths),
   importPick:  ()      => ipcRenderer.invoke('import:pick'),
 
-  // --- wizards (installable knowledge bases) ---
+  // --- wizards (knowledge-base store + personal wizards) ---
   // promoteSection(id) → promotes an APPLIED Section to a Personal Wizard (backend
   //                      state only — no files move; the folder already exists).
-  // personal.list()    → { wizards: [{id, name, topic, note_count, folder, ...}] }
+  // createFromNotes({name, noteIds, shareScope}) → chat-builder flow: applied
+  //                      section from an explicit note set + promote. No file moves;
+  //                      shareScope 'team'/'public' are stored, forward-looking flags.
+  // personal.list()    → { wizards: [{id, name, topic, note_count, share_scope, folder, ...}] }
   // personal.ask(id,q) → wizard-scoped RAG answer {answer, engine, citations} —
   //                      retrieval sees ONLY that wizard's notes; persists the chat.
   // personal.history(id) → { messages: [{id, role, text, sources, created_at}] }
+  // personal.notes(id)   → { notes: [{id, title, path}] } (detail "what's inside")
   wizards: {
     catalog:   ()           => ipcRenderer.invoke('wizards:catalog'),
     install:   (id)         => ipcRenderer.invoke('wizards:install', id),
     uninstall: (id)         => ipcRenderer.invoke('wizards:uninstall', id),
     rate:      (id, stars)  => ipcRenderer.invoke('wizards:rate', { id, stars }),
     promoteSection: (sectionId) => ipcRenderer.invoke('wizards:promote-section', sectionId),
+    createFromNotes: (opts)     => ipcRenderer.invoke('wizards:create-from-notes', opts || {}),
     personal: {
       list:    ()             => ipcRenderer.invoke('wizards:personal-list'),
       ask:     (id, question) => ipcRenderer.invoke('wizards:personal-ask', { id, question }),
       history: (id)           => ipcRenderer.invoke('wizards:personal-chat-history', id),
+      notes:   (id)           => ipcRenderer.invoke('wizards:personal-notes', id),
     },
   },
 

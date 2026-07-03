@@ -213,6 +213,40 @@ def dismiss_section(conn, tenant: str, section_id: str) -> dict:
     return {"ok": True, "id": sid, "status": "dismissed"}
 
 
+def create_section_from_notes(conn, tenant: str, name: str, note_ids: list) -> dict:
+    """Create an APPLIED section directly from an explicit note set (chat-driven
+    wizard creation).  No proposal step and NO file moves — the notes stay exactly
+    where they are; membership is the recorded note_ids, the same way an applied
+    section without a dest_dir behaves (wizard_members falls back to note_ids)."""
+    name = str(name or '').strip()
+    slug = _slug(name)
+    if not slug:
+        raise SectionError("section name is required")
+    ids = [str(i) for i in (note_ids or []) if i]
+    if not ids:
+        raise SectionError("note_ids must not be empty")
+    # Keep only notes that actually exist for this tenant (stale search results drop out).
+    frag, params = in_clause("id", list(dict.fromkeys(ids)))
+    rows = conn.execute(
+        f"select id, source_path from notes where tenant_id=%s and {frag}",
+        [tenant, *params]).fetchall()
+    if not rows:
+        raise SectionError("none of the given notes exist")
+    sid = f"sec:{tenant}:{slug}"
+    if conn.execute("select 1 from section_proposals where id=%s and tenant_id=%s",
+                    (sid, tenant)).fetchone():
+        raise SectionError(f"a section named '{name}' already exists")
+    valid = sorted(r[0] for r in rows)
+    # original_paths mirrors apply_section without a dest_dir: from recorded, to=None.
+    moves = [{"note_id": nid, "from": spath, "to": None} for nid, spath in rows if spath]
+    conn.execute(
+        "insert into section_proposals(id, tenant_id, name, topic, note_ids, original_paths, status) "
+        "values(%s,%s,%s,%s,%s,%s,'applied')",
+        (sid, tenant, name, name, json.dumps(valid), json.dumps(moves)))
+    return {"ok": True, "id": sid, "name": name, "status": "applied",
+            "note_count": len(valid), "note_ids": valid}
+
+
 def undo_section(conn, tenant: str, section_id: str) -> dict:
     """Transition applied -> proposed and return the recorded original paths.
 
@@ -254,13 +288,22 @@ def _section_folder(original_paths):
     return None
 
 
-def promote_section(conn, tenant: str, section_id: str) -> dict:
+# Wizard share scope. 'team'/'public' are FORWARD-LOOKING flags — sync/publish
+# don't exist yet; the desktop says so honestly. Stored now so nothing is lost
+# when they land. Validated here because migrated DBs lack the CHECK constraint.
+SHARE_SCOPES = ('private', 'team', 'public')
+
+
+def promote_section(conn, tenant: str, section_id: str, share_scope: str = 'private') -> dict:
     """Promote an APPLIED section to a Personal Wizard (idempotent).
 
-    Only valid once the section is a real folder (status 'applied') — the notes
-    must actually live together before they can back a wizard.  Creates a
-    personal_wizards row; nothing on disk changes and the section itself keeps
-    working (undo stays possible)."""
+    Only valid once the section is applied — the note set must be settled before
+    it can back a wizard.  Creates a personal_wizards row; nothing on disk changes
+    and the section itself keeps working (undo stays possible).  share_scope is
+    recorded on first promote; a re-promote never rewrites an existing wizard."""
+    share_scope = str(share_scope or 'private').strip().lower()
+    if share_scope not in SHARE_SCOPES:
+        raise SectionError(f"share_scope must be one of {', '.join(SHARE_SCOPES)}")
     sid, name, topic, note_ids, _orig, status = _get(conn, tenant, section_id)
     if status != 'applied':
         raise SectionError(f"cannot promote a section in status '{status}' (enable it first)")
@@ -270,18 +313,23 @@ def promote_section(conn, tenant: str, section_id: str) -> dict:
         ids = []
     wid = f"wiz:{tenant}:{_slug(name)}"
     conn.execute(
-        "insert into personal_wizards(id, tenant_id, section_id, name, topic, note_count) "
-        "values(%s,%s,%s,%s,%s,%s) on conflict do nothing",
-        (wid, tenant, sid, name, topic, len(ids)))
+        "insert into personal_wizards(id, tenant_id, section_id, name, topic, note_count, share_scope) "
+        "values(%s,%s,%s,%s,%s,%s,%s) on conflict do nothing",
+        (wid, tenant, sid, name, topic, len(ids), share_scope))
+    row = conn.execute(
+        "select share_scope from personal_wizards where id=%s and tenant_id=%s",
+        (wid, tenant)).fetchone()
     return {"ok": True, "id": wid, "section_id": sid, "name": name,
-            "topic": topic, "note_count": len(ids)}
+            "topic": topic, "note_count": len(ids),
+            "share_scope": (row[0] if row else share_scope)}
 
 
 def list_personal_wizards(conn, tenant: str) -> list:
     """All personal wizards for a tenant, each with the folder its notes live in
     (derived from the promoted section's recorded move plan)."""
     rows = conn.execute(
-        "select w.id, w.section_id, w.name, w.topic, w.note_count, w.created_at, s.original_paths "
+        "select w.id, w.section_id, w.name, w.topic, w.note_count, w.share_scope, "
+        "w.created_at, s.original_paths "
         "from personal_wizards w "
         "left join section_proposals s on s.id = w.section_id and s.tenant_id = w.tenant_id "
         "where w.tenant_id=%s order by w.created_at desc, w.id",
@@ -289,9 +337,10 @@ def list_personal_wizards(conn, tenant: str) -> list:
     return [{
         "id": wid, "section_id": sid, "name": name, "topic": topic,
         "note_count": note_count or 0,
+        "share_scope": share_scope or 'private',
         "folder": _section_folder(original_paths),
         "created_at": created.isoformat() if isinstance(created, datetime.datetime) else created,
-    } for wid, sid, name, topic, note_count, created, original_paths in rows]
+    } for wid, sid, name, topic, note_count, share_scope, created, original_paths in rows]
 
 
 def _get_wizard(conn, tenant: str, wizard_id: str):
@@ -339,6 +388,21 @@ def wizard_members(conn, tenant: str, wizard_id: str):
             f"select distinct scope_id from notes where tenant_id=%s and {frag}",
             [tenant, *params]).fetchall() if r[0]]
     return member, scopes
+
+
+def wizard_notes(conn, tenant: str, wizard_id: str) -> list:
+    """The wizard's member notes with titles/paths (detail-view "what's inside").
+    Same membership rule as retrieval (wizard_members), sorted by title."""
+    member, _scopes = wizard_members(conn, tenant, wizard_id)
+    if not member:
+        return []
+    frag, params = in_clause("id", sorted(member))
+    rows = conn.execute(
+        f"select id, title, source_path from notes where tenant_id=%s and {frag}",
+        [tenant, *params]).fetchall()
+    out = [{"id": nid, "title": title, "path": spath} for nid, title, spath in rows]
+    out.sort(key=lambda n: (n["title"] or '').lower())
+    return out
 
 
 def wizard_chat(conn, tenant: str, wizard_id: str) -> list:

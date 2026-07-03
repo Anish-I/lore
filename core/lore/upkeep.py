@@ -167,7 +167,7 @@ def _delete_note(conn, tenant: str, note_id: str) -> None:
 def run_upkeep(conn, embedder, tenant: str, scope: str = None,
                use_llm: bool = False, delete_source: bool = True,
                auto_classify: bool = False, classify_llm=None,
-               section_threshold: int = 5) -> dict:
+               section_threshold: int = 5, auto_file: bool = False) -> dict:
     """Convert ephemeral date/session notes into durable topic nodes.
 
     Algorithm (idempotent — safe to re-run; re-ingested date notes never duplicate):
@@ -198,6 +198,10 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
             when None the configured provider is used, degrading to the deterministic
             fallback with status 'provider-unavailable' when no provider is usable.
         section_threshold: notes on one topic before a Section is proposed (default 5).
+        auto_file: Opt-in (cfg.autoFileObvious, default OFF). When True, notes whose
+            classification points unambiguously at ONE existing applied section are
+            recorded into it and their moves returned in stats["autoFile"] — state
+            only; the desktop executes the moves under its path-guard (autofile.py).
 
     Returns:
         {"dateNotes": int, "topics": int, "folded": int, "deleted": int, ...}
@@ -385,9 +389,16 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
     # user applies a proposed section explicitly from the desktop (sections.py).
     if auto_classify:
         from . import classify as classify_mod
-        from . import sections as sections_mod
         result["classify"] = classify_mod.classify_untagged(
             conn, tenant, llm_call=classify_llm, scope=scope)
+    # Auto-file (opt-in, OFF by default) runs AFTER classification (fresh topics
+    # count) and BEFORE propose (filed notes are claimed → never re-proposed).
+    # State only: the returned moves are executed by the desktop, never here.
+    if auto_file:
+        from . import autofile
+        result["autoFile"] = autofile.auto_file_notes(conn, tenant, scope=scope)
+    if auto_classify:
+        from . import sections as sections_mod
         result["sections"] = sections_mod.propose_sections(
             conn, tenant, threshold=section_threshold)
 

@@ -62,17 +62,21 @@ function startUpkeepInterval(tenant) {
   upkeepInterval = setInterval(async () => {
     try {
       // auto_classify only tags notes + records Section PROPOSALS server-side.
-      // No files ever move from this background run — apply is a user click.
+      // No files ever move from this background run — apply is a user click —
+      // EXCEPT under the explicit opt-in autoFileObvious toggle, whose recorded
+      // move plan is executed by executeAutoFileMoves (pathGuard + worklog).
       const c = loadConfig() || {};
-      await fetch(`${BACKEND_URL()}/upkeep/run`, {
+      const r = await fetch(`${BACKEND_URL()}/upkeep/run`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           tenant,
           auto_classify: c.autoClassify === true,
           section_threshold: c.sectionThreshold || 5,
+          auto_file: c.autoFileObvious === true,
         }),
       });
+      if (r.ok) { try { await executeAutoFileMoves(await r.json()); } catch { /* moves retry next run */ } }
       refreshManifests('upkeep-auto', 'background upkeep run');
       if (win && !win.isDestroyed())
         win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'upkeep complete', errors: 0 });
@@ -955,6 +959,8 @@ ipcMain.handle('wizards:catalog', () => {
     id: w.id, name: w.name, desc: w.desc, author: w.author, rating: w.rating, installs: w.installs,
     scope: w.scope, kind: w.kind || 'wizard', topics: w.topics || [], sources: w.sources || [],
     noteCount: (w.notes || []).length, installed: !!installed[w.id], myRating: ratings[w.id] || 0,
+    // Titles only (bodies stay out of the IPC payload) — the detail view's "what's inside".
+    noteTitles: (w.notes || []).map((n) => n.title),
   }));
 });
 
@@ -1129,6 +1135,41 @@ ipcMain.handle('wizards:personal-chat-history', async (_e, id) => {
   }
 });
 
+// The wizard's member note titles/paths — feeds the detail view's "what's inside".
+ipcMain.handle('wizards:personal-notes', async (_e, id) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { notes: [] };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/notes?tenant=${encodeURIComponent(cfg.tenant)}`);
+    return await r.json();
+  } catch (e) {
+    return { notes: [], error: String(e) };
+  }
+});
+
+// Chat-driven wizard creation: create an APPLIED section from an explicit note set
+// (backend state only — no files move; the notes stay where they are) then promote
+// it to a Personal Wizard with the chosen share scope. Two backend calls, one IPC.
+ipcMain.handle('wizards:create-from-notes', async (_e, { name, noteIds, shareScope }) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { ok: false, error: 'tenant is not configured' };
+  try {
+    const cr = await postJSON(`${BACKEND_URL()}/sections/create`,
+      { tenant: cfg.tenant, name, note_ids: noteIds || [] });
+    const sec = await cr.json();
+    if (!cr.ok) return { ok: false, error: sec.detail || `backend ${cr.status}` };
+    const pr = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(sec.id)}/promote`,
+      { tenant: cfg.tenant, share_scope: shareScope || 'private' });
+    const wiz = await pr.json();
+    if (!pr.ok) return { ok: false, error: wiz.detail || `backend ${pr.status}` };
+    const root = vaultRoot();
+    if (root) { try { loreManifest.appendWorklog(root, { action: 'wizard-create', summary: `created wizard "${wiz.name}" from ${(noteIds || []).length} note(s) (${shareScope || 'private'})` }); } catch { /* ignore */ } }
+    return { ok: true, wizard: wiz };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
 // ---------- IPC: hooks ----------
 // Delegates to hooks-installer.js; pushes hooks:update after mutations.
 
@@ -1220,6 +1261,8 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
   try {
     // cfg.autoClassify opts into tagging + Section PROPOSALS (state only — the
     // backend never moves files; applying a section is a separate user action).
+    // cfg.autoFileObvious additionally opts into executing the returned
+    // auto-file move plan (executeAutoFileMoves: pathGuard + worklog).
     const cfg = loadConfig() || {};
     const r = await fetch(`${BACKEND_URL()}/upkeep/run`, {
       method: 'POST',
@@ -1228,9 +1271,11 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
         tenant, scope,
         auto_classify: cfg.autoClassify === true,
         section_threshold: cfg.sectionThreshold || 5,
+        auto_file: cfg.autoFileObvious === true,
       }),
     });
     const result = await r.json();
+    if (r.ok) { try { await executeAutoFileMoves(result); } catch { /* moves retry next run */ } }
     refreshManifests('upkeep', `upkeep run — folded ${result.folded || 0}, topics ${result.topics || 0}`);
     // Notify the renderer so it can refresh the graph / status panel.
     if (win && !win.isDestroyed())
@@ -1278,6 +1323,33 @@ async function moveAndReindex(from, to, cfg) {
   const fromFwd = from.replace(/\\/g, '/');
   try { await postJSON(`${BACKEND_URL()}/forget`, { tenant: cfg.tenant, path_prefix: fromFwd }); } catch { /* index catches up on reconcile */ }
   try { await postJSON(`${BACKEND_URL()}/reindex`, { path: to, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }); } catch { /* ditto */ }
+}
+
+// ---------- auto-file (opt-in): execute upkeep's auto-file move plan ----------
+// With cfg.autoFileObvious ON, upkeep records unambiguous notes into an EXISTING
+// applied section (original path kept — undoable via the section's Undo) and
+// returns the moves in stats.autoFile. Files move HERE only: under pathGuard,
+// re-checked against the live config (NEVER when the toggle is off), and every
+// executed move is logged to the .lore manifest worklog.
+async function executeAutoFileMoves(result) {
+  const moves = (result && result.autoFile && result.autoFile.moves) || [];
+  const cfg = loadConfig() || {};
+  if (!moves.length || cfg.autoFileObvious !== true) return;
+  const root = vaultRoot();
+  let moved = 0, skipped = 0;
+  for (const mv of moves) {
+    try {
+      const from = path.normalize(mv.from);
+      const to = path.normalize(mv.to);
+      pathGuard(from); pathGuard(to);
+      if (!fs.existsSync(from) || fs.existsSync(to)) { skipped++; continue; }
+      await moveAndReindex(from, to, cfg);
+      moved++;
+      if (root) { try { loreManifest.appendWorklog(root, { action: 'auto-file', summary: `auto-filed "${path.basename(from)}" → ${mv.section || mv.section_id}` }); } catch { /* ignore */ } }
+    } catch { skipped++; }
+  }
+  if (moved && win && !win.isDestroyed())
+    win.webContents.send('scrape:progress', { phase: 'done', done: moved, total: moves.length, current: `auto-filed ${moved} note(s)`, errors: skipped });
 }
 
 ipcMain.handle('sections:apply', async (_e, id) => {
