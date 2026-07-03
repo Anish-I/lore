@@ -96,18 +96,37 @@ jobs:
         shell: bash
         run: npm ci || npm install
 
+      - name: Configure signing env (only when secrets exist)
+        # electron-builder treats an EMPTY CSC_LINK as "signing configured" and
+        # tries to load it as a cert file ("not a file" — first-run failure mode).
+        # Empty env var != unset env var: export only non-empty secrets.
+        shell: bash
+        env:
+          MAC_CSC: ${{ secrets.CSC_LINK }}
+          MAC_CSC_PW: ${{ secrets.CSC_KEY_PASSWORD }}
+          WIN_CSC: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_PW: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          AP_ID: ${{ secrets.APPLE_ID }}
+          AP_PW: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          AP_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            [ -n "$WIN_CSC" ] && echo "CSC_LINK=$WIN_CSC" >> "$GITHUB_ENV"
+            [ -n "$WIN_CSC_PW" ] && echo "CSC_KEY_PASSWORD=$WIN_CSC_PW" >> "$GITHUB_ENV"
+          else
+            [ -n "$MAC_CSC" ] && echo "CSC_LINK=$MAC_CSC" >> "$GITHUB_ENV"
+            [ -n "$MAC_CSC_PW" ] && echo "CSC_KEY_PASSWORD=$MAC_CSC_PW" >> "$GITHUB_ENV"
+            [ -n "$AP_ID" ] && echo "APPLE_ID=$AP_ID" >> "$GITHUB_ENV"
+            [ -n "$AP_PW" ] && echo "APPLE_APP_SPECIFIC_PASSWORD=$AP_PW" >> "$GITHUB_ENV"
+            [ -n "$AP_TEAM" ] && echo "APPLE_TEAM_ID=$AP_TEAM" >> "$GITHUB_ENV"
+          fi
+          echo "signing env configured (empty secrets skipped)"
+
       - name: Build installer (electron-builder)
         working-directory: desktop
         shell: bash
         run: ${{ matrix.dist }} -- --publish never
         env:
-          # Signing: unsigned when the secrets are empty (electron-builder skips
-          # signing for empty CSC_LINK); signed+notarized automatically once set.
-          CSC_LINK: ${{ matrix.os == 'windows-latest' && secrets.WIN_CSC_LINK || secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ matrix.os == 'windows-latest' && secrets.WIN_CSC_KEY_PASSWORD || secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload build artifacts
