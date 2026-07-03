@@ -979,6 +979,57 @@ ipcMain.handle('wizards:rate', (_e, { id, stars }) => {
   return { ok: true };
 });
 
+// ---------- IPC: personal wizards (an APPLIED Section promoted to a scoped RAG chat) ----------
+// Pure backend state — no fs writes happen here (no pathGuard needed): the section's
+// files already moved (path-guarded) when the user clicked Enable; promote just
+// creates the wizard record the backend scopes retrieval + chat history to.
+
+ipcMain.handle('wizards:promote-section', async (_e, sectionId) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { ok: false, error: 'tenant is not configured' };
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(sectionId)}/promote`, { tenant: cfg.tenant });
+    const body = await r.json();
+    return r.ok ? body : { ok: false, error: body.detail || `backend ${r.status}` };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+ipcMain.handle('wizards:personal-list', async () => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { wizards: [] };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal?tenant=${encodeURIComponent(cfg.tenant)}`);
+    return await r.json();
+  } catch (e) {
+    return { wizards: [], error: String(e) };
+  }
+});
+
+ipcMain.handle('wizards:personal-ask', async (_e, { id, question }) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { error: 'tenant is not configured' };
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/ask`, { question, tenant: cfg.tenant });
+    const body = await r.json();
+    return r.ok ? body : { error: body.detail || `backend ${r.status}` };
+  } catch (e) {
+    return { error: String(e) };
+  }
+});
+
+ipcMain.handle('wizards:personal-chat-history', async (_e, id) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { messages: [] };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/chat?tenant=${encodeURIComponent(cfg.tenant)}`);
+    return await r.json();
+  } catch (e) {
+    return { messages: [], error: String(e) };
+  }
+});
+
 // ---------- IPC: hooks ----------
 // Delegates to hooks-installer.js; pushes hooks:update after mutations.
 

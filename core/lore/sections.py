@@ -16,6 +16,8 @@ Lifecycle (section_proposals.status):
 import datetime
 import json
 import re
+import time
+import uuid
 
 from .sqlutil import in_clause
 
@@ -222,3 +224,141 @@ def undo_section(conn, tenant: str, section_id: str) -> dict:
         "update section_proposals set status='proposed', original_paths=null, updated_at=now() "
         "where id=%s and tenant_id=%s", (sid, tenant))
     return {"ok": True, "id": sid, "name": name, "moves": moves}
+
+
+# --- Personal Wizards: an APPLIED section promoted to a per-topic RAG assistant ---
+# A wizard is a VIEW over its section's notes; promoting moves nothing — the
+# section is already a real folder, the files stay exactly where they are.
+
+def _fwd(p: str) -> str:
+    return str(p or '').replace('\\', '/')
+
+
+def _section_folder(original_paths):
+    """Folder an applied section's notes live in — the dirname of the recorded
+    move destinations.  None when the section was applied without a dest_dir."""
+    try:
+        moves = json.loads(original_paths) if original_paths else []
+    except Exception:
+        moves = []
+    for mv in moves:
+        to = mv.get("to") if isinstance(mv, dict) else None
+        if to:
+            return _fwd(to).rsplit('/', 1)[0]
+    return None
+
+
+def promote_section(conn, tenant: str, section_id: str) -> dict:
+    """Promote an APPLIED section to a Personal Wizard (idempotent).
+
+    Only valid once the section is a real folder (status 'applied') — the notes
+    must actually live together before they can back a wizard.  Creates a
+    personal_wizards row; nothing on disk changes and the section itself keeps
+    working (undo stays possible)."""
+    sid, name, topic, note_ids, _orig, status = _get(conn, tenant, section_id)
+    if status != 'applied':
+        raise SectionError(f"cannot promote a section in status '{status}' (enable it first)")
+    try:
+        ids = json.loads(note_ids) if note_ids else []
+    except Exception:
+        ids = []
+    wid = f"wiz:{tenant}:{_slug(name)}"
+    conn.execute(
+        "insert into personal_wizards(id, tenant_id, section_id, name, topic, note_count) "
+        "values(%s,%s,%s,%s,%s,%s) on conflict do nothing",
+        (wid, tenant, sid, name, topic, len(ids)))
+    return {"ok": True, "id": wid, "section_id": sid, "name": name,
+            "topic": topic, "note_count": len(ids)}
+
+
+def list_personal_wizards(conn, tenant: str) -> list:
+    """All personal wizards for a tenant, each with the folder its notes live in
+    (derived from the promoted section's recorded move plan)."""
+    rows = conn.execute(
+        "select w.id, w.section_id, w.name, w.topic, w.note_count, w.created_at, s.original_paths "
+        "from personal_wizards w "
+        "left join section_proposals s on s.id = w.section_id and s.tenant_id = w.tenant_id "
+        "where w.tenant_id=%s order by w.created_at desc, w.id",
+        (tenant,)).fetchall()
+    return [{
+        "id": wid, "section_id": sid, "name": name, "topic": topic,
+        "note_count": note_count or 0,
+        "folder": _section_folder(original_paths),
+        "created_at": created.isoformat() if isinstance(created, datetime.datetime) else created,
+    } for wid, sid, name, topic, note_count, created, original_paths in rows]
+
+
+def _get_wizard(conn, tenant: str, wizard_id: str):
+    row = conn.execute(
+        "select w.id, w.section_id, w.name, s.note_ids, s.original_paths "
+        "from personal_wizards w "
+        "left join section_proposals s on s.id = w.section_id and s.tenant_id = w.tenant_id "
+        "where w.id=%s and w.tenant_id=%s",
+        (wizard_id, tenant)).fetchone()
+    if not row:
+        raise SectionError("wizard not found")
+    return row
+
+
+def wizard_members(conn, tenant: str, wizard_id: str):
+    """(note_ids, scope_ids) belonging to a wizard.
+
+    Membership is the union of notes currently INSIDE the section's folder
+    (source_path prefix — note ids are path-derived, so they change when the
+    desktop moves a file) and the section's recorded note_ids that still exist
+    (covers notes the desktop skipped or that never had a file move)."""
+    _wid, _sid, _name, note_ids, original_paths = _get_wizard(conn, tenant, wizard_id)
+    member: set = set()
+    folder = _section_folder(original_paths)
+    if folder:
+        # Same LIKE-escape as /forget: \, %, _ must not act as wildcards.
+        esc = folder.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        member.update(r[0] for r in conn.execute(
+            "select id from notes where tenant_id=%s and source_path is not null "
+            "and replace(source_path, '\\', '/') like %s escape '\\'",
+            (tenant, esc + '/%')).fetchall())
+    try:
+        ids = json.loads(note_ids) if note_ids else []
+    except Exception:
+        ids = []
+    if ids:
+        frag, params = in_clause("id", ids)
+        member.update(r[0] for r in conn.execute(
+            f"select id from notes where tenant_id=%s and {frag}",
+            [tenant, *params]).fetchall())
+    scopes = []
+    if member:
+        frag, params = in_clause("id", sorted(member))
+        scopes = [r[0] for r in conn.execute(
+            f"select distinct scope_id from notes where tenant_id=%s and {frag}",
+            [tenant, *params]).fetchall() if r[0]]
+    return member, scopes
+
+
+def wizard_chat(conn, tenant: str, wizard_id: str) -> list:
+    """Persisted chat history for a wizard, oldest first."""
+    _get_wizard(conn, tenant, wizard_id)   # unknown wizard -> SectionError
+    out = []
+    for cid, role, text, sources, created in conn.execute(
+            "select id, role, text, sources, created_at from personal_wizard_chats "
+            "where wizard_id=%s and tenant_id=%s order by created_at, id",
+            (wizard_id, tenant)).fetchall():
+        try:
+            srcs = json.loads(sources) if sources else None
+        except Exception:
+            srcs = None
+        out.append({"id": cid, "role": role, "text": text, "sources": srcs,
+                    "created_at": created.isoformat() if isinstance(created, datetime.datetime) else created})
+    return out
+
+
+def append_wizard_chat(conn, tenant: str, wizard_id: str, role: str, text: str, sources=None) -> str:
+    """Append one chat turn.  The id embeds a nanosecond timestamp so the
+    (created_at, id) ordering stays stable even when the user turn and the
+    assistant turn land inside the same clock second."""
+    cid = f"{time.time_ns():020d}-{uuid.uuid4().hex[:8]}"
+    conn.execute(
+        "insert into personal_wizard_chats(id, wizard_id, tenant_id, role, text, sources) "
+        "values(%s,%s,%s,%s,%s,%s)",
+        (cid, wizard_id, tenant, role, text, json.dumps(sources) if sources else None))
+    return cid

@@ -697,6 +697,78 @@ def sections_undo(section_id: str, req: SectionReq):
         raise HTTPException(status_code=409, detail=str(e))
 
 
+# --- Personal Wizards (an APPLIED Section promoted to a scoped RAG assistant) ---
+# Promoting moves nothing — the section is already a real folder. A wizard is a
+# retrieval VIEW over that folder's notes plus a persisted per-wizard chat.
+
+class WizardAskReq(BaseModel):
+    question: str
+    tenant: str
+    model: Optional[str] = None
+
+
+@app.post("/sections/{section_id}/promote")
+def sections_promote(section_id: str, req: SectionReq):
+    """Promote an APPLIED section to a Personal Wizard (idempotent).
+    Body: {tenant}. 409 unless the section's status is 'applied' — the notes
+    must already live together as a real folder before a wizard can scope to them."""
+    from . import sections
+    try:
+        return sections.promote_section(_conn, req.tenant, section_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/wizards/personal")
+def wizards_personal_list(tenant: Optional[str] = None):
+    """Personal wizards for a tenant.
+    Returns {wizards:[{id, section_id, name, topic, note_count, folder, created_at}]}"""
+    from . import sections
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return {"wizards": sections.list_personal_wizards(_conn, tenant)}
+
+
+@app.post("/wizards/personal/{wizard_id}/ask")
+def wizards_personal_ask(wizard_id: str, req: WizardAskReq, embedder=Depends(get_embedder),
+                         reranker=Depends(get_reranker), sparse=Depends(get_sparse_embedder)):
+    """Wizard-scoped RAG ask: same pipeline + response shape as /ask, but retrieval
+    is filtered to the wizard's own notes (its section's folder / recorded note set).
+    Both the question and the answer are appended to the wizard's persisted chat.
+
+    Body: {question, tenant, model?}. Returns {answer, engine, citations}."""
+    from . import sections
+    try:
+        member_ids, scopes = sections.wizard_members(_conn, req.tenant, wizard_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    hits = []
+    if member_ids and scopes:
+        # Over-fetch across the member notes' scopes, then keep only the wizard's chunks.
+        hits = [h for h in retrieve(req.question, embedder, reranker, scopes, req.tenant,
+                                    limit=32, sparse_embedder=sparse)
+                if h.note_id in member_ids][:8]
+    chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
+    text, engine = llm.answer(req.question, chunks, model=req.model)
+    citations = [{"note_id": h.note_id, "heading_path": h.heading_path, "why": h.why} for h in hits]
+    sections.append_wizard_chat(_conn, req.tenant, wizard_id, "user", req.question)
+    sections.append_wizard_chat(_conn, req.tenant, wizard_id, "assistant", text, sources=citations)
+    return {"answer": text, "engine": engine, "citations": citations}
+
+
+@app.get("/wizards/personal/{wizard_id}/chat")
+def wizards_personal_chat(wizard_id: str, tenant: Optional[str] = None):
+    """Persisted per-wizard chat history, oldest first.
+    Returns {messages:[{id, role, text, sources, created_at}]}"""
+    from . import sections
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    try:
+        return {"messages": sections.wizard_chat(_conn, tenant, wizard_id)}
+    except sections.SectionError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.get("/tags")
 def tags_list(tenant: Optional[str] = None):
     """Distinct tags + topics for a tenant (feeds the desktop's .lore manifest).

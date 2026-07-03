@@ -223,7 +223,30 @@ create table if not exists section_proposals(
   updated_at timestamptz default now(),
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
 create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists personal_wizards(
+  id text primary key,
+  tenant_id text not null,
+  section_id text not null,
+  name text not null,
+  topic text not null,
+  note_count int default 0,
+  created_at timestamptz default now());
+create index if not exists personal_wizards_tenant on personal_wizards(tenant_id);
+create table if not exists personal_wizard_chats(
+  id text primary key,
+  wizard_id text not null,
+  tenant_id text not null,
+  role text not null,
+  text text,
+  sources text,
+  created_at timestamptz default now(),
+  constraint pw_chat_role_check check (role in ('user','assistant')));
+create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
 """
+
+# PG migration note: personal_wizards / personal_wizard_chats are NEW tables, so the
+# CREATE TABLE IF NOT EXISTS in SCHEMA above IS the migration (bootstrap step 3) —
+# same pattern section_proposals used; no ALTER/DO$$ entry needed.
 
 # Columns added in M1 (Hooks milestone).  ADD COLUMN IF NOT EXISTS is idempotent
 # on PostgreSQL 9.6+.  Run before the SCHEMA block so existing databases get the
@@ -338,6 +361,25 @@ create table if not exists section_proposals(
   updated_at timestamp default current_timestamp,
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
 create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists personal_wizards(
+  id text primary key,
+  tenant_id text not null,
+  section_id text not null,
+  name text not null,
+  topic text not null,
+  note_count int default 0,
+  created_at timestamp default current_timestamp);
+create index if not exists personal_wizards_tenant on personal_wizards(tenant_id);
+create table if not exists personal_wizard_chats(
+  id text primary key,
+  wizard_id text not null,
+  tenant_id text not null,
+  role text not null,
+  text text,
+  sources text,
+  created_at timestamp default current_timestamp,
+  constraint pw_chat_role_check check (role in ('user','assistant')));
+create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
 """
 
 
