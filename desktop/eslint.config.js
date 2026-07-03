@@ -39,6 +39,8 @@ module.exports = [
       // Compiled design-system bundle + precompiled renderer (generated output).
       'renderer/design/_ds_bundle.js',
       'renderer/compiled/**',
+      // Vendored third-party libraries (minified React/Babel/d3/lucide/etc.).
+      'renderer/vendor/**',
       // Renderer JSX is validated by the Babel parse step in CI (eslint's
       // default parser can't read JSX without extra plugins; the runtime
       // Babel transform is the authoritative parse anyway).
