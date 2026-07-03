@@ -35,7 +35,7 @@ jobs:
             dist: npm run dist:mac
             artifacts: |
               desktop/dist/*.dmg
-              desktop/dist/*-mac.zip
+              desktop/dist/*.zip
               desktop/dist/latest-mac.yml
               desktop/dist/*.blockmap
           - os: windows-latest
