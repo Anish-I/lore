@@ -15,6 +15,38 @@ from . import llm
 from . import auth, mailer, tenancy
 
 app = FastAPI(title="Lore Core")
+
+# --- Local API token -------------------------------------------------------
+# The backend binds 127.0.0.1, so remote machines can't reach it — but ANY
+# local process could read/write the whole knowledge base. When the desktop app
+# sets LORE_LOCAL_TOKEN, every request must carry `Authorization: Bearer <token>`
+# (or `X-Lore-Token: <token>`). Unset → no enforcement (raw-backend / CI use).
+# /presets is always exempt so the app's health probe works before it has the
+# token wired, and so is the docs/openapi surface.
+_LOCAL_TOKEN = os.environ.get("LORE_LOCAL_TOKEN") or None
+_TOKEN_EXEMPT = {"/presets", "/docs", "/openapi.json", "/redoc"}
+
+
+@app.middleware("http")
+async def _local_token_guard(request, call_next):
+    if _LOCAL_TOKEN and request.url.path not in _TOKEN_EXEMPT:
+        from starlette.responses import JSONResponse
+        supplied = request.headers.get("x-lore-token")
+        if not supplied:
+            hdr = request.headers.get("authorization") or ""
+            if hdr.lower().startswith("bearer "):
+                supplied = hdr[7:].strip()
+        # In server mode the Google-JWT auth on individual endpoints governs
+        # access; the local token is a desktop-only lock, so only enforce it
+        # when not in server mode.
+        if not _server_mode() and supplied != _LOCAL_TOKEN:
+            return JSONResponse(
+                {"detail": "Local API token required. Re-install Lore hooks from Settings if this is unexpected."},
+                status_code=401,
+            )
+    return await call_next(request)
+
+
 _conn = db.connect(); db.bootstrap_schema(_conn)
 tenancy.bootstrap_tenancy(_conn)  # users/orgs/teams/memberships for multi-tenant auth
 

@@ -31,10 +31,10 @@ function loadLoreIdentity() {
   for (const p of candidates) {
     try {
       const c = JSON.parse(fs.readFileSync(p, 'utf8'));
-      return { tenant: c.tenant || '', scope: c.scope || '' };
+      return { tenant: c.tenant || '', scope: c.scope || '', token: c.localToken || '' };
     } catch {}
   }
-  return { tenant: '', scope: '' };
+  return { tenant: '', scope: '', token: '' };
 }
 
 // ---------- python resolution ----------
@@ -176,7 +176,7 @@ function installMcp() {
     command: mcpCmd.command,
     args:    mcpCmd.args,
     ...(mcpCmd.cwd ? { cwd: mcpCmd.cwd } : {}),
-    env:     { ...mcpCmd.extraEnv, LORE_TENANT: id.tenant, LORE_SCOPES: id.scope },
+    env:     { ...mcpCmd.extraEnv, LORE_TENANT: id.tenant, LORE_SCOPES: id.scope, ...(id.token ? { LORE_LOCAL_TOKEN: id.token } : {}) },
   };
 
   // Atomic write: write to a temp file, then rename over the target.
@@ -248,6 +248,7 @@ function installCodexMcp() {
     text = codexToml.appendTable(text, 'mcp_servers.lore.env', [
       ...Object.entries(mcpCmd.extraEnv).map(([k, v]) => `${k} = ${JSON.stringify(v)}`),
       `LORE_TENANT = ${JSON.stringify(id.tenant)}`,
+      ...(id.token ? [`LORE_LOCAL_TOKEN = ${JSON.stringify(id.token)}`] : []),
       `LORE_SCOPES = ${JSON.stringify(id.scope)}`,
     ]);
     codexToml.atomicWrite(text);

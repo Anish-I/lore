@@ -62,7 +62,7 @@ async function search(query, cfg) {
   try {
     const res = await fetch(`${BACKEND}/search`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: cfg.localToken ? { 'content-type': 'application/json', 'X-Lore-Token': cfg.localToken } : { 'content-type': 'application/json' },
       body: JSON.stringify({
         query:     query.slice(0, 500),
         scopes:    [cfg.scope],

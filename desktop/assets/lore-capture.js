@@ -207,7 +207,7 @@ async function flush(key, meta, text, cfg) {
   try {
     await fetch(`${BACKEND}/capture`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: cfg.localToken ? { 'content-type': 'application/json', 'X-Lore-Token': cfg.localToken } : { 'content-type': 'application/json' },
       body: JSON.stringify({
         session_id: key,
         title:      `Lore Session ${key.slice(0, 8)}`,

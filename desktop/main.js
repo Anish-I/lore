@@ -69,7 +69,7 @@ function startUpkeepInterval(tenant) {
       const c = loadConfig() || {};
       const r = await fetch(`${BACKEND_URL()}/upkeep/run`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...authHeaders() },
         body: JSON.stringify({
           tenant,
           auto_classify: c.autoClassify === true,
@@ -135,6 +135,24 @@ function saveConfig(cfg) {
   if (Array.isArray(cfg.roots)) cfg.roots.forEach(registerRoot);
 }
 
+// ---------- local API token ----------
+// A per-install secret that locks the on-device backend port so only Lore's own
+// components (this app, the installed hooks, the MCP server) can read/write the
+// knowledge base. Generated once, stored in config, read by hooks/MCP, and
+// passed to the spawned backend via env so its middleware can enforce it.
+function localToken() {
+  let cfg = loadConfig() || {};
+  if (!cfg.localToken) {
+    cfg.localToken = require('crypto').randomBytes(24).toString('hex');
+    saveConfig(cfg);
+  }
+  return cfg.localToken;
+}
+function authHeaders() {
+  const t = (loadConfig() || {}).localToken;
+  return t ? { 'X-Lore-Token': t } : {};
+}
+
 // ---------- .lore manifests (per-folder discovery/breadcrumb cache) ----------
 // After every scrape / reconcile / upkeep / import / section change, each library
 // root gets its `.lore` manifest refreshed + a worklog entry appended, so a fresh
@@ -142,7 +160,7 @@ function saveConfig(cfg) {
 function postJSON(url, body) {
   return fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
   });
 }
@@ -155,7 +173,7 @@ async function refreshManifests(action, summaryText) {
     let topics = [], tags = [];
     if (cfg.tenant) {
       try {
-        const r = await fetch(`${BACKEND_URL()}/tags?tenant=${encodeURIComponent(cfg.tenant)}`);
+        const r = await fetch(`${BACKEND_URL()}/tags?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
         if (r.ok) { const b = await r.json(); topics = b.topics || []; tags = b.tags || []; }
       } catch { /* backend down — still write counts + worklog */ }
     }
@@ -226,6 +244,7 @@ async function ensureBackend() {
   // embedded Qdrant / Postgres. Cloning process.env also carries DATABASE_URL,
   // which the embedded-Postgres block in app.whenReady set before we ran (item 4).
   const childEnv = { ...process.env };
+  childEnv.LORE_LOCAL_TOKEN = localToken();  // lock the on-device backend port
 
   // Local Obsidian-light default: SQLite truth + embedded Qdrant, no servers.
   // Applies to BOTH the packaged and dev spawn paths below unless the user has
@@ -382,7 +401,7 @@ function maybeAutoIndex(event, p) {
   autoIndexLast.set(p, now);
   fetch(`${BACKEND_URL()}/reindex`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ path: p, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }),
   }).catch(() => { /* fail soft — backend may be down */ });
 }
@@ -713,7 +732,7 @@ function ctxReindex(notePath) {
   const cfg = loadConfig() || {};
   fetch(`${BACKEND_URL()}/reindex`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ path: notePath, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }),
   }).catch(() => { /* fail soft — backend may be down */ });
 }
@@ -784,6 +803,10 @@ ipcMain.handle('tree:rename', (_e, { oldPath, newName, kind }) => {
 // ---------- IPC: config ----------
 // Config lives in app.getPath('userData')/lore-config.json.
 // Handlers are registered here but only invoked after the app is ready.
+// Synchronous so preload can read the local API token at module-load time and
+// attach it to its direct backend fetches (presets/ask/reindex).
+ipcMain.on('local-token', (e) => { e.returnValue = localToken(); });
+
 ipcMain.handle('config:get', () => loadConfig());
 
 ipcMain.handle('config:set', (_e, partial) => {
@@ -980,7 +1003,7 @@ ipcMain.handle('auth:login', async () => {
     if (!tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
     const r = await fetch(`${BACKEND_URL()}/auth/google`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ id_token: tokens.id_token }),
     });
     const body = await r.json();
@@ -1203,7 +1226,7 @@ ipcMain.handle('wizards:personal-list', async () => {
   const cfg = loadConfig() || {};
   if (!cfg.tenant) return { wizards: [] };
   try {
-    const r = await fetch(`${BACKEND_URL()}/wizards/personal?tenant=${encodeURIComponent(cfg.tenant)}`);
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
     return await r.json();
   } catch (e) {
     return { wizards: [], error: String(e) };
@@ -1342,7 +1365,7 @@ ipcMain.handle('search', async (_e, { query, scopes, k }) => {
     if (!cfg.tenant) return { error: 'tenant is not configured' };
     const r = await fetch(`${BACKEND_URL()}/search`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ query, scopes, k, tenant_id: cfg.tenant }),
     });
     return r.json();
@@ -1364,7 +1387,7 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
     const cfg = loadConfig() || {};
     const r = await fetch(`${BACKEND_URL()}/upkeep/run`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({
         tenant, scope,
         auto_classify: cfg.autoClassify === true,
@@ -1549,7 +1572,7 @@ ipcMain.handle('enrich:run', async (_e, opts) => {
   try {
     const r = await fetch(`${BACKEND_URL()}/enrich`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ tenant, limit: limit || 8, provider }),
     });
     const result = await r.json();
@@ -1561,7 +1584,7 @@ ipcMain.handle('enrich:run', async (_e, opts) => {
 
 ipcMain.handle('upkeep:status', async () => {
   try {
-    const r = await fetch(`${BACKEND_URL()}/upkeep/status`);
+    const r = await fetch(`${BACKEND_URL()}/upkeep/status`, { headers: authHeaders() });
     return r.json();
   } catch (e) {
     return { error: String(e) };
@@ -1604,7 +1627,7 @@ ipcMain.handle('cli:install', () => cliInstaller.installCli());
 ipcMain.handle('stats:get', async (_e, tenant) => {
   const cfg = loadConfig() || {};
   const t = tenant || cfg.tenant || '';
-  const r = await fetch(`${BACKEND_URL()}/stats?tenant=${encodeURIComponent(t)}`);
+  const r = await fetch(`${BACKEND_URL()}/stats?tenant=${encodeURIComponent(t)}`, { headers: authHeaders() });
   if (!r.ok) throw new Error(`backend /stats returned ${r.status}`);
   return r.json();
 });
@@ -1617,7 +1640,7 @@ ipcMain.handle('graph:get', async (_e, opts) => {
   if (tenant) params.set('tenant', tenant);
   if (scopes) params.set('scopes', Array.isArray(scopes) ? scopes.join(',') : scopes);
   const qs = params.toString() ? `?${params.toString()}` : '';
-  const r = await fetch(`${BACKEND_URL()}/graph${qs}`);
+  const r = await fetch(`${BACKEND_URL()}/graph${qs}`, { headers: authHeaders() });
   if (!r.ok) throw new Error(`backend /graph returned ${r.status}`);
   return r.json();
 });
@@ -1649,7 +1672,7 @@ async function reconcileIndex(bootStatus) {
     let diskCount = 0;
     for (const root of roots) diskCount += countNotes(buildTree(root));
 
-    const r = await fetch(`${BACKEND_URL()}/stats?tenant=${encodeURIComponent(cfg.tenant)}`);
+    const r = await fetch(`${BACKEND_URL()}/stats?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
     if (!r.ok) return;
     const stats = await r.json();
     const indexedCount = (stats && typeof stats.notes === 'number') ? stats.notes : 0;

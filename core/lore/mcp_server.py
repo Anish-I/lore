@@ -38,8 +38,21 @@ _TENANT_REQUIRED_MSG = (
 )
 
 
+# Local API token — the desktop MCP registration sets LORE_LOCAL_TOKEN so the
+# backend's on-device port lock accepts our requests.
+_LOCAL_TOKEN = os.environ.get("LORE_LOCAL_TOKEN") or None
+
+
+def _hdrs(base: dict | None = None) -> dict:
+    h = dict(base or {})
+    if _LOCAL_TOKEN:
+        h["X-Lore-Token"] = _LOCAL_TOKEN
+    return h
+
+
 def _get_json(path: str, timeout: int = _HTTP_TIMEOUT) -> dict:
-    with urllib.request.urlopen(f"{BASE_URL}{path}", timeout=timeout) as r:
+    req = urllib.request.Request(f"{BASE_URL}{path}", headers=_hdrs())
+    with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())
 
 
@@ -47,7 +60,7 @@ def _post_json(path: str, payload: dict, timeout: int = _HTTP_TIMEOUT) -> dict:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         f"{BASE_URL}{path}", data=data,
-        headers={"Content-Type": "application/json"},
+        headers=_hdrs({"Content-Type": "application/json"}),
     )
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read())

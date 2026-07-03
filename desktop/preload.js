@@ -4,6 +4,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 const BACKEND = 'http://localhost:8099';
 
+// Local API token — fetched synchronously at load so the direct backend fetches
+// below carry it. main.js generates/persists it; the backend enforces it.
+let LOCAL_TOKEN = '';
+try { LOCAL_TOKEN = ipcRenderer.sendSync('local-token') || ''; } catch { /* backend unlocked */ }
+function authH(extra) { return LOCAL_TOKEN ? { ...extra, 'X-Lore-Token': LOCAL_TOKEN } : { ...extra }; }
+
 contextBridge.exposeInMainWorld('lore', {
   // --- filesystem (main process) ---
   pickVault:      ()           => ipcRenderer.invoke('vault:pick'),
@@ -225,13 +231,13 @@ contextBridge.exposeInMainWorld('lore', {
 
   // --- backend (the running lore.api) ---
   presets: async () => {
-    const r = await fetch(`${BACKEND}/presets`);
+    const r = await fetch(`${BACKEND}/presets`, { headers: authH() });
     return r.json();
   },
   ask: async (question, scopes, tenant, model) => {
     const r = await fetch(`${BACKEND}/trace`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: authH({ 'content-type': 'application/json' }),
       body: JSON.stringify({ question, principal_scopes: scopes, tenant_id: tenant, model: model || null }),
     });
     if (!r.ok) throw new Error('backend ' + r.status);
@@ -240,7 +246,7 @@ contextBridge.exposeInMainWorld('lore', {
   reindex: async (path, owner, scope, tenant) => {
     const r = await fetch(`${BACKEND}/reindex`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: authH({ 'content-type': 'application/json' }),
       body: JSON.stringify({ path, owner_id: owner, scope_id: scope, tenant_id: tenant }),
     });
     return r.json();
