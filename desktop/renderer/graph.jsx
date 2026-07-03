@@ -225,7 +225,10 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
         if (n.x == null || !visible(n)) continue;
         const near = !focus || nb.has(n.id) || n.id === focus;
         ctx.globalAlpha = near ? 1 : 0.22;
-        ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 6.283185);
+        // Exact 2π, not 6.283185: Electron 43's Chromium (Graphite rasterizer)
+        // renders a near-full arc as a visibly open 'pac-man'; older Chromium
+        // snapped it closed. closePath() belts-and-suspenders the fill.
+        ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.closePath();
         // Color by Section (top-level folder) when known — the pills above filter
         // by section, so node color should match what you're toggling. Falls back
         // to scope-based coloring for notes outside any tracked folder (e.g.
@@ -356,10 +359,14 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
     const mo = new MutationObserver(() => { readPalette(); render(); });
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-    const fitTimer = setTimeout(fitView, 420);   // fit once after initial layout
+    // Auto-fit ONLY on first entry (no prior zoom transform): fitting at 420ms
+    // mid-simulation zoomed to a still-moving cluster then visibly bounced out;
+    // and re-fitting on every live data refresh yanked the viewport away from
+    // wherever the user had panned. 900ms lets the layout mostly settle first.
+    const fitTimer = tRef.current ? null : setTimeout(fitView, 900);
 
     return () => {
-      clearTimeout(fitTimer);
+      if (fitTimer) clearTimeout(fitTimer);
       ro.disconnect(); mo.disconnect();
       cv.removeEventListener('pointerdown', onDown);
       cv.removeEventListener('pointermove', onHover);
@@ -423,12 +430,32 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
             )}
           </div>
         )}
-        <div title="Scrub the graph by note creation date (version control) — drag to see knowledge as of any date" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-raised)' }}>
+        <div title="Scrub the graph by note creation date — drag, or pick/type an exact date" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-raised)' }}>
           <GrIcon name="history" size={12} style={{ color: 'var(--text-faint)' }} />
           <input type="range" min={dateBounds.lo} max={dateBounds.hi} value={Math.min(cutoff, dateBounds.hi)} step={86400000}
             onChange={(e) => setCutoff(Number(e.target.value))}
             style={{ width: 118, accentColor: 'var(--brand-fg)', cursor: 'pointer' }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: cutoff >= dateBounds.hi ? 'var(--text-faint)' : 'var(--brand-fg)', minWidth: 66 }}>{cutoff >= dateBounds.hi ? 'all' : new Date(cutoff).toISOString().slice(0, 10)}</span>
+          {(() => {
+            // Within one day-step of the max = "all". Live refreshes grow the
+            // upper bound as new notes land; a slider parked at max must keep
+            // reading "all", not flip to today's date.
+            const atEnd = cutoff >= dateBounds.hi - 86400000;
+            return (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: atEnd ? 'var(--text-faint)' : 'var(--brand-fg)', minWidth: 34 }}>
+                {atEnd ? 'all' : new Date(cutoff).toISOString().slice(0, 10)}
+              </span>
+            );
+          })()}
+          <input type="date" value={cutoff >= dateBounds.hi - 86400000 ? '' : new Date(cutoff).toISOString().slice(0, 10)}
+            min={new Date(dateBounds.lo).toISOString().slice(0, 10)}
+            max={new Date(dateBounds.hi).toISOString().slice(0, 10)}
+            onChange={(e) => {
+              const t = Date.parse(e.target.value);
+              // Empty/cleared or out-of-range → back to "all".
+              setCutoff(Number.isNaN(t) ? dateBounds.hi : t + 86399000); // end of picked day
+            }}
+            title="Jump to an exact date"
+            style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 10.5, width: 108, outline: 'none', colorScheme: 'dark' }} />
         </div>
         <button onClick={fit} title="Fit to view" style={pill(true)}><GrIcon name="maximize" size={12} />fit</button>
         <button onClick={reheat} title="Shake" style={pill(true)}><GrIcon name="sparkles" size={12} />shake</button>
