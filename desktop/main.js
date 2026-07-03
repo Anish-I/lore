@@ -12,6 +12,7 @@ const cliInstaller = require('./cli-installer');
 const googleOauth  = require('./lib/google-oauth');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
+const backupMirror = require('./lib/backup-mirror');
 
 // Backend URL/port are wiring values, not constants: resolved lazily (env var > cfg
 // field > default) via desktop/lib/runtime.js so a config edit or LORE_PORT/
@@ -345,8 +346,34 @@ function countNotes(tree) {
 // manually (right-click → Re-index Note, or a full scan).
 const autoIndexLast = new Map(); // path -> last trigger ms (debounces editor save bursts)
 
+// ---------- backup mirror (SharePoint/OneDrive assurance) ----------
+// Debounced: any watched change schedules a mirror ~60s later (coalesced).
+// Result + timestamp persisted to config so the UI can show "Last backed up …".
+let backupTimer = null;
+function runBackup(reason) {
+  const cfg = loadConfig() || {};
+  if (!cfg.backupEnabled || !cfg.backupDir) return;
+  const root = (Array.isArray(cfg.roots) && cfg.roots[0]) || (watcher && watcher._loreRoot);
+  if (!root) return;
+  const r = backupMirror.mirror(root, cfg.backupDir);
+  const next = loadConfig() || {};
+  next.backupLastRun = new Date().toISOString();
+  next.backupLastOk = !!r.ok;
+  next.backupLastCount = r.count || next.backupLastCount || 0;
+  next.backupLastError = r.ok ? '' : (r.error || 'backup failed');
+  saveConfig(next);
+  if (win && !win.isDestroyed()) win.webContents.send('backup:changed', { reason, ...r });
+}
+function scheduleBackup() {
+  const cfg = loadConfig() || {};
+  if (!cfg.backupEnabled || !cfg.backupDir) return;
+  if (backupTimer) clearTimeout(backupTimer);
+  backupTimer = setTimeout(() => { backupTimer = null; runBackup('change'); }, 60_000);
+}
+
 function maybeAutoIndex(event, p) {
   if (event !== 'add' && event !== 'change') return;
+  scheduleBackup();  // any file change also refreshes the backup (debounced)
   const cfg = loadConfig() || {};
   if (cfg.autoIndexOnSave === false) return;
   if (!cfg.owner || !cfg.scope || !cfg.tenant) return; // identity not configured yet
@@ -549,6 +576,29 @@ ipcMain.handle('note:write', (_e, { path: p, text }) => {
   } catch (e) {
     return { ok: false, error: String(e) };
   }
+});
+
+// ---------- IPC: backup mirror ----------
+ipcMain.handle('backup:pick-dir', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Choose a backup folder (tip: your OneDrive or SharePoint-synced folder)',
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  if (r.canceled || !r.filePaths[0]) return { ok: false };
+  return { ok: true, dir: r.filePaths[0] };
+});
+ipcMain.handle('backup:run', async () => {
+  runBackup('manual');
+  const cfg = loadConfig() || {};
+  return { ok: cfg.backupLastOk !== false, lastRun: cfg.backupLastRun, count: cfg.backupLastCount, error: cfg.backupLastError || '' };
+});
+ipcMain.handle('backup:status', () => {
+  const cfg = loadConfig() || {};
+  return {
+    enabled: !!cfg.backupEnabled, dir: cfg.backupDir || null,
+    lastRun: cfg.backupLastRun || null, ok: cfg.backupLastOk !== false,
+    count: cfg.backupLastCount || 0, error: cfg.backupLastError || '',
+  };
 });
 
 // ---------- IPC: change a note's scope (the confidentiality control) ----------
@@ -1710,6 +1760,8 @@ app.whenReady().then(async () => {
   // Upkeep defaults to auto-ON for a configured user: undefined/missing means on;
   // only an explicit false (the user toggled it off in Settings) disables it.
   if (cfg && cfg.upkeepAuto !== false && cfg.tenant) startUpkeepInterval(cfg.tenant);
+  // Refresh the backup once on launch (catches changes made while closed).
+  if (cfg && cfg.backupEnabled && cfg.backupDir) setTimeout(() => runBackup('startup'), 4000);
 
   // Auto-update via GitHub Releases (electron-updater reads latest*.yml attached
   // by the release workflow). Packaged builds only; kill-switch cfg.autoUpdate=false.

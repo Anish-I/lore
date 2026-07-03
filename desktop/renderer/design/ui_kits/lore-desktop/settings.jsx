@@ -64,6 +64,16 @@ function stRetrievalModel(retrieval, key) {
   return m.provider ? `${m.provider} · ${m.model}` : String(m.model);
 }
 
+function stAgo(iso) {
+  const d = Date.parse(iso);
+  if (Number.isNaN(d)) return 'just now';
+  const s = Math.max(0, Math.round((Date.now() - d) / 1000));
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
 function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSetup }) {
   const s = {
     account: {},
@@ -92,6 +102,10 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   // Indexing & recall state (real wiring: config flag + backend /config/retrieval)
   const [autoIndexOnSave, setAutoIndexOnSave] = React.useState(true); // default ON; explicit false disables
   const [simpleMode, setSimpleMode] = React.useState(false);
+  const [backupEnabled, setBackupEnabled] = React.useState(false);
+  const [backupDir, setBackupDir] = React.useState('');
+  const [backupStatus, setBackupStatus] = React.useState(null);
+  const [backupBusy, setBackupBusy] = React.useState(false);
   const [autoFileObvious, setAutoFileObvious] = React.useState(false); // default OFF; only explicit true enables
   const [retrieval, setRetrieval] = React.useState(null); // {embeddingModel, reranker, contextualRetrieval, localFallback} | {error} | null while loading
   const [importResult, setImportResult] = React.useState(null); // {ok, applied, ignored} | {ok:false, reason}
@@ -136,6 +150,8 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           setDefScope((c && c.scope) || '');
           setAutoIndexOnSave(!(c && c.autoIndexOnSave === false));
       setSimpleMode(!!(c && c.simpleMode));
+          setBackupEnabled(!!(c && c.backupEnabled));
+          setBackupDir((c && c.backupDir) || '');
           setAutoFileObvious(!!(c && c.autoFileObvious === true));
           setUpkeepAuto(!(c && c.upkeepAuto === false));
         })
@@ -151,6 +167,9 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     }
     if (window.lore && window.lore.cli && window.lore.cli.status) {
       window.lore.cli.status().then((s) => setCliStatus(s || null)).catch(() => setCliStatus(null));
+    }
+    if (window.lore && window.lore.backup && window.lore.backup.status) {
+      window.lore.backup.status().then((b) => setBackupStatus(b || null)).catch(() => {});
     }
   }, []);
 
@@ -253,6 +272,31 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
       // onConfig re-renders the app with the new config so the rail updates live.
       window.lore.config.set({ simpleMode: !!v }).then((next) => { if (onConfig) onConfig(next); }).catch(() => {});
     }
+  };
+
+  const stSetBackupEnabled = (v) => {
+    setBackupEnabled(v);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      window.lore.config.set({ backupEnabled: !!v }).then((next) => { if (onConfig) onConfig(next); }).catch(() => {});
+    }
+    if (v && backupDir) stRunBackup();
+  };
+  const stPickBackupDir = async () => {
+    if (!window.lore || !window.lore.backup) return;
+    const r = await window.lore.backup.pickDir();
+    if (r && r.ok && r.dir) {
+      setBackupDir(r.dir);
+      if (window.lore.config && window.lore.config.set) {
+        const next = await window.lore.config.set({ backupDir: r.dir }); if (onConfig) onConfig(next);
+      }
+      stRunBackup();
+    }
+  };
+  const stRunBackup = async () => {
+    if (!window.lore || !window.lore.backup) return;
+    setBackupBusy(true);
+    try { await window.lore.backup.run(); const b = await window.lore.backup.status(); setBackupStatus(b || null); }
+    finally { setBackupBusy(false); }
   };
 
   const stImportConfig = async () => {
@@ -381,6 +425,31 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           <Row label="Simple mode" hint="Hide the graph, wizards, teams and automation surfaces — leaving just your files, search and ask. Everything keeps working underneath; flip back anytime. Best for non-technical use.">
             <StSwitch checked={simpleMode} onChange={stSetSimpleMode} />
           </Row>
+        </Section>
+
+        <Section icon="shield-check" title="Backup">
+          <Row label="Back up my library" hint="Continuously mirror your notes into a folder you choose — point it at your OneDrive or SharePoint-synced folder and Microsoft syncs it off-device. Your files literally appear there; nothing is uploaded by Lore itself.">
+            <StSwitch checked={backupEnabled} onChange={stSetBackupEnabled} />
+          </Row>
+          {backupEnabled && (
+            <Row label="Backup folder" hint={backupDir || 'No folder chosen yet.'}>
+              <StButton variant="secondary" size="sm" onClick={stPickBackupDir}>{backupDir ? 'Change…' : 'Choose folder…'}</StButton>
+            </Row>
+          )}
+          {backupEnabled && backupDir && (
+            <Row label="Status" last>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: backupStatus && backupStatus.ok === false ? 'var(--clay-400)' : 'var(--jade-400)' }}>
+                  {backupStatus && backupStatus.ok === false
+                    ? `⚠ ${backupStatus.error || 'backup failed'}`
+                    : backupStatus && backupStatus.lastRun
+                      ? `✓ ${stAgo(backupStatus.lastRun)} · ${backupStatus.count || 0} notes`
+                      : 'not run yet'}
+                </span>
+                <StButton variant="secondary" size="sm" onClick={stRunBackup} disabled={backupBusy}>{backupBusy ? 'Backing up…' : 'Back up now'}</StButton>
+              </div>
+            </Row>
+          )}
         </Section>
 
         <Section icon="cpu" title="Indexing & recall">

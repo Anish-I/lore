@@ -14,6 +14,18 @@ contextBridge.exposeInMainWorld('lore', {
   // Change a note's scope (confidentiality). Broadening is blocked if the note
   // has secrets unless force:true. Resolves {ok, scope, broadened} or {ok:false, reason}.
   setNoteScope:   (path, scope, force) => ipcRenderer.invoke('note:set-scope', { path, scope, force }),
+
+  // --- backup mirror (SharePoint/OneDrive assurance) ---
+  backup: {
+    pickDir: () => ipcRenderer.invoke('backup:pick-dir'),
+    run:     () => ipcRenderer.invoke('backup:run'),
+    status:  () => ipcRenderer.invoke('backup:status'),
+    onChange: (cb) => {
+      const h = (_e, payload) => cb(payload);
+      ipcRenderer.on('backup:changed', h);
+      return () => ipcRenderer.removeListener('backup:changed', h);
+    },
+  },
   onVaultChanged: (cb)         => ipcRenderer.on('vault:changed', (_e, payload) => cb(payload)),
 
   // --- sidebar context menu (native, main-process) ---
