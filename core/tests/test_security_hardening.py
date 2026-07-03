@@ -5,7 +5,6 @@ Covers:
   - invite expiry — MED-4
   - broadened secret redaction — MED-1
 """
-import os
 import datetime
 
 import pytest
