@@ -83,6 +83,11 @@ module.exports = [
       'no-control-regex': 'off',
       // Benign escaped-slash style in regexes throughout; not worth the churn.
       'no-useless-escape': 'off',
+      // eslint 10 added this to `recommended`. It flags the codebase's defensive
+      // `let x = <default>; try { x = compute() } catch { return }` idiom, where the
+      // default is only "unused" because the catch always returns. Intentional, not a
+      // bug — left alone per this config's "no style-war rules" stance.
+      'no-useless-assignment': 'off',
     },
   },
   // Plain-JS renderer files (non-JSX): browser globals.
