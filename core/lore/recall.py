@@ -97,6 +97,25 @@ def _minmax(d):
         return {k: 0.5 for k in d}
     return {k: (v - lo) / (hi - lo) for k, v in d.items()}
 
+# Raw captured-session chunks (claude/codex session transcripts) score high on
+# lexical overlap with conversational queries — they're literally past prompts —
+# but they're the least-distilled knowledge in the store. Down-weight them so
+# topic/knowledge notes win contested slots; never exclude them (recent-session
+# recall is still useful). Env-tunable for ablation runs.
+SESSION_SOURCE_TYPES = frozenset(("claude-session", "codex-session", "claude-history"))
+SESSION_WEIGHT = float(os.environ.get("LORE_SESSION_WEIGHT", "0.75"))
+
+
+def _downweight_sessions(final, by_id):
+    """Multiply final scores of session-sourced chunks by SESSION_WEIGHT (in place)."""
+    if SESSION_WEIGHT >= 1.0:
+        return
+    for cid in final:
+        c = by_id.get(cid) or {}
+        if c.get("source_type") in SESSION_SOURCE_TYPES:
+            final[cid] *= SESSION_WEIGHT
+
+
 def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
              sparse_embedder=None):
     """Retrieve relevant chunks for a query.
@@ -132,6 +151,7 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
         rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
         fused_norm = _minmax({cid: qdrant_scores.get(cid, 0.0) for cid in top_ids})
         final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
+        _downweight_sessions(final, by_id)
         ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
         exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
         for cid in exact_ids:
@@ -163,6 +183,7 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
     rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
     fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
     final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
+    _downweight_sessions(final, by_id)
     ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
     exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
     for cid in exact_ids:

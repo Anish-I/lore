@@ -122,7 +122,19 @@ async function main() {
   const cfg = loadLoreConfig();
   if (!cfg.scope || !cfg.tenant) return;
 
-  const results = await search(prompt, cfg);
+  let results = await search(prompt, cfg);
+
+  // Drop hits that are (near-)identical to the current prompt — captured
+  // session notes contain past raw prompts, and echoing the user's own words
+  // back as "recall" is noise. Token-overlap test: if ≥80% of the hit's tokens
+  // already appear in the prompt, it adds nothing.
+  const promptTokens = new Set(prompt.toLowerCase().split(/\W+/).filter((t) => t.length > 2));
+  results = results.filter((r) => {
+    const toks = String(r.text || '').toLowerCase().split(/\W+/).filter((t) => t.length > 2);
+    if (toks.length === 0) return false;
+    const overlap = toks.filter((t) => promptTokens.has(t)).length / toks.length;
+    return overlap < 0.8;
+  });
   if (!results.length) return;
 
   process.stdout.write(renderContext(results, cfg) + '\n');

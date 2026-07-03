@@ -288,7 +288,10 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
             points.append({"id": qdrant_id, "vector": named_vec, "payload": {
                 "tenant_id": tenant_id, "owner_id": owner_id, "scope_ids": [scope_id],
                 "note_id": source_id, "heading_path": c.heading_path, "text": t,
-                "chunk_id": cid}})
+                "chunk_id": cid,
+                # Provenance for recall weighting: raw captured-session chunks get
+                # down-weighted vs distilled knowledge (see recall.SESSION_WEIGHT).
+                "source_type": source_type}})
 
     qdrant_store.upsert(points)
 

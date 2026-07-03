@@ -666,6 +666,14 @@ def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     # the column existed) gets it derived now from its source file, so the graph
     # date-scrubber keeps improving as upkeep runs without a separate user action.
     stats["createdBackfilled"] = backfill_created_at(_conn, req.tenant)
+    # Opportunistic relation enrichment: typed edges (depends_on/supersedes/…)
+    # for notes whose body changed, small batch per pass so upkeep stays cheap.
+    # Degrades cleanly when no LLM provider is configured (status in stats).
+    try:
+        from .llm_relations import enrich_relations
+        stats["enrich"] = enrich_relations(_conn, req.tenant, limit=25)
+    except Exception as e:
+        stats["enrich"] = {"status": "error", "detail": str(e)[:200]}
     _upkeep_last_run = datetime.datetime.utcnow().isoformat()
     _upkeep_last_stats = stats
     return stats

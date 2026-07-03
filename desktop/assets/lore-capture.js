@@ -38,6 +38,65 @@ const POST_DEBOUNCE = 20_000; // ms — posttool flush threshold
 
 function sha1(s) { return crypto.createHash('sha1').update(String(s)).digest('hex'); }
 
+// ---------- capture hygiene ----------
+// The store audit (2026-07-02) found real pollution: injected memory-context
+// blocks re-captured as data (echo loop), task-notifications and bare acks
+// stored as "prompts", and a nested summarizer's system prompt captured 67
+// times. Everything below runs BEFORE buffering/flushing.
+
+// Strip spans that are harness/system content, never user knowledge. Includes
+// the recall blocks Lore/Obsidian inject into prompts — capturing those would
+// re-store recalled content as new data on every turn (feedback loop).
+const STRIP_SPANS = [
+  /<lore-memory-context>[\s\S]*?<\/lore-memory-context>/g,
+  /<obsidian-memory-context>[\s\S]*?<\/obsidian-memory-context>/g,
+  /<task-notification>[\s\S]*?<\/task-notification>/g,
+  /<system-reminder>[\s\S]*?<\/system-reminder>/g,
+  /<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g,
+];
+
+function cleanText(text) {
+  let t = String(text || '');
+  for (const re of STRIP_SPANS) t = t.replace(re, '');
+  return t.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// Bare acknowledgements carry no knowledge — they'd only pad session notes
+// and win recall slots as near-exact matches for future short prompts.
+const ACK_RE = /^(y|yes|no|ok|okay|sure|continue|keep going|do it|go|thanks|ty|yep|nope)[.! ]*$/i;
+
+// Signatures of prompts that are instruction templates addressed to a model
+// (nested `claude -p` runs like the Obsidian thread-writer's summarizer) —
+// they are OUR plumbing, not the user's knowledge.
+const TEMPLATE_RES = [
+  /You summarize one Claude Code conversation turn/i,
+  /^You are an? [a-z ]+\.\s*$/im,
+  /UNTRUSTED DATA to (be )?summariz/i,
+];
+
+function isNoise(cleaned) {
+  if (cleaned.length < 15) return true;
+  if (ACK_RE.test(cleaned)) return true;
+  for (const re of TEMPLATE_RES) if (re.test(cleaned)) return true;
+  return false;
+}
+
+// Dedupe: identical normalized content captured for the same session within
+// this window is skipped (double-fire, retry, or repeated payload).
+const DEDUPE_WINDOW = 10 * 60_000;
+
+function normHash(text) {
+  return sha1(String(text).toLowerCase().replace(/\s+/g, ' ').trim());
+}
+
+function isDuplicate(meta, cleaned, now) {
+  const h = normHash(cleaned);
+  if (meta.lastHash === h && now - (meta.lastHashTs || 0) < DEDUPE_WINDOW) return true;
+  meta.lastHash = h;
+  meta.lastHashTs = now;
+  return false;
+}
+
 function ensureDirs() {
   try { fs.mkdirSync(SESSIONS_DIR, { recursive: true }); } catch {}
 }
@@ -102,12 +161,19 @@ function distilJsonl(jsonlPath) {
           : null;
 
       if (!content || content.length < 5 || content.length > 3000) continue;
+      // Transcript user messages contain the injected memory-context blocks
+      // (that's where hook output lands) — strip them or recall echoes back in.
+      content = cleanText(content);
+      if (!content || isNoise(content)) continue;
 
       if (role === 'user') {
         parts.push(`User: ${content.slice(0, 500)}`);
       } else if (role === 'assistant') {
         if (/\.(js|ts|py|md|json|ya?ml|sh|go|rs|sql)|error|fixed|implement|creat|updat|decision|approach|NOTE|WARNING/i.test(content)) {
-          parts.push(`Assistant: ${content.slice(0, 800)}`);
+          // Structure-aware distillation: headings/bullets are the assistant's
+          // own summary of what happened — keep more of them than flat prose.
+          const structured = /^#{1,3} |^[-*] /m.test(content);
+          parts.push(`Assistant: ${content.slice(0, structured ? 1500 : 800)}`);
         }
       }
       // tool_use / tool_result lines dropped
@@ -188,11 +254,19 @@ async function main() {
 
   // ---- userprompt ----
   if (MODE === 'userprompt') {
-    const text = (
+    const raw = (
       typeof payload.prompt   === 'string' ? payload.prompt   :
       typeof payload.message  === 'string' ? payload.message  :
       JSON.stringify(payload)
-    ).slice(0, 500);
+    );
+    // Hygiene: strip harness spans (incl. injected memory blocks — echo loop),
+    // then drop noise (bare acks, template prompts) and same-session duplicates.
+    const text = cleanText(raw).slice(0, 500);
+    if (!text || isNoise(text) || isDuplicate(meta, text, now)) {
+      writeMeta(sessionKey, meta); // persist updated dedupe hash even on skip
+      return;
+    }
+    writeMeta(sessionKey, meta);
     appendBuffer(sessionKey, `\n## Prompt [${ts}]\n\n${text}\n`);
     const buf = readBuffer(sessionKey);
     await flush(sessionKey, meta, buf, cfg);
@@ -200,10 +274,10 @@ async function main() {
   // ---- posttool ----
   } else if (MODE === 'posttool') {
     const toolOut = process.env.CLAUDE_TOOL_OUTPUT || '';
-    const text = (
+    const text = cleanText(
       typeof payload.output === 'string' ? payload.output : toolOut
     ).slice(0, 800);
-    if (text) {
+    if (text && !isNoise(text)) {
       appendBuffer(sessionKey, `\n### Tool [${ts}]\n\n${text}\n`);
     }
     // Flush only if the debounce window has passed since the last POST.
@@ -223,7 +297,7 @@ async function main() {
       finalText = distilJsonl(transcriptPath);
     }
     // Fall back to the accumulated rolling buffer if distillation yielded nothing.
-    if (!finalText) finalText = readBuffer(sessionKey);
+    if (!finalText) finalText = cleanText(readBuffer(sessionKey));
     if (finalText.trim()) {
       writeBuffer(sessionKey, finalText);  // replace buffer with clean distilled note
       await flush(sessionKey, meta, finalText, cfg);
