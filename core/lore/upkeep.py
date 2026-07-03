@@ -138,7 +138,21 @@ def _existing_topic_body(conn, topic_note_id: str) -> str:
 
 def _delete_note(conn, tenant: str, note_id: str) -> None:
     """Remove a note from Lore (Qdrant vectors, edges both directions, and the row).
-    The source file on disk is NOT touched."""
+    The source file on disk is NOT touched.
+
+    A file-backed note gets a TOMBSTONE in folded_paths first — without it, the
+    boot reconcile sees the on-disk file as "unindexed", re-indexes it, and the
+    next upkeep pass folds + deletes it again, oscillating counts and burning
+    embedding compute every launch. /reindex honors the tombstone (skips the
+    path unless the file was modified after folding — see api.reindex)."""
+    row = conn.execute(
+        "select source_path from notes where id=%s", (note_id,)).fetchone()
+    if row and row[0]:
+        conn.execute(
+            "insert into folded_paths(tenant_id, path, folded_at) values(%s,%s,now())"
+            " on conflict (tenant_id, path) do update set folded_at=excluded.folded_at",
+            (tenant, row[0]),
+        )
     try:
         qdrant_store.delete_note(note_id)
     except Exception:
@@ -151,7 +165,9 @@ def _delete_note(conn, tenant: str, note_id: str) -> None:
 
 
 def run_upkeep(conn, embedder, tenant: str, scope: str = None,
-               use_llm: bool = False, delete_source: bool = True) -> dict:
+               use_llm: bool = False, delete_source: bool = True,
+               auto_classify: bool = False, classify_llm=None,
+               section_threshold: int = 5) -> dict:
     """Convert ephemeral date/session notes into durable topic nodes.
 
     Algorithm (idempotent — safe to re-run; re-ingested date notes never duplicate):
@@ -174,9 +190,17 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
         use_llm: When True (and Ollama is reachable) augment wikilink topics with LLM-named
             topics. Default False — keeps the job fast and fully deterministic.
         delete_source: When True (default) remove the converted date notes from Lore.
+        auto_classify: Opt-in (cfg.autoClassify). When True, tag/topic-classify untagged
+            notes (classify.py) and upsert Section PROPOSALS (sections.py). Proposals are
+            state only — NO files are ever moved by upkeep; the user must explicitly
+            apply a section from the desktop for anything to move.
+        classify_llm: injectable callable(prompt)->str for classification (tests);
+            when None the configured provider is used, degrading to the deterministic
+            fallback with status 'provider-unavailable' when no provider is usable.
+        section_threshold: notes on one topic before a Section is proposed (default 5).
 
     Returns:
-        {"dateNotes": int, "topics": int, "folded": int, "deleted": int}
+        {"dateNotes": int, "topics": int, "folded": int, "deleted": int, ...}
     """
     # --- Step 1: find ephemeral notes (deterministic order) ---
     base_q = (
@@ -346,7 +370,7 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
     rel_edges = relations.backfill_relations(conn, tenant)
     relations.recompute_importance(conn, tenant)
 
-    return {
+    result = {
         "dateNotes": len(ephemeral),
         "topics": len(topics_acc),
         "folded": len(folded_anchors),
@@ -355,3 +379,16 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
         "relations": rel_edges,
         "captureRelations": capture_count,
     }
+
+    # --- Step 8 (opt-in): auto-classify tags/topics + propose Sections ---
+    # Proposals are rows in section_proposals ONLY. Files never move here — the
+    # user applies a proposed section explicitly from the desktop (sections.py).
+    if auto_classify:
+        from . import classify as classify_mod
+        from . import sections as sections_mod
+        result["classify"] = classify_mod.classify_untagged(
+            conn, tenant, llm_call=classify_llm, scope=scope)
+        result["sections"] = sections_mod.propose_sections(
+            conn, tenant, threshold=section_threshold)
+
+    return result

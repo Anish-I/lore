@@ -146,7 +146,12 @@ try:
 
     @_mcp.tool()
     def lore_ask(question: str, scopes: list[str] | None = None, tenant: str | None = None) -> str:
-        """Ask a question against your Lore knowledge base.
+        """Ask a question against the user's Lore knowledge base and get a cited answer.
+
+        Lore is this user's long-term memory: past decisions, project state, fixes,
+        and gotchas live here, not in your context. PREFER this over guessing
+        whenever the user references prior work ("that bug from last week",
+        "how did we set X up", "what did we decide about Y").
 
         Args:
             question: Natural language question.
@@ -177,7 +182,13 @@ try:
     def lore_search(
         query: str, scopes: list[str] | None = None, tenant: str | None = None, k: int = 10
     ) -> str:
-        """Search your Lore knowledge base and return ranked hits.
+        """Search the user's Lore knowledge base and return ranked hits.
+
+        CALL THIS FIRST at the start of any non-trivial task: Lore holds the
+        user's accumulated project knowledge (architecture notes, past fixes,
+        decisions, session history) that is NOT in your context. A 1-line query
+        about the task topic is enough — skipping this risks re-deriving or
+        contradicting what the user already knows.
 
         Args:
             query: Search query.
@@ -257,7 +268,7 @@ except ImportError:
         return [
             _types.Tool(
                 name="lore_ask",
-                description="Ask a question against your Lore knowledge base.",
+                description="Ask a question against the user's Lore knowledge base and get a cited answer. Lore is this user's long-term memory (past decisions, project state, fixes) — prefer it over guessing when the user references prior work.",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -275,7 +286,7 @@ except ImportError:
             ),
             _types.Tool(
                 name="lore_search",
-                description="Search your Lore knowledge base and return ranked hits.",
+                description="Search the user's Lore knowledge base and return ranked hits. CALL THIS FIRST at the start of any non-trivial task — Lore holds accumulated project knowledge (architecture, past fixes, decisions) not in your context.",
                 inputSchema={
                     "type": "object",
                     "properties": {

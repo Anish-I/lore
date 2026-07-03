@@ -182,6 +182,7 @@ create table if not exists notes(
   id text primary key, tenant_id text, owner_id text, scope_id text,
   source_path text, title text, source_type text,
   body text, body_sha256 text, content_hash text,
+  created_at timestamptz,
   updated_at timestamptz default now());
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
@@ -200,7 +201,57 @@ create table if not exists edges(
 create index if not exists edges_src on edges(src_note_id);
 create index if not exists edges_dst on edges(dst_note_id);
 create index if not exists edges_tenant on edges(tenant_id);
+create table if not exists note_tags(
+  note_id text not null,
+  tenant_id text not null,
+  tag text not null,
+  kind text not null default 'tag',
+  source text default 'heuristic',
+  created_at timestamptz default now(),
+  constraint note_tags_unique unique (tenant_id, note_id, tag, kind));
+create index if not exists note_tags_note on note_tags(note_id);
+create index if not exists note_tags_tenant on note_tags(tenant_id, kind, tag);
+create table if not exists section_proposals(
+  id text primary key,
+  tenant_id text not null,
+  name text not null,
+  topic text not null,
+  note_ids text,
+  original_paths text,
+  status text not null default 'proposed',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists personal_wizards(
+  id text primary key,
+  tenant_id text not null,
+  section_id text not null,
+  name text not null,
+  topic text not null,
+  note_count int default 0,
+  created_at timestamptz default now());
+create index if not exists personal_wizards_tenant on personal_wizards(tenant_id);
+create table if not exists personal_wizard_chats(
+  id text primary key,
+  wizard_id text not null,
+  tenant_id text not null,
+  role text not null,
+  text text,
+  sources text,
+  created_at timestamptz default now(),
+  constraint pw_chat_role_check check (role in ('user','assistant')));
+create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
+create table if not exists folded_paths(
+  tenant_id text not null,
+  path text not null,
+  folded_at timestamptz default now(),
+  primary key (tenant_id, path));
 """
+
+# PG migration note: personal_wizards / personal_wizard_chats are NEW tables, so the
+# CREATE TABLE IF NOT EXISTS in SCHEMA above IS the migration (bootstrap step 3) —
+# same pattern section_proposals used; no ALTER/DO$$ entry needed.
 
 # Columns added in M1 (Hooks milestone).  ADD COLUMN IF NOT EXISTS is idempotent
 # on PostgreSQL 9.6+.  Run before the SCHEMA block so existing databases get the
@@ -226,6 +277,14 @@ _BODY_MIGRATION = [
     "alter table notes add column if not exists content_hash text",
     # M7 reasoned-graph: per-note importance score (weighted typed in-degree).
     "alter table notes add column if not exists importance real default 0",
+]
+
+# Column added for the graph date-scrubber: the NOTE's real creation date
+# (frontmatter created:/date: → file mtime → first-seen), never index time.
+# updated_at keeps tracking (re)index time.  Nullable: backfilled lazily by
+# index.backfill_created_at (wired into /upkeep/run and /backfill/created).
+_CREATED_MIGRATION = [
+    "alter table notes add column if not exists created_at timestamptz",
 ]
 
 # Unique constraint added in M1; applied opportunistically (no-op if already present).
@@ -263,6 +322,7 @@ create table if not exists notes(
   source_path text, title text, source_type text,
   body text, body_sha256 text, content_hash text,
   importance real default 0,
+  created_at timestamp,
   updated_at timestamp default current_timestamp);
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
@@ -284,6 +344,52 @@ create table if not exists edges(
 create index if not exists edges_src on edges(src_note_id);
 create index if not exists edges_dst on edges(dst_note_id);
 create index if not exists edges_tenant on edges(tenant_id);
+create table if not exists note_tags(
+  note_id text not null,
+  tenant_id text not null,
+  tag text not null,
+  kind text not null default 'tag',
+  source text default 'heuristic',
+  created_at timestamp default current_timestamp,
+  constraint note_tags_unique unique (tenant_id, note_id, tag, kind));
+create index if not exists note_tags_note on note_tags(note_id);
+create index if not exists note_tags_tenant on note_tags(tenant_id, kind, tag);
+create table if not exists section_proposals(
+  id text primary key,
+  tenant_id text not null,
+  name text not null,
+  topic text not null,
+  note_ids text,
+  original_paths text,
+  status text not null default 'proposed',
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp,
+  constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists personal_wizards(
+  id text primary key,
+  tenant_id text not null,
+  section_id text not null,
+  name text not null,
+  topic text not null,
+  note_count int default 0,
+  created_at timestamp default current_timestamp);
+create index if not exists personal_wizards_tenant on personal_wizards(tenant_id);
+create table if not exists personal_wizard_chats(
+  id text primary key,
+  wizard_id text not null,
+  tenant_id text not null,
+  role text not null,
+  text text,
+  sources text,
+  created_at timestamp default current_timestamp,
+  constraint pw_chat_role_check check (role in ('user','assistant')));
+create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
+create table if not exists folded_paths(
+  tenant_id text not null,
+  path text not null,
+  folded_at timestamp default current_timestamp,
+  primary key (tenant_id, path));
 """
 
 
@@ -301,6 +407,13 @@ def bootstrap_schema(conn):
     if isinstance(conn, _SqliteConn):
         # Fresh, final-shape schema — no Postgres ALTER/DO$$ migration path.
         conn.executescript(SCHEMA_SQLITE)
+        # One exception: SQLite stores created before the created_at column shipped.
+        # CREATE TABLE IF NOT EXISTS won't add it and SQLite has no
+        # ADD COLUMN IF NOT EXISTS, so probe-and-add (idempotent).
+        try:
+            conn.execute("alter table notes add column created_at timestamp")
+        except Exception:
+            pass  # column already exists
         return
 
     # Step 1a: add source_type to notes (M1 migration).
@@ -320,6 +433,13 @@ def bootstrap_schema(conn):
 
     # Step 1c: add body/body_sha256/content_hash to notes (M2 migration).
     for stmt in _BODY_MIGRATION:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # table may not exist yet
+
+    # Step 1d: add created_at to notes (graph date-scrubber).
+    for stmt in _CREATED_MIGRATION:
         try:
             conn.execute(stmt)
         except Exception:

@@ -38,6 +38,55 @@ function log(msg) {
   try { fs.appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${msg}\n`); } catch {}
 }
 
+// ---------- capture hygiene ----------
+// Same filters as lore-capture.js (Claude side) — the 2026-07-02 audit found
+// harness spans, injected memory blocks (echo loop), bare acks, and nested
+// instruction-template prompts polluting the store. Codex payloads carry the
+// same classes of noise, so the same rules apply on this write path.
+const STRIP_SPANS = [
+  /<lore-memory-context>[\s\S]*?<\/lore-memory-context>/g,
+  /<obsidian-memory-context>[\s\S]*?<\/obsidian-memory-context>/g,
+  /<task-notification>[\s\S]*?<\/task-notification>/g,
+  /<system-reminder>[\s\S]*?<\/system-reminder>/g,
+  /<local-command-caveat>[\s\S]*?<\/local-command-caveat>/g,
+];
+
+function cleanText(text) {
+  let t = String(text || '');
+  for (const re of STRIP_SPANS) t = t.replace(re, '');
+  return t.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+const ACK_RE = /^(y|yes|no|ok|okay|sure|continue|keep going|do it|go|thanks|ty|yep|nope)[.! ]*$/i;
+const TEMPLATE_RES = [
+  /You summarize one Claude Code conversation turn/i,
+  /^You are an? [a-z ]+\.\s*$/im,
+  /UNTRUSTED DATA to (be )?summariz/i,
+];
+
+function isNoise(cleaned) {
+  if (cleaned.length < 15) return true;
+  if (ACK_RE.test(cleaned)) return true;
+  for (const re of TEMPLATE_RES) if (re.test(cleaned)) return true;
+  return false;
+}
+
+// Dedupe: identical normalized turn content for the same session within the
+// window is skipped (duplicate notify fire / replayed payload).
+const DEDUPE_WINDOW = 10 * 60_000;
+
+function isDuplicate(key, cleaned, now) {
+  const metaPath = path.join(SESSIONS_DIR, `${key}.meta.json`);
+  let meta = {};
+  try { meta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); } catch {}
+  const h = sha1(String(cleaned).toLowerCase().replace(/\s+/g, ' ').trim());
+  const dup = meta.lastHash === h && now - (meta.lastHashTs || 0) < DEDUPE_WINDOW;
+  meta.lastHash = h;
+  meta.lastHashTs = now;
+  try { fs.writeFileSync(metaPath, JSON.stringify(meta), 'utf8'); } catch {}
+  return dup;
+}
+
 // Identity config — same candidate paths as lore-capture.js loadLoreConfig().
 function loadLoreConfig() {
   const candidates = [
@@ -72,10 +121,15 @@ function parseArgs(argv) {
 function distil(payload) {
   const parts = [];
   const inputs = Array.isArray(payload['input-messages']) ? payload['input-messages'] : [];
-  const userText = inputs.map((m) => String(m || '')).join(' ').trim();
-  if (userText) parts.push(`User: ${userText.slice(0, 500)}`);
-  const asst = payload['last-assistant-message'];
-  if (typeof asst === 'string' && asst.trim()) parts.push(`Assistant: ${asst.slice(0, 800)}`);
+  const userText = cleanText(inputs.map((m) => String(m || '')).join(' '));
+  if (userText && !isNoise(userText)) parts.push(`User: ${userText.slice(0, 500)}`);
+  const asst = cleanText(typeof payload['last-assistant-message'] === 'string'
+    ? payload['last-assistant-message'] : '');
+  if (asst && !isNoise(asst)) {
+    // Structure-aware: headings/bullets are the assistant's own summary — keep more.
+    const structured = /^#{1,3} |^[-*] /m.test(asst);
+    parts.push(`Assistant: ${asst.slice(0, structured ? 1500 : 800)}`);
+  }
   return parts.join('\n\n');
 }
 
@@ -142,6 +196,8 @@ async function main() {
   const key = `codex-${sha1(cwd)}`;
   const distilled = distil(payload);
   if (!distilled) return;
+  const now = Date.now();
+  if (isDuplicate(key, distilled, now)) return;
 
   const bufPath = path.join(SESSIONS_DIR, `${key}.md`);
   const ts = new Date().toISOString();

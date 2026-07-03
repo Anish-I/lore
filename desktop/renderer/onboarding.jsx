@@ -45,8 +45,19 @@ const OB_STEPS = [
   { id: 'purpose', eyebrow: 'Purpose', title: 'What is this library for?', next: 'Choose AIs' },
   { id: 'ai', eyebrow: 'AI', title: 'Which AIs should Lore connect to?', next: 'Pick an AI provider' },
   { id: 'provider', eyebrow: 'Provider', title: 'How should Lore power enrichment?', next: 'Set up your team' },
-  { id: 'team', eyebrow: 'Team', title: 'Who is this library for?', next: 'Import apps and files' },
+  { id: 'team', eyebrow: 'Team', title: 'Who is this library for?', next: 'Indexing & upkeep' },
+  { id: 'upkeep', eyebrow: 'Upkeep', title: 'How should Lore keep itself fresh?', next: 'Import apps and files' },
   { id: 'sources', eyebrow: 'Sources', title: 'What should Lore import first?', next: null },
+];
+
+// Toggle questions for the "upkeep" step. Deliberately NO embedding-model or reranker
+// question here — Lore ships with sensible local defaults (see Settings → Indexing &
+// recall for what actually resolved).
+const OB_UPKEEP_TOGGLES = [
+  { id: 'autoIndexOnSave', icon: 'refresh-cw', title: 'Auto-index on save',
+    description: 'Re-index a note automatically whenever its file changes on disk. Turn off to re-index manually.' },
+  { id: 'upkeepAuto', icon: 'refresh-ccw', title: 'Automatic data upkeep',
+    description: 'Periodically fold ephemeral date/session notes into durable topic nodes in the background.' },
 ];
 
 function OB_slugify(value) {
@@ -220,6 +231,8 @@ function OB_Onboarding({ onDone }) {
   const [teamAuthBusy, setTeamAuthBusy] = React.useState(false);
   const [teamAuthError, setTeamAuthError] = React.useState('');
   const [selectedApps, setSelectedApps] = React.useState([]);
+  // Indexing & upkeep answers — both default ON (an explicit false is what disables them).
+  const [upkeepPrefs, setUpkeepPrefs] = React.useState({ autoIndexOnSave: true, upkeepAuto: true });
   const [pendingImportPaths, setPendingImportPaths] = React.useState([]);
   const [dragging, setDragging] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -328,7 +341,6 @@ function OB_Onboarding({ onDone }) {
     const scopeId = purpose ? OB_slugify(purpose) : null;
     const tenantId = accountEmail ? OB_domainFromEmail(accountEmail) : 'local';
     return {
-      saga: null,
       tier: null,
       full: false,
       promptHistory: backfillClaude,
@@ -353,6 +365,10 @@ function OB_Onboarding({ onDone }) {
       preferredAIProviders: selectedAI.slice(),
       backfillClaudePrompts: backfillClaude,
       connectedApps: selectedApps.slice(),
+      // Persisted as explicit booleans; main.js and Settings treat `!== false` as ON,
+      // so a fresh onboarding always produces a config that starts upkeep.
+      autoIndexOnSave: upkeepPrefs.autoIndexOnSave !== false,
+      upkeepAuto: upkeepPrefs.upkeepAuto !== false,
       llmProvider: llmProvider,
       team: {
         intent: teamIntent,
@@ -412,7 +428,6 @@ function OB_Onboarding({ onDone }) {
   const handleSkip = async () => {
     setSaving(true);
     const cfg = {
-      saga: null,
       tier: null,
       full: false,
       promptHistory: false,
@@ -720,6 +735,52 @@ function OB_Onboarding({ onDone }) {
       );
     }
 
+    if (step.id === 'upkeep') {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {OB_UPKEEP_TOGGLES.map((item) => {
+            const on = upkeepPrefs[item.id] !== false;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                aria-pressed={on}
+                onClick={() => setUpkeepPrefs((p) => ({ ...p, [item.id]: !(p[item.id] !== false) }))}
+                style={{
+                  minHeight: 64,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 12,
+                  padding: '12px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  border: `1px solid ${on ? 'var(--brand-soft-border)' : 'var(--border)'}`,
+                  background: on ? 'var(--brand-soft-bg)' : 'var(--surface-inset)',
+                  color: 'var(--text-body)',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                }}
+              >
+                <span style={{ width: 36, height: 36, borderRadius: 'var(--radius-sm)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: on ? 'var(--brand-bg)' : 'var(--surface-raised)', color: on ? 'var(--text-onbrand)' : 'var(--text-muted)', border: `1px solid ${on ? 'transparent' : 'var(--border)'}` }}>
+                  <OB_Icon name={item.icon} size={17} />
+                </span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontSize: 14, fontWeight: 800, color: 'var(--text-strong)' }}>{item.title}</span>
+                  <span style={{ display: 'block', marginTop: 3, fontSize: 12.5, color: 'var(--text-subtle)' }}>{item.description}</span>
+                </span>
+                <span style={{ width: 38, height: 22, borderRadius: 'var(--radius-full)', background: on ? 'var(--brand-bg)' : 'var(--surface-raised)', border: '1px solid var(--border-strong)', position: 'relative', flexShrink: 0 }}>
+                  <span style={{ position: 'absolute', top: 2, left: on ? 18 : 2, width: 16, height: 16, borderRadius: '50%', background: on ? 'var(--text-onbrand)' : 'var(--text-faint)', transition: 'left 150ms var(--ease-out)' }} />
+                </span>
+              </button>
+            );
+          })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--text-subtle)' }}>
+            <OB_Icon name="info" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} />
+            <span>Embeddings and reranking use Lore’s built-in local models — nothing to configure here. See Settings → Indexing &amp; recall.</span>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12 }}>
@@ -760,6 +821,7 @@ function OB_Onboarding({ onDone }) {
     ai: 'This is optional. You can connect more AIs later.',
     provider: 'Pick how Lore infers relationships in your graph. You can change this later in Settings.',
     team: 'Personal keeps everything local. Create or join a team to prepare for shared sync.',
+    upkeep: 'Both are safe to leave on — you can change them anytime in Settings.',
     sources: 'Imports are optional. Drop files now or start clean.',
   }[step.id];
 

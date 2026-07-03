@@ -32,6 +32,23 @@ contextBridge.exposeInMainWorld('lore', {
     get: ()        => ipcRenderer.invoke('config:get'),
     // Shallow-merges partial into current config, persists, and returns the merged result.
     set: (partial) => ipcRenderer.invoke('config:set', partial),
+    // Opens a file picker for a JSON settings file (retrieval/upkeep keys only,
+    // validated in main). Returns {ok, applied, ignored} or {ok:false, reason}.
+    importRetrieval: () => ipcRenderer.invoke('config:import-retrieval'),
+  },
+
+  // --- retrieval config (backend GET /config/retrieval proxy) ---
+  // config() → {embeddingModel, reranker, contextualRetrieval, localFallback} or {error}
+  retrieval: {
+    config: () => ipcRenderer.invoke('retrieval:config'),
+  },
+
+  // --- CLI install (put `lore` on the user's PATH; no sudo, idempotent) ---
+  // status()  → {installed, path, target?, mechanism?, onPath, hint?}
+  // install() → {ok, path, mechanism, onPath, hint?} or {ok:false, reason}
+  cli: {
+    status:  () => ipcRenderer.invoke('cli:status'),
+    install: () => ipcRenderer.invoke('cli:install'),
   },
 
   // --- scraper ---
@@ -63,11 +80,23 @@ contextBridge.exposeInMainWorld('lore', {
   importPick:  ()      => ipcRenderer.invoke('import:pick'),
 
   // --- wizards (installable knowledge bases) ---
+  // promoteSection(id) → promotes an APPLIED Section to a Personal Wizard (backend
+  //                      state only — no files move; the folder already exists).
+  // personal.list()    → { wizards: [{id, name, topic, note_count, folder, ...}] }
+  // personal.ask(id,q) → wizard-scoped RAG answer {answer, engine, citations} —
+  //                      retrieval sees ONLY that wizard's notes; persists the chat.
+  // personal.history(id) → { messages: [{id, role, text, sources, created_at}] }
   wizards: {
     catalog:   ()           => ipcRenderer.invoke('wizards:catalog'),
     install:   (id)         => ipcRenderer.invoke('wizards:install', id),
     uninstall: (id)         => ipcRenderer.invoke('wizards:uninstall', id),
     rate:      (id, stars)  => ipcRenderer.invoke('wizards:rate', { id, stars }),
+    promoteSection: (sectionId) => ipcRenderer.invoke('wizards:promote-section', sectionId),
+    personal: {
+      list:    ()             => ipcRenderer.invoke('wizards:personal-list'),
+      ask:     (id, question) => ipcRenderer.invoke('wizards:personal-ask', { id, question }),
+      history: (id)           => ipcRenderer.invoke('wizards:personal-chat-history', id),
+    },
   },
 
   // --- hooks ---
@@ -138,6 +167,26 @@ contextBridge.exposeInMainWorld('lore', {
   enrich: {
     providers: ()     => ipcRenderer.invoke('enrich:providers'),
     run:       (opts) => ipcRenderer.invoke('enrich:run', opts || {}),
+  },
+
+  // --- sections (auto-proposed note folders) ---
+  // list()     → { sections: [{id, name, topic, status, notes, ...}] }
+  // apply(id)  → user-initiated ONLY: moves the notes into the section folder
+  //              (main-process fs moves under pathGuard) and re-indexes them.
+  // dismiss(id)→ hides the proposal permanently (never re-proposed).
+  // undo(id)   → moves an applied section's notes back to their original paths.
+  sections: {
+    list:    ()   => ipcRenderer.invoke('sections:list'),
+    apply:   (id) => ipcRenderer.invoke('sections:apply', id),
+    dismiss: (id) => ipcRenderer.invoke('sections:dismiss', id),
+    undo:    (id) => ipcRenderer.invoke('sections:undo', id),
+  },
+
+  // --- libraries discovered via `.lore` manifests ---
+  // discovered() → [{root, name, tenant, indexed, topics, tags, lastWork}] for
+  // every folder (configured roots + immediate subfolders) carrying a .lore file.
+  libraries: {
+    discovered: () => ipcRenderer.invoke('libraries:discovered'),
   },
 
   // --- upkeep ---

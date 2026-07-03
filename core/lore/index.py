@@ -1,4 +1,4 @@
-import hashlib, os, re, uuid
+import datetime, hashlib, os, re, uuid
 from . import qdrant_store
 from .chunker import chunk_markdown
 from .contextualize import apply_context
@@ -14,6 +14,50 @@ _EDGE_CAP_TOTAL  = 24   # hard cap on total outgoing edges per note (all kinds c
 _WIKILINK_RE = re.compile(r'\[\[([^\]|#]+?)(?:[|#][^\]]*)?\]\]')
 # #tag (must not be part of a longer word; e.g. "color: #fff" is excluded)
 _TAG_RE = re.compile(r'(?<!\w)#([A-Za-z]\w*)')
+
+# --- created_at derivation (the NOTE's real date, never index time) ---
+# Leading YAML frontmatter block at the very top of the text.
+_FM_BLOCK_RE = re.compile(r'\A---[ \t]*\n(.*?)\n---', re.DOTALL)
+# `created: <date>` / `date: <date>` keys inside that block (created wins).
+_FM_CREATED_RE = re.compile(
+    r'^created\s*:\s*["\']?(\d{4}-\d{2}-\d{2}(?:[ T][0-9:.+Z]+)?)', re.I | re.M)
+_FM_DATE_RE = re.compile(
+    r'^date\s*:\s*["\']?(\d{4}-\d{2}-\d{2}(?:[ T][0-9:.+Z]+)?)', re.I | re.M)
+
+
+def _parse_fm_datetime(raw):
+    """Parse a frontmatter date value to a tz-aware UTC datetime, or None."""
+    try:
+        dt = datetime.datetime.fromisoformat(raw.strip().replace('Z', '+00:00'))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)
+
+
+def derive_created_at(text, mtime=None):
+    """Derive a note's creation time, by precedence:
+      1. frontmatter ``created:`` (then ``date:``) in the leading ``---`` block
+      2. caller-passed file mtime (epoch seconds)
+      3. None — the caller falls back to first-seen (now); the upsert then
+         preserves that value forever (created_at is never overwritten).
+    Returns a tz-aware datetime or None.
+    """
+    if text:
+        m = _FM_BLOCK_RE.match(text[:4000])
+        if m:
+            block = m.group(1)
+            for key_re in (_FM_CREATED_RE, _FM_DATE_RE):
+                km = key_re.search(block)
+                if km:
+                    dt = _parse_fm_datetime(km.group(1))
+                    if dt:
+                        return dt
+    if mtime:
+        try:
+            return datetime.datetime.fromtimestamp(float(mtime), tz=datetime.timezone.utc)
+        except (ValueError, OSError, OverflowError):
+            return None
+    return None
 
 
 def _chunk_id(note_id, heading_path, idx):
@@ -156,7 +200,7 @@ def _upsert_edges(conn, tenant_id, src_id, kind, targets, origin="index"):
 
 def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                    embedder, conn, sparse_embedder=None, path=None,
-                   source_type="note", content_hash=None):
+                   source_type="note", content_hash=None, mtime=None):
     """Index a document (note or external source) into Postgres + Qdrant.
 
     This is the shared indexing spine.  index_note() reads a file then delegates
@@ -175,6 +219,8 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
         path: Filesystem path (used for folder-edge extraction; None for remote ingest).
         source_type: Provenance label ('note' or custom).
         content_hash: Optional content hash for dedup (logged but not persisted in M1).
+        mtime: Optional source-file mtime (epoch seconds) — used for created_at when
+            the text has no frontmatter created:/date: key.
 
     Returns:
         Number of indexed chunks (0 if the document produced no chunks).
@@ -182,21 +228,30 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     # Compute and store the original body (lossless round-trip; chunk text is NOT lossless).
     body_sha256 = hashlib.sha256(text.encode()).hexdigest()
 
+    # The note's REAL creation time (frontmatter → mtime → first-seen). Stored as an
+    # ISO string (both sqlite's `timestamp` converter and PG's timestamptz parse it).
+    created_dt = derive_created_at(text, mtime) \
+        or datetime.datetime.now(datetime.timezone.utc)
+    created_at = created_dt.isoformat(sep=" ")
+
     # Persist the note row unconditionally so body is always accessible via GET /notes/{id}
     # even when chunking yields 0 indexable tokens (e.g. heading-only or empty docs).
+    # created_at is write-once: COALESCE keeps the existing value on every re-ingest.
     conn.execute(
         """insert into notes(id, tenant_id, owner_id, scope_id, source_path, title,
-                             source_type, body, body_sha256, content_hash, updated_at)
-           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+                             source_type, body, body_sha256, content_hash,
+                             created_at, updated_at)
+           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
            on conflict (id) do update
            set title=excluded.title, scope_id=excluded.scope_id,
                owner_id=excluded.owner_id, source_path=excluded.source_path,
                tenant_id=excluded.tenant_id, source_type=excluded.source_type,
                body=excluded.body, body_sha256=excluded.body_sha256,
                content_hash=excluded.content_hash,
+               created_at=coalesce(notes.created_at, excluded.created_at),
                updated_at=now()""",
         (source_id, tenant_id, owner_id, scope_id, path, title, source_type,
-         text, body_sha256, content_hash),
+         text, body_sha256, content_hash, created_at),
     )
 
     chunks = apply_context(chunk_markdown(source_id, text), title, llm=None)
@@ -233,7 +288,10 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
             points.append({"id": qdrant_id, "vector": named_vec, "payload": {
                 "tenant_id": tenant_id, "owner_id": owner_id, "scope_ids": [scope_id],
                 "note_id": source_id, "heading_path": c.heading_path, "text": t,
-                "chunk_id": cid}})
+                "chunk_id": cid,
+                # Provenance for recall weighting: raw captured-session chunks get
+                # down-weighted vs distilled knowledge (see recall.SESSION_WEIGHT).
+                "source_type": source_type}})
 
     qdrant_store.upsert(points)
 
@@ -285,9 +343,46 @@ def index_note(path, embedder, conn, owner_id, scope_id, tenant_id, sparse_embed
             dense vectors are stored (existing behaviour, all tests green).
     """
     note_id, title, md = distill_md(path)
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = None
     return index_document(
         source_id=note_id, title=title, text=md,
         scope_id=scope_id, owner_id=owner_id, tenant_id=tenant_id,
         embedder=embedder, conn=conn, sparse_embedder=sparse_embedder,
-        path=path,
+        path=path, mtime=mtime,
     )
+
+
+def backfill_created_at(conn, tenant_id):
+    """Backfill created_at for notes indexed before the column existed.
+
+    For each note with created_at IS NULL: re-derive from the source file's
+    frontmatter created:/date: (via source_path, when readable) → file mtime →
+    the stored body's frontmatter → the row's updated_at as a last resort.
+    Never overwrites a non-NULL created_at.  Returns the number of rows updated.
+    """
+    rows = conn.execute(
+        """select id, source_path, body, updated_at from notes
+           where tenant_id=%s and created_at is null""",
+        (tenant_id,),
+    ).fetchall()
+    updated = 0
+    for nid, source_path, body, updated_at in rows:
+        text, mtime = body, None
+        if source_path:
+            try:
+                mtime = os.path.getmtime(source_path)
+                with open(source_path, encoding="utf-8", errors="ignore") as f:
+                    text = f.read(4000)   # frontmatter lives in the text head
+            except OSError:
+                pass  # source moved/unreadable → fall back to stored body / updated_at
+        dt = derive_created_at(text, mtime) or updated_at \
+            or datetime.datetime.now(datetime.timezone.utc)
+        conn.execute(
+            "update notes set created_at=%s where id=%s and created_at is null",
+            (dt.isoformat(sep=" "), nid),
+        )
+        updated += 1
+    return updated

@@ -89,7 +89,11 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
           <AkIcon name="sparkles" size={14} style={{ color: 'var(--brand-fg)' }} />
         </span>
         <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>Ask Lore</span>
-        <SourceToggle value={source || 'all'} onChange={onSource || (() => {})} options={sourceOptions} />
+        {/* Nothing to actually pick between with 0-1 scopes ("All" + one identical
+            option) — the toggle only earns its place once there's a real choice. */}
+        {sourceOptions && sourceOptions.length > 2 && (
+          <SourceToggle value={source || 'all'} onChange={onSource || (() => {})} options={sourceOptions} />
+        )}
         <AkIconBtn icon="x" label="Close Ask" size="sm" onClick={onClose} />
       </div>
 

@@ -8,7 +8,7 @@ from .config import settings
 from .sqlutil import in_clause
 from .embed import FakeEmbedder, VoyageEmbedder, LocalEmbedder, LocalSparseEmbedder
 from .rerank import FakeReranker, VoyageReranker, LocalReranker
-from .index import index_note, index_document
+from .index import index_note, index_document, backfill_created_at
 from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
@@ -184,6 +184,23 @@ class IngestReq(BaseModel):
 
 @app.post("/reindex")
 def reindex(req: ReindexReq, embedder=Depends(get_embedder), sparse=Depends(get_sparse_embedder)):
+    # Tombstone guard: a path upkeep folded into a topic (and deleted) must not
+    # be re-indexed by reconcile/scrape sweeps — that recreates the churn loop.
+    # A file EDITED after folding is live again: drop the tombstone and index it.
+    row = _conn.execute(
+        "select folded_at from folded_paths where tenant_id=%s and path=%s",
+        (req.tenant_id, req.path)).fetchone()
+    if row and row[0]:
+        try:
+            mtime = os.path.getmtime(req.path)
+        except OSError:
+            mtime = None
+        folded_ts = row[0].timestamp() if hasattr(row[0], "timestamp") else None
+        if mtime is not None and folded_ts is not None and mtime > folded_ts:
+            _conn.execute("delete from folded_paths where tenant_id=%s and path=%s",
+                          (req.tenant_id, req.path))
+        else:
+            return {"indexed_chunks": 0, "skipped": "folded"}
     n = index_note(req.path, embedder, _conn, req.owner_id, req.scope_id, req.tenant_id,
                    sparse_embedder=sparse)
     return {"indexed_chunks": n}
@@ -252,9 +269,14 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
 
     Response:
         {
-          "nodes": [{"id", "label", "scope", "owner", "links", "updated"}, ...],
+          "nodes": [{"id", "label", "scope", "owner", "links", "updated", "created"}, ...],
           "edges": [[src_id, dst_id, kind], ...]
         }
+
+    `created` is the note's real creation date (frontmatter created:/date: → file
+    mtime → first-seen; see index.derive_created_at) — never overwritten by re-index.
+    `updated` is index time (bumped on every re-ingest). May be null for notes indexed
+    before the created_at column existed and not yet backfilled (see /backfill/created).
 
     ACL guarantees (enforced server-side, not post-filtered):
         - A node appears only if its scope_id is in the caller's allowed set.
@@ -278,7 +300,7 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     # This is the server-side filter — no post-filtering is performed after this point.
     frag, sparams = in_clause("scope_id", allowed)
     rows = _conn.execute(
-        f"""select id, title, scope_id, owner_id, updated_at, source_path, importance
+        f"""select id, title, scope_id, owner_id, updated_at, source_path, importance, created_at
            from notes
            where tenant_id=%s and {frag}""",
         [active_tenant, *sparams],
@@ -322,7 +344,7 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
     row_by_id = {r[0]: r for r in rows}
     nodes = []
     for nid in top_ids:
-        nid_, title, scope_id, owner_id, updated_at, source_path, importance = row_by_id[nid]
+        nid_, title, scope_id, owner_id, updated_at, source_path, importance, created_at = row_by_id[nid]
         nodes.append({
             "id": nid_,
             "label": title or nid_,
@@ -331,6 +353,10 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
             "path": source_path,
             "links": degree.get(nid_, 0),
             "updated": updated_at.isoformat() if updated_at else None,
+            # The note's real creation date (frontmatter/mtime/first-seen — see index.py
+            # derive_created_at); None for notes indexed before this column existed and
+            # not yet backfilled. graph.jsx's date-scrubber falls back to `updated` then.
+            "created": created_at.isoformat() if created_at else None,
             "importance": importance or 0,
         })
 
@@ -352,7 +378,7 @@ def stats(tenant: Optional[str] = None):
     Response: {"notes": n, "chunks": c, "edges": e} — counts only, no content, no scopes.
     """
     if not tenant:
-        return {"notes": 0, "chunks": 0, "edges": 0}
+        return {"notes": 0, "chunks": 0, "edges": 0, "foldedPaths": 0}
     notes = _conn.execute(
         "select count(*) from notes where tenant_id=%s", (tenant,)
     ).fetchone()[0]
@@ -363,7 +389,58 @@ def stats(tenant: Optional[str] = None):
     edges = _conn.execute(
         "select count(*) from edges where tenant_id=%s", (tenant,)
     ).fetchone()[0]
-    return {"notes": notes, "chunks": chunks, "edges": edges}
+    # Paths upkeep folded+deleted (tombstoned): still on disk but deliberately
+    # not indexed — the desktop reconcile subtracts these from its disk count
+    # so it stops seeing folded notes as a gap to re-index (churn loop).
+    folded = _conn.execute(
+        "select count(*) from folded_paths where tenant_id=%s", (tenant,)
+    ).fetchone()[0]
+    return {"notes": notes, "chunks": chunks, "edges": edges, "foldedPaths": folded}
+
+@app.get("/config/retrieval")
+def config_retrieval(tenant: Optional[str] = None):
+    """Truthful snapshot of the retrieval stack for the desktop Settings UI.
+
+    Reports what get_embedder()/get_reranker() would actually resolve to right now
+    (Voyage when VOYAGE_API_KEY is set, else local fastembed models, or fake under
+    VAULT_FAKE=1) — never a hardcoded "not configured".
+
+    Query params:
+        tenant: accepted for parity with the other desktop-facing endpoints; the
+                retrieval stack is process-wide today, so it does not vary the result.
+
+    Response:
+        {
+          "embeddingModel":      {"provider", "model"},
+          "reranker":            {"provider", "model"},
+          "contextualRetrieval": {"enabled", "mode"},   # always-on metadata contextualizer
+          "localFallback":       {"available", "active"}
+        }
+    """
+    import importlib.util
+    voyage = bool(settings.voyage_api_key)
+    local_available = importlib.util.find_spec("fastembed") is not None
+    if _FAKE:
+        embedding = {"provider": "fake", "model": "fake-embedder (VAULT_FAKE=1)"}
+        rerank_m = {"provider": "fake", "model": "fake-reranker (VAULT_FAKE=1)"}
+    elif voyage:
+        embedding = {"provider": "voyage", "model": VoyageEmbedder.DEFAULT_MODEL}
+        rerank_m = {"provider": "voyage", "model": VoyageReranker.DEFAULT_MODEL}
+    else:
+        embedding = {"provider": "local", "model": LocalEmbedder.DEFAULT_MODEL}
+        rerank_m = {"provider": "local", "model": LocalReranker.DEFAULT_MODEL}
+    return {
+        "embeddingModel": embedding,
+        "reranker": rerank_m,
+        # apply_context() runs on every indexed chunk (see index.py); the blurb is the
+        # deterministic metadata sentence — enabled by design, not user-toggleable.
+        "contextualRetrieval": {"enabled": True, "mode": "metadata"},
+        # Local fastembed models: the primary path when no Voyage key is set, and ALWAYS
+        # used for /ingest + /capture (data-leak guard) even when Voyage is configured.
+        "localFallback": {"available": local_available,
+                          "active": (not _FAKE) and (not voyage) and local_available},
+    }
+
 
 class CaptureReq(BaseModel):
     session_id: str
@@ -590,20 +667,197 @@ class UpkeepRunReq(BaseModel):
     tenant: str
     scope: Optional[str] = None
     use_llm: bool = False   # when True: Ollama-assisted topic extraction (slower, capped at 25 notes)
+    auto_classify: bool = False      # opt-in (cfg.autoClassify): tag notes + propose Sections
+    section_threshold: int = 5       # notes on one topic before a Section is proposed
 
 @app.post("/upkeep/run")
 def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     """Fold ephemeral date/session notes into durable topic nodes.
 
-    Body: {tenant, scope?, use_llm?:bool=False}
-    Returns: {dateNotes, topics, folded}
+    With auto_classify=true also tags untagged notes and upserts Section PROPOSALS —
+    state only; no files are ever moved by upkeep (apply is an explicit user action).
+
+    Body: {tenant, scope?, use_llm?:bool=False, auto_classify?:bool=False, section_threshold?:int=5}
+    Returns: {dateNotes, topics, folded, ...}
     """
     from .upkeep import run_upkeep
     global _upkeep_last_run, _upkeep_last_stats
-    stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm)
+    stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm,
+                       auto_classify=req.auto_classify,
+                       section_threshold=req.section_threshold)
+    # Opportunistic backfill: any note still missing created_at (e.g. indexed before
+    # the column existed) gets it derived now from its source file, so the graph
+    # date-scrubber keeps improving as upkeep runs without a separate user action.
+    stats["createdBackfilled"] = backfill_created_at(_conn, req.tenant)
+    # Opportunistic relation enrichment: typed edges (depends_on/supersedes/…)
+    # for notes whose body changed, small batch per pass so upkeep stays cheap.
+    # Degrades cleanly when no LLM provider is configured (status in stats).
+    try:
+        from .llm_relations import enrich_relations
+        stats["enrich"] = enrich_relations(_conn, req.tenant, limit=25)
+    except Exception as e:
+        stats["enrich"] = {"status": "error", "detail": str(e)[:200]}
     _upkeep_last_run = datetime.datetime.utcnow().isoformat()
     _upkeep_last_stats = stats
     return stats
+
+
+class BackfillCreatedReq(BaseModel):
+    tenant: str
+
+
+@app.post("/backfill/created")
+def backfill_created(req: BackfillCreatedReq):
+    """Backfill created_at for existing notes from their source file's frontmatter/
+    mtime (falls back to the row's updated_at when the source is unreadable).
+    Never overwrites a note that already has created_at. Idempotent.
+
+    Body: {tenant}. Returns: {updated}.
+    """
+    n = backfill_created_at(_conn, req.tenant)
+    return {"updated": n}
+
+
+# --- Sections (auto-proposed note folders) ---------------------------------
+# SAFEGUARD: these endpoints track state and return move PLANS only. The
+# backend never moves files — the desktop main process executes plans under
+# its path-guard, and only when the user explicitly applies/undoes a section.
+
+class SectionApplyReq(BaseModel):
+    tenant: str
+    dest_dir: Optional[str] = None   # desktop-supplied destination folder for the plan
+
+class SectionReq(BaseModel):
+    tenant: str
+
+
+@app.get("/sections")
+def sections_list(tenant: Optional[str] = None):
+    """All section proposals (proposed + applied + dismissed) for a tenant.
+    Returns {sections:[{id, name, topic, status, notes:[{id,title,path}], ...}]}"""
+    from . import sections
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return {"sections": sections.list_sections(_conn, tenant)}
+
+
+@app.post("/sections/{section_id}/apply")
+def sections_apply(section_id: str, req: SectionApplyReq):
+    """Mark a proposed section applied; record original paths; return the move plan.
+    Body: {tenant, dest_dir?}. The DESKTOP performs the actual file moves."""
+    from . import sections
+    try:
+        return sections.apply_section(_conn, req.tenant, section_id, dest_dir=req.dest_dir)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/sections/{section_id}/dismiss")
+def sections_dismiss(section_id: str, req: SectionReq):
+    """Dismiss a proposed section (sticky — the topic is never re-proposed)."""
+    from . import sections
+    try:
+        return sections.dismiss_section(_conn, req.tenant, section_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/sections/{section_id}/undo")
+def sections_undo(section_id: str, req: SectionReq):
+    """Revert an applied section to proposed; return the recorded original paths
+    so the DESKTOP can move the files back."""
+    from . import sections
+    try:
+        return sections.undo_section(_conn, req.tenant, section_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+# --- Personal Wizards (an APPLIED Section promoted to a scoped RAG assistant) ---
+# Promoting moves nothing — the section is already a real folder. A wizard is a
+# retrieval VIEW over that folder's notes plus a persisted per-wizard chat.
+
+class WizardAskReq(BaseModel):
+    question: str
+    tenant: str
+    model: Optional[str] = None
+
+
+@app.post("/sections/{section_id}/promote")
+def sections_promote(section_id: str, req: SectionReq):
+    """Promote an APPLIED section to a Personal Wizard (idempotent).
+    Body: {tenant}. 409 unless the section's status is 'applied' — the notes
+    must already live together as a real folder before a wizard can scope to them."""
+    from . import sections
+    try:
+        return sections.promote_section(_conn, req.tenant, section_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.get("/wizards/personal")
+def wizards_personal_list(tenant: Optional[str] = None):
+    """Personal wizards for a tenant.
+    Returns {wizards:[{id, section_id, name, topic, note_count, folder, created_at}]}"""
+    from . import sections
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return {"wizards": sections.list_personal_wizards(_conn, tenant)}
+
+
+@app.post("/wizards/personal/{wizard_id}/ask")
+def wizards_personal_ask(wizard_id: str, req: WizardAskReq, embedder=Depends(get_embedder),
+                         reranker=Depends(get_reranker), sparse=Depends(get_sparse_embedder)):
+    """Wizard-scoped RAG ask: same pipeline + response shape as /ask, but retrieval
+    is filtered to the wizard's own notes (its section's folder / recorded note set).
+    Both the question and the answer are appended to the wizard's persisted chat.
+
+    Body: {question, tenant, model?}. Returns {answer, engine, citations}."""
+    from . import sections
+    try:
+        member_ids, scopes = sections.wizard_members(_conn, req.tenant, wizard_id)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    hits = []
+    if member_ids and scopes:
+        # Over-fetch across the member notes' scopes, then keep only the wizard's chunks.
+        hits = [h for h in retrieve(req.question, embedder, reranker, scopes, req.tenant,
+                                    limit=32, sparse_embedder=sparse)
+                if h.note_id in member_ids][:8]
+    chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
+    text, engine = llm.answer(req.question, chunks, model=req.model)
+    citations = [{"note_id": h.note_id, "heading_path": h.heading_path, "why": h.why} for h in hits]
+    sections.append_wizard_chat(_conn, req.tenant, wizard_id, "user", req.question)
+    sections.append_wizard_chat(_conn, req.tenant, wizard_id, "assistant", text, sources=citations)
+    return {"answer": text, "engine": engine, "citations": citations}
+
+
+@app.get("/wizards/personal/{wizard_id}/chat")
+def wizards_personal_chat(wizard_id: str, tenant: Optional[str] = None):
+    """Persisted per-wizard chat history, oldest first.
+    Returns {messages:[{id, role, text, sources, created_at}]}"""
+    from . import sections
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    try:
+        return {"messages": sections.wizard_chat(_conn, tenant, wizard_id)}
+    except sections.SectionError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.get("/tags")
+def tags_list(tenant: Optional[str] = None):
+    """Distinct tags + topics for a tenant (feeds the desktop's .lore manifest).
+    Returns {tags:[...], topics:[...]}"""
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    tags = [r[0] for r in _conn.execute(
+        "select distinct tag from note_tags where tenant_id=%s and kind='tag' order by tag",
+        (tenant,)).fetchall()]
+    topics = [r[0] for r in _conn.execute(
+        "select distinct tag from note_tags where tenant_id=%s and kind='topic' order by tag",
+        (tenant,)).fetchall()]
+    return {"tags": tags, "topics": topics}
 
 
 class EnrichReq(BaseModel):

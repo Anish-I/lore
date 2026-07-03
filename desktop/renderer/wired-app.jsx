@@ -25,7 +25,10 @@ function firstNote(tree) { return flatten(tree)[0] || null; }
 // (a wizard-id Set built from the unfiltered tree) since graph nodes don't carry a wizard flag.
 function passesScopeFilter(filter, scopeValue, wizardHit) {
   if (!filter || filter === 'all') return true;
-  if (filter === 'private') return scopeValue === 'private';
+  // Solo libraries use a purpose-based scope (e.g. "engineering"), not a literal
+  // "private" tag — so "Private" means YOUR own notes: anything that isn't an
+  // installed plugin/wizard and isn't explicitly shared to a team/enterprise.
+  if (filter === 'private') return !wizardHit && scopeValue !== 'team' && scopeValue !== 'enterprise';
   if (filter === 'team') return scopeValue === 'team' || scopeValue === 'enterprise';
   if (filter === 'plugins') return Boolean(wizardHit);
   return true;
@@ -106,7 +109,15 @@ function parseNote(raw, p) {
   if (fm) {
     const meta = fm[1];
     const sc = meta.match(/^scope:\s*(.+)$/m); if (sc) scope = String(sc[1]).trim().replace(/^['"]|['"]$/g, '') || null;
-    const tg = meta.match(/^tags:\s*\[(.*?)\]/m); if (tg) tags = tg[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+    // Two YAML tag forms in the wild: inline array `tags: [a, b]` and the more
+    // common Obsidian-style block list `tags:\n  - a\n  - b`.
+    const tgInline = meta.match(/^tags:\s*\[(.*?)\]/m);
+    if (tgInline) {
+      tags = tgInline[1].split(',').map((s) => s.trim().replace(/['"]/g, '')).filter(Boolean);
+    } else {
+      const tgBlock = meta.match(/^tags:\s*\r?\n((?:^\s*-\s*.+\r?\n?)+)/m);
+      if (tgBlock) tags = [...tgBlock[1].matchAll(/^\s*-\s*(.+)$/gm)].map((m) => m[1].trim().replace(/['"]/g, '')).filter(Boolean);
+    }
     body = body.slice(fm[0].length);
   }
   const base = p.split(/[\\/]/).pop();
@@ -283,6 +294,10 @@ function App() {
   const [treeData, setTreeData] = React.useState(null);
   const [tabs, setTabs] = React.useState([]);            // [{id,title,kind,bucket?}]
   const [activeId, setActiveId] = React.useState(null);
+  // Backlink breadcrumb: the note id the user just came FROM, when the current
+  // note was opened by clicking a connection in the mini-graph/backlinks list.
+  // null whenever the user opened the current note any other way.
+  const [cameFromId, setCameFromId] = React.useState(null);
   const [notes, setNotes] = React.useState({});          // path -> parsed note
   const [drafts, setDrafts] = React.useState({});        // path -> raw text
   const [mode, setMode] = React.useState('read');
@@ -306,6 +321,7 @@ function App() {
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
   const [pendingInvites, setPendingInvites] = React.useState([]); // team invites addressed to the signed-in email
   const [inviteBusy, setInviteBusy] = React.useState(null); // invite_id currently being accepted
+  const [sectionProposals, setSectionProposals] = React.useState([]); // background upkeep's proposed/applied Sections
   const timer = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
   const progressDoneTimerRef = React.useRef(null);
@@ -313,7 +329,17 @@ function App() {
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
 
   // Pending team invites for the signed-in user — checked on launch and every few
-  // minutes; silently empty when signed out or the backend is unreachable.
+  // minutes; silently empty when signed out or the backend is unreachable. Also
+  // exposed as refreshInvites so the Teams view can force an immediate re-check
+  // right after sign-in (e.g. the "Join a team" flow).
+  const refreshInvites = React.useCallback(async () => {
+    if (!window.lore?.invites?.list) return;
+    try {
+      const r = await window.lore.invites.list();
+      if (r && r.ok && r.body && Array.isArray(r.body.invites)) setPendingInvites(r.body.invites);
+    } catch { /* signed out or offline — leave prior state */ }
+  }, []);
+
   React.useEffect(() => {
     let alive = true;
     const check = async () => {
@@ -321,7 +347,7 @@ function App() {
       try {
         const r = await window.lore.invites.list();
         if (alive && r && r.ok && r.body && Array.isArray(r.body.invites)) setPendingInvites(r.body.invites);
-      } catch { /* signed out or offline — no banner */ }
+      } catch { /* signed out or offline — no inbox */ }
     };
     check();
     const iv = setInterval(check, 5 * 60 * 1000);
@@ -335,6 +361,56 @@ function App() {
       if (r && r.ok) setPendingInvites((list) => list.filter((i) => i.invite_id !== inviteId));
     } catch { /* keep the banner so the user can retry */ }
     setInviteBusy(null);
+  }, []);
+
+  // Section PROPOSALS — background upkeep (main.js) tags notes and proposes folders,
+  // but NEVER moves a file itself. This is read-only polling; the only paths that ever
+  // move files are the Enable/Undo button handlers below, which the user must click.
+  const loadSections = React.useCallback(async () => {
+    if (!window.lore?.sections?.list) return;
+    try {
+      const r = await window.lore.sections.list();
+      if (r && Array.isArray(r.sections)) setSectionProposals(r.sections);
+    } catch { /* backend offline — keep the last known list */ }
+  }, []);
+
+  React.useEffect(() => {
+    loadSections();
+    const iv = setInterval(loadSections, 5 * 60 * 1000);
+    // scrape:progress fires with phase:'done' after every scrape/upkeep/import run
+    // (see main.js) — a good, cheap trigger to refresh the proposal list.
+    const unsub = window.lore?.scrapeProgress
+      ? window.lore.scrapeProgress((p) => { if (p && p.phase === 'done') loadSections(); })
+      : null;
+    return () => { clearInterval(iv); if (unsub) unsub(); };
+  }, [loadSections]);
+
+  // Enable: moves the section's notes into a new folder (main-process fs, path-guarded)
+  // and re-indexes them — fires ONLY from the sidebar's "Enable" button onClick.
+  const onSectionApply = React.useCallback(async (id) => {
+    if (!window.lore?.sections?.apply) return;
+    try { await window.lore.sections.apply(id); } finally { loadSections(); }
+  }, [loadSections]);
+
+  const onSectionDismiss = React.useCallback(async (id) => {
+    if (!window.lore?.sections?.dismiss) return;
+    try { await window.lore.sections.dismiss(id); } finally { loadSections(); }
+  }, [loadSections]);
+
+  // Undo: moves an applied section's notes back to their recorded original paths —
+  // fires ONLY from the sidebar's "Undo" button onClick.
+  const onSectionUndo = React.useCallback(async (id) => {
+    if (!window.lore?.sections?.undo) return;
+    try { await window.lore.sections.undo(id); } finally { loadSections(); }
+  }, [loadSections]);
+
+  // Promote: turns an APPLIED section into a Personal Wizard (backend state only —
+  // the section is already a real folder, so no files move). Fires ONLY from the
+  // sidebar's "Promote" button; the Wizards view picks the new wizard up on its
+  // own next load.
+  const onSectionPromote = React.useCallback(async (id) => {
+    if (!window.lore?.wizards?.promoteSection) return { ok: false };
+    return window.lore.wizards.promoteSection(id);
   }, []);
 
   const updateProgress = React.useCallback((payload) => {
@@ -449,12 +525,40 @@ function App() {
     return parsed;
   }, [notes]);
 
-  const openNote = React.useCallback(async (id) => {
+  // `cameFrom` (optional 2nd arg) is the id of the note the user was just on, ONLY
+  // when navigating via a backlink/connection click — every other caller (sidebar,
+  // search, tabs) calls openNote with one arg, which resets the trail marker.
+  const openNote = React.useCallback(async (id, cameFrom = null) => {
+    setCameFromId(cameFrom);
     setTabs((ts) => ts.some((t) => t.id === id) ? ts : [...ts, { id, title: id.split(/[\\/]/).pop().replace(/\.md$/i, ''), kind: 'note' }]);
     setActiveId(id); setView('workspace'); setMode('read'); setSearchOpen(false);
     const parsed = await loadNote(id);
     setScope(parsed.scope);
   }, [loadNote]);
+
+  // Wraps openNote so a backlink/connection click marks where the user came from —
+  // the mini-graph on the note they land on highlights that node in a distinct
+  // color. Opening a note any other way (sidebar, search, tabs) resets the trail.
+  const openNoteFromBacklink = React.useCallback((path) => {
+    openNote(path, activeId);
+  }, [openNote, activeId]);
+
+  // Stable graph-node open handler (defined AFTER openNote to avoid a TDZ ref).
+  // An inline arrow at the call site re-created GraphView's onOpen every render,
+  // which (via graph.jsx's [graph, onOpen] effect) restarted the force simulation
+  // on every parent re-render ("glitching out").
+  const onGraphOpen = React.useCallback((id) => {
+    const n = graphData && graphData.nodes.find((x) => x.id === id);
+    if (n && n.path) {
+      openNote(n.path);
+    } else if (window.lore && window.lore.notes && window.lore.notes.get) {
+      window.lore.notes.get(id).then((nd) => {
+        if (nd) setPreviewNote({ title: nd.title || String(id), body: nd.body || '' });
+      }).catch(() => {});
+    } else {
+      setView('workspace');
+    }
+  }, [graphData, openNote]);
 
   const openBucket = (b) => {
     const id = 'bucket:' + b.id;
@@ -479,6 +583,18 @@ function App() {
     setActiveId(id);
     const t = tabs.find((x) => x.id === id);
     if (t && t.kind === 'note') { setMode('read'); loadNote(id); }
+  };
+
+  // "Close others" (tab-strip hover action): keep only the given tab, activating it
+  // when the active tab was among the closed — one pass, so it can't race closeTab.
+  const closeOtherTabs = (id) => {
+    const t = tabs.find((x) => x.id === id);
+    if (!t) return;
+    setTabs((ts) => ts.filter((x) => x.id === id));
+    if (id !== activeId) {
+      setActiveId(id);
+      if (t.kind === 'note') { setMode('read'); loadNote(id); }
+    }
   };
 
   const onNodeClick = (id) => {
@@ -514,6 +630,28 @@ function App() {
     const next = roots[(from + dir + roots.length) % roots.length];
     if (next) loadTree(next);
   }, [appConfig, treeData, loadTree]);
+
+  // Libraries discovered via `.lore` manifests (main scans configured roots +
+  // subfolders) — the sidebar surfaces the ones that are NOT already open/configured
+  // so a known library can be reopened with one click. Manifest reads only; cheap.
+  const [discoveredLibs, setDiscoveredLibs] = React.useState([]);
+  React.useEffect(() => {
+    if (!window.lore?.libraries?.discovered) return;
+    window.lore.libraries.discovered()
+      .then((d) => setDiscoveredLibs(Array.isArray(d) ? d : []))
+      .catch(() => { /* non-fatal */ });
+  }, [appConfig]);
+  const otherLibraries = React.useMemo(() => {
+    const norm = (p) => String(p || '').replace(/[\\/]+$/, '');
+    const known = new Set(((appConfig && Array.isArray(appConfig.roots)) ? appConfig.roots : []).map(norm));
+    if (treeData && treeData.root) known.add(norm(treeData.root));
+    return discoveredLibs.filter((d) => d && d.root && !known.has(norm(d.root)));
+  }, [discoveredLibs, appConfig, treeData]);
+  // Same switch mechanism as the roots chevrons: loadTree opens the library and
+  // lands on its first note. Config is untouched — reopening is not adopting.
+  const openDiscoveredLibrary = React.useCallback((root) => {
+    if (root) loadTree(root);
+  }, [loadTree]);
 
   // Right-click on a sidebar row: hand off to the native Electron context menu (main process).
   const onTreeContextMenu = React.useCallback((node) => {
@@ -617,8 +755,12 @@ function App() {
         try { if (await loadTree(root)) { loadedRoot = true; break; } } catch { /* try next */ }
       }
       if (window.lore.onVaultChanged) window.lore.onVaultChanged(() => { if (treeData) loadTree(treeData.root); });
-      const needsSetupRefresh = !existingCfg || Number(existingCfg.setupVersion || 0) < 6;
-      if (needsSetupRefresh || !loadedRoot) setShowOnboarding(true);
+      // Once a user has set up locally (or explicitly skipped), NEVER auto-prompt
+      // onboarding again — not on a version bump, and not just because the library
+      // root failed to load this boot (a transient state, not a reason to re-onboard).
+      const configuredBefore = existingCfg && (existingCfg.onboardedAt || existingCfg.skippedSetupAt
+        || (Array.isArray(existingCfg.roots) && existingCfg.roots.length > 0));
+      if (!configuredBefore) setShowOnboarding(true);
     })();
     const onKey = (e) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setSearchOpen((o) => !o); }
@@ -697,9 +839,12 @@ function App() {
     if (flags.openImport) setShowImportModal(true);
   }, [loadTree, updateProgress]);
 
-  // Load real graph data when graph view is active and identity is configured.
+  // Load real graph data once identity is configured — NOT gated on the Graph tab
+  // being open. The note editor's ContextPane (backlinks/connections) also reads
+  // graphData, so fetching it only on view==='graph' meant every note falsely
+  // showed "No connections yet" until the user had visited the Graph view once.
   React.useEffect(() => {
-    if (view !== 'graph' || !window.lore?.graph) return;
+    if (!window.lore?.graph) return;
     setGraphLoading(true);
     const scopes = persona.scopes || [];
     if (!identityReady) {
@@ -710,7 +855,7 @@ function App() {
     window.lore.graph({ tenant, scopes }).then((g) => {
       setGraphData(g); setGraphLoading(false);
     }).catch(() => setGraphLoading(false));
-  }, [view, tenant, identityReady, (persona.scopes || []).join('\u0000'), graphNonce]);
+  }, [tenant, identityReady, (persona.scopes || []).join('\u0000'), graphNonce]);
 
   // After an import: refresh the graph and the file tree so new nodes/files show up.
   const reloadAfterImport = React.useCallback(() => {
@@ -789,8 +934,8 @@ function App() {
 
   const D = window.VaultDesignSystem_ffbf58;
   const Titlebar = window.LoreTitlebar, Rail = window.LoreActivityRail, Sidebar = window.LoreSidebar,
-    Editor = window.LoreEditor, ContextPane = window.LoreContextPane, AskPanel = window.LoreAskPanel,
-    ProjectsView = window.LoreProjectsView, GraphView = window.LoreGraphView,
+    Editor = window.LoreEditor, ContextPane = window.LoreContextPane, FloatingGraph = window.LoreFloatingGraph, AskPanel = window.LoreAskPanel,
+    TeamsView = window.LoreTeamsView, GraphView = window.LoreGraphView,
     BucketsView = window.LoreBucketsView, SettingsView = window.LoreSettingsView,
     HooksView = window.LoreHooksView, Onboarding = window.LoreOnboarding,
     ImportModal = window.LoreImportModal;
@@ -910,43 +1055,42 @@ function App() {
             <Sidebar tree={shownTree} activeNote={activeId} workspace={workspace} onOpen={onNodeClick} onToggle={(id) => setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) }))}
               bases={bases} baseScopes={baseScopes} kbFilter={kbFilter} onToggleBase={toggleBase} onClearBases={() => setKbFilter([])} wizard={activeBucket} onCreateNote={onCreateNote}
               renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
-              roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary} />
+              roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary}
+              discoveredLibraries={otherLibraries} onOpenDiscovered={openDiscoveredLibrary}
+              sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} onSectionPromote={onSectionPromote} theme={theme} />
             <PaneResizer side="sidebar" />
             {activeBucket
-              ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onOpen={() => setAskOpen(true)} />
+              ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onOpen={() => setAskOpen(true)} />
               : (editorNote
-                ? <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
+                ? <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
+                    <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
+                    {FloatingGraph && <FloatingGraph note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} />}
+                  </div>
                 : <EmptyEditor />)}
             {!askOpen && editorNote && <PaneResizer side="context" />}
-            {askOpen ? askPanel : (editorNote && <ContextPane note={editorNote} connections={connections} onOpenNote={openNote} onAsk={() => setAskOpen(true)} />)}
+            {askOpen ? askPanel : (editorNote && <ContextPane note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} onAsk={() => setAskOpen(true)} />)}
           </React.Fragment>
         )}
 
-        {view === 'projects' && (<React.Fragment><ProjectsView projects={M.projects} groups={M.groups} onOpen={() => setView('workspace')} />{askOpen && askPanel}</React.Fragment>)}
+        {view === 'projects' && (
+          <React.Fragment>
+            <TeamsView config={appConfig} onConfig={setAppConfig} buckets={M.buckets} onOpenWizard={(b) => openBucket(b)}
+              pendingInvites={pendingInvites} inviteBusy={inviteBusy} onAcceptInvite={acceptInvite} onRefreshInvites={refreshInvites} />
+            {askOpen && askPanel}
+          </React.Fragment>
+        )}
         {view === 'graph' && (
           <React.Fragment>
             {(graphLoading || !filteredGraph || filteredGraph.nodes.length === 0)
               ? <GraphEmptyState loading={graphLoading} />
-              : <GraphView graph={filteredGraph} onOpen={(id) => {
-                  const n = graphData && graphData.nodes.find((x) => x.id === id);
-                  if (n && n.path) {
-                    openNote(n.path);
-                  } else if (window.lore && window.lore.notes && window.lore.notes.get) {
-                    // DB-only node (no source_path) — fetch body and show read-only preview
-                    window.lore.notes.get(id).then((nd) => {
-                      if (nd) setPreviewNote({ title: nd.title || String(id), body: nd.body || '' });
-                    }).catch(() => {});
-                  } else {
-                    setView('workspace');
-                  }
-                }} />
+              : <GraphView graph={filteredGraph} onOpen={onGraphOpen} bases={bases} kbFilter={kbFilter} onToggleBase={toggleBase} baseOf={baseOf} />
             }
             {askOpen && askPanel}
           </React.Fragment>
         )}
         {view === 'buckets' && (<React.Fragment><BucketsView buckets={M.buckets} onAsk={() => setAskOpen(true)} onOpen={openBucket} onChanged={reloadAfterImport} />{askOpen && askPanel}</React.Fragment>)}
         {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onOpenSetup={() => setShowOnboarding(true)} />}
-        {view === 'hooks' && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} onOpenSetup={() => setShowOnboarding(true)} />}
+        {view === 'hooks' && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} tenant={tenant} scope={persona.scopes && persona.scopes[0]} onOpenSetup={() => setShowOnboarding(true)} />}
         </LoreErrorBoundary>
 
         {searchOpen && <SearchPalette notes={allNotes} onPick={openNote} onClose={() => setSearchOpen(false)} />}
@@ -965,23 +1109,13 @@ function App() {
           </div>
         )}
 
-        {pendingInvites.length > 0 && !showOnboarding && (
-          <div style={{ position: 'absolute', top: showProgress ? 34 : 0, left: 0, right: 0, zIndex: 29, background: 'var(--brand-soft-bg)', borderBottom: '1px solid var(--brand-soft-border)', padding: '7px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {pendingInvites.map((inv) => (
-              <div key={inv.invite_id} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--text-body)' }}>
-                <D.Icon name="mail" size={14} style={{ color: 'var(--brand-fg)' }} />
-                <span style={{ flex: 1 }}>
-                  You've been invited to <strong style={{ color: 'var(--text-strong)' }}>{inv.team_name || inv.team_id}</strong>
-                  {inv.invited_by ? <span style={{ color: 'var(--text-subtle)' }}> by {inv.invited_by}</span> : null}
-                </span>
-                <D.Button variant="primary" icon="check" disabled={inviteBusy === inv.invite_id} onClick={() => acceptInvite(inv.invite_id)}>
-                  {inviteBusy === inv.invite_id ? 'Joining…' : 'Accept'}
-                </D.Button>
-                <button onClick={() => setPendingInvites((list) => list.filter((i) => i.invite_id !== inv.invite_id))} title="Dismiss for now" aria-label="Dismiss invite" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', padding: 4 }}>
-                  <D.Icon name="x" size={13} />
-                </button>
-              </div>
-            ))}
+        {pendingInvites.length > 0 && !showOnboarding && view !== 'projects' && (
+          <div style={{ position: 'absolute', top: showProgress ? 34 : 0, left: 0, right: 0, zIndex: 29, background: 'var(--brand-soft-bg)', borderBottom: '1px solid var(--brand-soft-border)', padding: '7px 14px', display: 'flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--text-body)' }}>
+            <D.Icon name="mail" size={14} style={{ color: 'var(--brand-fg)' }} />
+            <span style={{ flex: 1 }}>
+              You have {pendingInvites.length} pending team invite{pendingInvites.length === 1 ? '' : 's'}.
+            </span>
+            <D.Button variant="primary" icon="users" onClick={() => setView('projects')}>Review in Teams</D.Button>
           </div>
         )}
 

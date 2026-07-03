@@ -149,7 +149,7 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
     { id: 'workspace', icon: 'files', label: 'Files' },
     { id: 'search', icon: 'search', label: 'Search' },
     { id: 'graph', icon: 'network', label: 'Graph' },
-    { id: 'projects', icon: 'layout-grid', label: 'Sagas' },
+    { id: 'projects', icon: 'users', label: 'Teams' },
     { id: 'buckets', icon: 'library', label: 'Wizards' },
     { id: 'hooks', icon: 'plug', label: 'Hooks' },
   ];
@@ -166,7 +166,6 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
         <IconButton icon="sparkles" label="Ask" size="lg" variant={askOpen ? 'primary' : 'ghost'} onClick={onAsk} />
       </Tooltip>
       <div style={{ flex: 1 }} />
-      <Tooltip label="Groups" side="right"><IconButton icon="users" label="Groups" size="lg" onClick={() => onView('projects')} /></Tooltip>
       <Tooltip label="Settings" side="right"><IconButton icon="settings" label="Settings" size="lg" active={view === 'settings'} onClick={() => onView('settings')} /></Tooltip>
     </div>
   );
@@ -174,7 +173,10 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
 
 // VS Code-style file tree row — replaces FileTreeItem for tighter, denser layout.
 const TREE_INDENT = 12; // px per depth level
-function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMenu, onRenameCommit, onRenameCancel }) {
+// sectionName: the top-level ancestor folder's name (a node IS its own section
+// at depth 0; children inherit it unchanged) — used to color-match the folder
+// icon to the same Section color used in the knowledge graph.
+function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMenu, onRenameCommit, onRenameCancel, sectionName, theme }) {
   const [hover, setHover] = React.useState(false);
   const isFolder = node.kind === 'folder';
   const isActive = node.kind === 'note' && node.id === activeNote;
@@ -230,12 +232,16 @@ function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMen
         ) : (
           <span style={{ width: 11, flexShrink: 0 }} />
         )}
-        {/* Folder / file icon */}
+        {/* Folder / file icon — folders colored by Section (same color as the
+            knowledge graph, via window.LoreSectionColor), so the same palette
+            reads consistently across both surfaces. */}
         <Icon
           name={isFolder ? (node.open ? 'folder-open' : 'folder') : 'file-text'}
           size={13}
           style={{
-            color: isActive ? 'var(--brand-fg)' : isFolder ? 'var(--text-subtle)' : node.scope ? SH_scopeColor(node.scope) : 'var(--text-faint)',
+            color: isActive ? 'var(--brand-fg)'
+              : isFolder ? ((sectionName && window.LoreSectionColor(sectionName, theme)) || 'var(--text-subtle)')
+              : node.scope ? SH_scopeColor(node.scope) : 'var(--text-faint)',
             flexShrink: 0,
           }}
         />
@@ -288,7 +294,8 @@ function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMen
       </div>
       {isFolder && node.open && node.children && node.children.map((c) => (
         <TreeNode key={c.id} node={c} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}
-          renamingId={renamingId} onContextMenu={onContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
+          renamingId={renamingId} onContextMenu={onContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
+          sectionName={depth === 0 ? node.name : sectionName} theme={theme} />
       ))}
     </React.Fragment>
   );
@@ -298,7 +305,7 @@ function SH_baseName(p) {
   return String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot }) {
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, discoveredLibraries, onOpenDiscovered, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo, onSectionPromote, theme }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
   // Library up/down switcher — only shown with more than one configured library (root folder).
   const showLibrarySwitcher = Array.isArray(roots) && roots.length > 1 && typeof onSwitchRoot === 'function';
@@ -309,10 +316,23 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
     nextLibraryName = SH_baseName(roots[(idx + 1) % roots.length]);
   }
 
+  // Libraries discovered via `.lore` manifests but not currently configured/open —
+  // surfaced in a small popover so a known library can be reopened with one click.
+  const otherLibs = Array.isArray(discoveredLibraries) ? discoveredLibraries : [];
+  const showOtherLibs = otherLibs.length > 0 && typeof onOpenDiscovered === 'function';
+
   // "Add group" inline form state — hooks must run before any early return.
   const [grpInput, setGrpInput] = React.useState(false);
   const [grpName, setGrpName] = React.useState('');
   const [grpStatus, setGrpStatus] = React.useState('');
+  const [libsOpen, setLibsOpen] = React.useState(false);
+  // Section proposal currently being applied/undone (disables its buttons).
+  const [secBusy, setSecBusy] = React.useState(null);
+  // Sections successfully promoted to a Personal Wizard this session — promote is
+  // idempotent server-side, but once it succeeds swap the button for a badge so
+  // the user isn't tempted to keep clicking. (Backend doesn't flag "is a wizard"
+  // on the section row itself, so this is a lightweight, session-local record.)
+  const [promoted, setPromoted] = React.useState(() => new Set());
 
   const handleAddGroup = async () => {
     const name = grpName.trim();
@@ -387,6 +407,33 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             <IconButton icon="chevron-down" label={`Next library — ${nextLibraryName}`} size="sm" onClick={() => onSwitchRoot(1)} />
           </div>
         )}
+        {showOtherLibs && (
+          <div style={{ position: 'relative' }}>
+            <IconButton icon="library" label={`Other libraries found (${otherLibs.length})`} size="sm" onClick={() => setLibsOpen((o) => !o)} />
+            {libsOpen && (
+              <React.Fragment>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setLibsOpen(false)} />
+                <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, zIndex: 41, width: 250, maxHeight: 300, overflowY: 'auto', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)' }}>
+                  <div style={{ padding: '7px 10px', borderBottom: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Other libraries found</div>
+                  {otherLibs.map((d) => (
+                    <div key={d.root} onClick={() => { setLibsOpen(false); onOpenDiscovered(d.root); }} title={d.root}
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', cursor: 'pointer' }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                      <Icon name="library" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} />
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{d.name}</div>
+                        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>
+                          {d.indexed && d.indexed.count != null ? `${d.indexed.count} notes · ` : ''}{d.root}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </React.Fragment>
+            )}
+          </div>
+        )}
         <IconButton icon="plus" label="New note" size="sm" onClick={onCreateNote} />
       </div>
       <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
@@ -425,10 +472,80 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', padding: '2px 0' }}>No groups yet — click + to add one.</div>
           )}
         </div>
+      {/* Proposed sections — Lore's background upkeep noticed topic clusters. Nothing
+          moves unless the user clicks Enable; Undo restores the recorded original paths. */}
+      {(() => {
+        const visible = (sectionProposals || []).filter((s) => s.status !== 'dismissed');
+        if (!visible.length) return null;
+        const secBtn = (tone) => ({
+          border: `1px solid ${tone === 'primary' ? 'var(--brand-soft-border)' : 'var(--border)'}`,
+          borderRadius: 'var(--radius-sm)', padding: '2px 8px', cursor: 'pointer',
+          background: tone === 'primary' ? 'var(--brand-soft-bg)' : 'transparent',
+          color: tone === 'primary' ? 'var(--brand-fg)' : 'var(--text-faint)',
+          fontFamily: 'var(--font-sans)', fontSize: 10.5, whiteSpace: 'nowrap',
+        });
+        const run = async (id, fn) => {
+          if (!fn || secBusy) return;
+          setSecBusy(id);
+          try { await fn(id); } finally { setSecBusy(null); }
+        };
+        const runPromote = async (id) => {
+          if (!onSectionPromote || secBusy) return;
+          setSecBusy(id);
+          try {
+            const r = await onSectionPromote(id);
+            if (r && r.ok !== false) setPromoted((p) => new Set(p).add(id));
+          } finally { setSecBusy(null); }
+        };
+        return (
+          <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+              <Icon name="folder-plus" size={11} style={{ color: 'var(--text-faint)' }} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Proposed sections</span>
+              <HelpHint size={13} tip="Lore noticed groups of notes on the same topic and proposes a folder for each. Nothing is moved until you click Enable — and Undo puts every note back where it was." />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {visible.map((s) => {
+                const busy = secBusy === s.id;
+                const applied = s.status === 'applied';
+                return (
+                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Icon name={applied ? 'folder-check' : 'folder'} size={12} style={{ color: applied ? 'var(--jade-400)' : 'var(--text-subtle)', flexShrink: 0 }} />
+                    <span title={(s.notes || []).map((n) => n.title || n.id).join('\n')} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--text-body)' }}>
+                      {s.name}
+                      <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 }}> · {(s.notes || []).length}</span>
+                    </span>
+                    {applied ? (
+                      <React.Fragment>
+                        {promoted.has(s.id) ? (
+                          <Badge tone="success" dot>wizard</Badge>
+                        ) : (
+                          <button disabled={busy} onClick={() => runPromote(s.id)} title={`Turn "${s.name}" into a Personal Wizard you can ask directly`} style={secBtn('primary')}>{busy ? '…' : 'Promote'}</button>
+                        )}
+                        <button disabled={busy} onClick={() => run(s.id, onSectionUndo)} title="Move these notes back to their original locations" style={secBtn()}>{busy ? '…' : 'Undo'}</button>
+                      </React.Fragment>
+                    ) : (
+                      <React.Fragment>
+                        <button disabled={busy} onClick={() => run(s.id, onSectionApply)} title={`Create a "${s.name}" folder and move these notes into it`} style={secBtn('primary')}>{busy ? '…' : 'Enable'}</button>
+                        <button disabled={busy} onClick={() => run(s.id, onSectionDismiss)} title="Dismiss this proposal (it won't be suggested again)" style={secBtn()}>✕</button>
+                      </React.Fragment>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
       <div style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
-        {tree.map((n) => (
+        {tree.length === 0 ? (
+          <div style={{ padding: '18px 14px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            No notes match the current filter.
+          </div>
+        ) : tree.map((n) => (
           <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}
-            renamingId={renamingId} onContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
+            renamingId={renamingId} onContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
+            sectionName={n.name} theme={theme} />
         ))}
       </div>
       <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', flexDirection: 'column', gap: 7 }}>

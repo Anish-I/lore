@@ -1,3 +1,5 @@
+import re
+
 from markdown_it import MarkdownIt
 import tiktoken
 from .models import Chunk
@@ -5,6 +7,28 @@ from .models import Chunk
 _enc = tiktoken.get_encoding("cl100k_base")
 def _ntokens(s: str) -> int:
     return len(_enc.encode(s))
+
+
+# Frontmatter/metadata-only fragments ("tags: type/index status/auto", bare tag
+# lists) chunk into near-identical low-content points that can win recall slots
+# over real prose. A chunk must have some meaningful text once metadata syntax
+# is stripped, or it isn't worth indexing.
+_META_LINE = re.compile(
+    r"^\s*(tags?|topics?|status|type|domain|created|date|aliases)\s*:.*$"
+    r"|^\s*-\s*[\"']?\[\[[^\]]*\]\][\"']?\s*$"    # frontmatter wikilink list items
+    r"|^\s*-?\s*[a-z0-9_-]+/[a-z0-9_/-]+\s*$",     # bare tag tokens like type/index
+    re.IGNORECASE,
+)
+
+
+def _meaningful_text(s: str) -> str:
+    kept = [ln for ln in s.splitlines() if ln.strip() and not _META_LINE.match(ln)]
+    return " ".join(" ".join(kept).split())
+
+
+def _is_low_content(s: str) -> bool:
+    return len(_meaningful_text(s)) < 25
+
 
 def chunk_markdown(note_id, md, target_min=150, target_max=350):
     mdit = MarkdownIt()
@@ -34,6 +58,14 @@ def chunk_markdown(note_id, md, target_min=150, target_max=350):
     flush()
 
     chunks, idx = [], 0
+
+    def emit(path, text):
+        nonlocal idx
+        if _is_low_content(text):
+            return
+        chunks.append(Chunk(note_id, idx, path, text))
+        idx += 1
+
     for path, body in sections:
         if not body:
             continue
@@ -43,9 +75,9 @@ def chunk_markdown(note_id, md, target_min=150, target_max=350):
         for p in paras:
             pt = _ntokens(p)
             if cur and cur_tok + pt > target_max:
-                chunks.append(Chunk(note_id, idx, path, "\n".join(cur).strip())); idx += 1
+                emit(path, "\n".join(cur).strip())
                 cur, cur_tok = [], 0
             cur.append(p); cur_tok += pt
         if cur:
-            chunks.append(Chunk(note_id, idx, path, "\n".join(cur).strip())); idx += 1
+            emit(path, "\n".join(cur).strip())
     return chunks
