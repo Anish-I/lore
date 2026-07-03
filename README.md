@@ -68,6 +68,8 @@ Everything ships self-contained — no Python, no database, no API keys required
 
 **How it all fits together (diagrams + the source-of-truth answer):** [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
+**For teams & IT (simplicity, Okta/AD, the security story):** [docs/ENTERPRISE.md](docs/ENTERPRISE.md)
+
 **Pipeline:** hybrid dense + BM25 → RRF → 1-hop graph expand → cross-encoder rerank → cited answer.
 **Models:** BGE-small-en-v1.5 (dense) · Qdrant/bm25 (sparse) · ms-marco-MiniLM-L-6-v2 (rerank) · Ollama (answers).
 
