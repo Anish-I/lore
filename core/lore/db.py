@@ -242,6 +242,11 @@ create table if not exists personal_wizard_chats(
   created_at timestamptz default now(),
   constraint pw_chat_role_check check (role in ('user','assistant')));
 create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
+create table if not exists folded_paths(
+  tenant_id text not null,
+  path text not null,
+  folded_at timestamptz default now(),
+  primary key (tenant_id, path));
 """
 
 # PG migration note: personal_wizards / personal_wizard_chats are NEW tables, so the
@@ -380,6 +385,11 @@ create table if not exists personal_wizard_chats(
   created_at timestamp default current_timestamp,
   constraint pw_chat_role_check check (role in ('user','assistant')));
 create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
+create table if not exists folded_paths(
+  tenant_id text not null,
+  path text not null,
+  folded_at timestamp default current_timestamp,
+  primary key (tenant_id, path));
 """
 
 

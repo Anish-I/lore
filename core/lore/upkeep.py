@@ -138,7 +138,21 @@ def _existing_topic_body(conn, topic_note_id: str) -> str:
 
 def _delete_note(conn, tenant: str, note_id: str) -> None:
     """Remove a note from Lore (Qdrant vectors, edges both directions, and the row).
-    The source file on disk is NOT touched."""
+    The source file on disk is NOT touched.
+
+    A file-backed note gets a TOMBSTONE in folded_paths first — without it, the
+    boot reconcile sees the on-disk file as "unindexed", re-indexes it, and the
+    next upkeep pass folds + deletes it again, oscillating counts and burning
+    embedding compute every launch. /reindex honors the tombstone (skips the
+    path unless the file was modified after folding — see api.reindex)."""
+    row = conn.execute(
+        "select source_path from notes where id=%s", (note_id,)).fetchone()
+    if row and row[0]:
+        conn.execute(
+            "insert into folded_paths(tenant_id, path, folded_at) values(%s,%s,now())"
+            " on conflict (tenant_id, path) do update set folded_at=excluded.folded_at",
+            (tenant, row[0]),
+        )
     try:
         qdrant_store.delete_note(note_id)
     except Exception:

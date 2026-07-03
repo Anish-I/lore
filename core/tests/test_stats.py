@@ -58,7 +58,7 @@ def test_stats_does_not_leak_across_tenants():
 def test_stats_unknown_tenant_returns_zero():
     r = client.get("/stats", params={"tenant": "no-such-tenant-xyz"})
     assert r.status_code == 200
-    assert r.json() == {"notes": 0, "chunks": 0, "edges": 0}
+    assert r.json() == {"notes": 0, "chunks": 0, "edges": 0, "foldedPaths": 0}
 
 
 def test_stats_missing_tenant_returns_zero():
@@ -66,4 +66,4 @@ def test_stats_missing_tenant_returns_zero():
     cross-tenant counts to a caller that forgot to pass one)."""
     r = client.get("/stats")
     assert r.status_code == 200
-    assert r.json() == {"notes": 0, "chunks": 0, "edges": 0}
+    assert r.json() == {"notes": 0, "chunks": 0, "edges": 0, "foldedPaths": 0}

@@ -1457,11 +1457,15 @@ async function reconcileIndex(bootStatus) {
     if (!r.ok) return;
     const stats = await r.json();
     const indexedCount = (stats && typeof stats.notes === 'number') ? stats.notes : 0;
+    // Tombstoned paths: on disk but deliberately folded out of the index by
+    // upkeep. Counting them as "unindexed" re-triggered a full re-scrape every
+    // boot (whose re-indexed notes upkeep then re-folded — endless churn).
+    const foldedCount = (stats && typeof stats.foldedPaths === 'number') ? stats.foldedPaths : 0;
 
     const threshold = cfg.reconcileThreshold || RECONCILE_THRESHOLD_DEFAULT;
-    if (diskCount - indexedCount <= threshold) return; // in sync (or index ahead) — nothing to do
+    if (diskCount - indexedCount - foldedCount <= threshold) return; // in sync (or index ahead) — nothing to do
 
-    console.log(`[reconcile] disk=${diskCount} indexed=${indexedCount} (threshold ${threshold}) — starting background re-index`);
+    console.log(`[reconcile] disk=${diskCount} indexed=${indexedCount} folded=${foldedCount} (threshold ${threshold}) — starting background re-index`);
     const summary = await runScrape({
       roots,
       excludes:  cfg.excludes,

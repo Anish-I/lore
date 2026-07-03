@@ -184,6 +184,23 @@ class IngestReq(BaseModel):
 
 @app.post("/reindex")
 def reindex(req: ReindexReq, embedder=Depends(get_embedder), sparse=Depends(get_sparse_embedder)):
+    # Tombstone guard: a path upkeep folded into a topic (and deleted) must not
+    # be re-indexed by reconcile/scrape sweeps — that recreates the churn loop.
+    # A file EDITED after folding is live again: drop the tombstone and index it.
+    row = _conn.execute(
+        "select folded_at from folded_paths where tenant_id=%s and path=%s",
+        (req.tenant_id, req.path)).fetchone()
+    if row and row[0]:
+        try:
+            mtime = os.path.getmtime(req.path)
+        except OSError:
+            mtime = None
+        folded_ts = row[0].timestamp() if hasattr(row[0], "timestamp") else None
+        if mtime is not None and folded_ts is not None and mtime > folded_ts:
+            _conn.execute("delete from folded_paths where tenant_id=%s and path=%s",
+                          (req.tenant_id, req.path))
+        else:
+            return {"indexed_chunks": 0, "skipped": "folded"}
     n = index_note(req.path, embedder, _conn, req.owner_id, req.scope_id, req.tenant_id,
                    sparse_embedder=sparse)
     return {"indexed_chunks": n}
@@ -361,7 +378,7 @@ def stats(tenant: Optional[str] = None):
     Response: {"notes": n, "chunks": c, "edges": e} — counts only, no content, no scopes.
     """
     if not tenant:
-        return {"notes": 0, "chunks": 0, "edges": 0}
+        return {"notes": 0, "chunks": 0, "edges": 0, "foldedPaths": 0}
     notes = _conn.execute(
         "select count(*) from notes where tenant_id=%s", (tenant,)
     ).fetchone()[0]
@@ -372,7 +389,13 @@ def stats(tenant: Optional[str] = None):
     edges = _conn.execute(
         "select count(*) from edges where tenant_id=%s", (tenant,)
     ).fetchone()[0]
-    return {"notes": notes, "chunks": chunks, "edges": edges}
+    # Paths upkeep folded+deleted (tombstoned): still on disk but deliberately
+    # not indexed — the desktop reconcile subtracts these from its disk count
+    # so it stops seeing folded notes as a gap to re-index (churn loop).
+    folded = _conn.execute(
+        "select count(*) from folded_paths where tenant_id=%s", (tenant,)
+    ).fetchone()[0]
+    return {"notes": notes, "chunks": chunks, "edges": edges, "foldedPaths": folded}
 
 @app.get("/config/retrieval")
 def config_retrieval(tenant: Optional[str] = None):
