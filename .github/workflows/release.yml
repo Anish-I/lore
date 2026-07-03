@@ -29,6 +29,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # `artifacts` = uploaded to the workflow run (everything, for debugging).
+          # `release_files` = attached to the GitHub Release (headline downloads
+          # only — the release page stays scannable: one mac, one windows file
+          # plus tiny auto-update metadata). Mac zip/latest-mac.yml return when
+          # signing lands (mac auto-update requires signed builds); Linux stays
+          # artifact-only until requested.
           - os: macos-latest
             freeze: bash build_backend_mac.sh
             backend_bin: ./pyi-dist/lore-backend/lore-backend
@@ -38,6 +44,8 @@ jobs:
               desktop/dist/*.zip
               desktop/dist/latest-mac.yml
               desktop/dist/*.blockmap
+            release_files: |
+              desktop/dist/*.dmg
           - os: windows-latest
             freeze: bash build_backend.sh
             backend_bin: ./pyi-dist/lore-backend/lore-backend.exe
@@ -46,6 +54,9 @@ jobs:
               desktop/dist/*.exe
               desktop/dist/latest.yml
               desktop/dist/*.blockmap
+            release_files: |
+              desktop/dist/*.exe
+              desktop/dist/latest.yml
           - os: ubuntu-latest
             freeze: bash build_backend_mac.sh
             backend_bin: ./pyi-dist/lore-backend/lore-backend
@@ -54,6 +65,7 @@ jobs:
               desktop/dist/*.AppImage
               desktop/dist/*.deb
               desktop/dist/latest-linux.yml
+            release_files: ''
     steps:
       - uses: actions/checkout@v4
 
@@ -137,10 +149,10 @@ jobs:
           if-no-files-found: warn
 
       - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && matrix.release_files != ''
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifacts }}
+          files: ${{ matrix.release_files }}
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

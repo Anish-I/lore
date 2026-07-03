@@ -36,8 +36,9 @@ module.exports = [
   {
     ignores: [
       'node_modules/**', 'dist/**',
-      // Compiled design-system bundle (generated output, not source).
+      // Compiled design-system bundle + precompiled renderer (generated output).
       'renderer/design/_ds_bundle.js',
+      'renderer/compiled/**',
       // Renderer JSX is validated by the Babel parse step in CI (eslint's
       // default parser can't read JSX without extra plugins; the runtime
       // Babel transform is the authoritative parse anyway).
