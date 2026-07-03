@@ -1429,6 +1429,16 @@ ipcMain.handle('cli:install', () => cliInstaller.installCli());
 
 // ---------- IPC: graph ----------
 // Fetches /graph from the backend in main-process (avoids CORS from renderer).
+// Cheap per-tenant counts — the renderer polls this to keep the graph/tree live
+// as captures land (agent hooks, auto-index) without refetching the full graph.
+ipcMain.handle('stats:get', async (_e, tenant) => {
+  const cfg = loadConfig() || {};
+  const t = tenant || cfg.tenant || '';
+  const r = await fetch(`${BACKEND_URL()}/stats?tenant=${encodeURIComponent(t)}`);
+  if (!r.ok) throw new Error(`backend /stats returned ${r.status}`);
+  return r.json();
+});
+
 ipcMain.handle('graph:get', async (_e, opts) => {
   const cfg = loadConfig() || {};
   const scopes = Array.isArray(opts) ? opts.join(',') : (opts && opts.scopes ? opts.scopes : '');

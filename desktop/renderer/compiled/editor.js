@@ -55,7 +55,7 @@ function Block({ b, note, onOpen }) {
 // rest into an "N more…" dropdown — endless VS-Code-style pill rows got confusing.
 const ED_TAB_MAX = 6,ED_TAB_SHOW = 5;
 
-function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers }) {
+function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane }) {
   const all = tabs || [];
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [hoverTab, setHoverTab] = React.useState(null); // reveals the per-tab "close others" icon
@@ -125,7 +125,7 @@ function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers }) {
     ), /*#__PURE__*/
 
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
-    React.createElement(EdIconBtn, { icon: "panel-right-close", label: "Toggle pane", size: "sm" })
+    React.createElement(EdIconBtn, { icon: "panel-right-close", label: "Toggle context pane", size: "sm", onClick: onTogglePane })
     ));
 
 }
@@ -160,18 +160,18 @@ function BucketBody({ bucket: b, onOpen }) {
 
 }
 
-function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
   if (bucket) {
     return (/*#__PURE__*/
       React.createElement("div", { style: edS.center }, /*#__PURE__*/
-      React.createElement(TabStrip, { tabs: tabs, activeId: activeId, onTab: onTab, onCloseTab: onCloseTab, onCloseOthers: onCloseOthers }), /*#__PURE__*/
+      React.createElement(TabStrip, { tabs: tabs, activeId: activeId, onTab: onTab, onCloseTab: onCloseTab, onCloseOthers: onCloseOthers, onTogglePane: onTogglePane }), /*#__PURE__*/
       React.createElement(BucketBody, { bucket: bucket, onOpen: onOpen })
       ));
 
   }
   return (/*#__PURE__*/
     React.createElement("div", { style: edS.center }, /*#__PURE__*/
-    React.createElement(TabStrip, { tabs: tabs, activeId: activeId, onTab: onTab, onCloseTab: onCloseTab, onCloseOthers: onCloseOthers }), /*#__PURE__*/
+    React.createElement(TabStrip, { tabs: tabs, activeId: activeId, onTab: onTab, onCloseTab: onCloseTab, onCloseOthers: onCloseOthers, onTogglePane: onTogglePane }), /*#__PURE__*/
     React.createElement("div", { style: edS.toolbar }, /*#__PURE__*/
     React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' } }, note.path || note.title + '.md'), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }),
@@ -314,11 +314,18 @@ function EdMiniGraph({ connections, onOpen, centerLabel, cameFromPath }) {
 
 }
 
-function ContextPane({ note, onAsk, connections, onOpenNote, cameFromId }) {
+function ContextPane({ note, onAsk, connections, onOpenNote, cameFromId, onHide }) {
   const [tab, setTab] = React.useState('backlinks');
   const conns = connections || [];
   return (/*#__PURE__*/
     React.createElement("div", { style: edS.context }, /*#__PURE__*/
+
+
+
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px 0', justifyContent: 'flex-end' } }, /*#__PURE__*/
+    React.createElement(EdIconBtn, { icon: "sparkles", label: "Chat about this note", size: "sm", onClick: onAsk }), /*#__PURE__*/
+    React.createElement(EdIconBtn, { icon: "panel-right-close", label: "Hide pane", size: "sm", onClick: onHide })
+    ), /*#__PURE__*/
     React.createElement("div", { style: { padding: '0 12px' } }, /*#__PURE__*/
     React.createElement(EdTabs, { value: tab, onChange: setTab, tabs: [
       { value: 'backlinks', label: 'Backlinks', count: conns.length },

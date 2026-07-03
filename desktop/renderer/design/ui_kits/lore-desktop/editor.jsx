@@ -55,7 +55,7 @@ function Block({ b, note, onOpen }) {
 // rest into an "N more…" dropdown — endless VS-Code-style pill rows got confusing.
 const ED_TAB_MAX = 6, ED_TAB_SHOW = 5;
 
-function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers }) {
+function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane }) {
   const all = tabs || [];
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [hoverTab, setHoverTab] = React.useState(null); // reveals the per-tab "close others" icon
@@ -125,7 +125,7 @@ function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers }) {
         </div>
       )}
       <div style={{ flex: 1 }} />
-      <EdIconBtn icon="panel-right-close" label="Toggle pane" size="sm" />
+      <EdIconBtn icon="panel-right-close" label="Toggle context pane" size="sm" onClick={onTogglePane} />
     </div>
   );
 }
@@ -160,18 +160,18 @@ function BucketBody({ bucket: b, onOpen }) {
   );
 }
 
-function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
   if (bucket) {
     return (
       <div style={edS.center}>
-        <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} />
+        <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} onTogglePane={onTogglePane} />
         <BucketBody bucket={bucket} onOpen={onOpen} />
       </div>
     );
   }
   return (
     <div style={edS.center}>
-      <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} />
+      <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} onTogglePane={onTogglePane} />
       <div style={edS.toolbar}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{note.path || (note.title + '.md')}</span>
         <div style={{ flex: 1 }} />
@@ -314,11 +314,18 @@ function EdMiniGraph({ connections, onOpen, centerLabel, cameFromPath }) {
   );
 }
 
-function ContextPane({ note, onAsk, connections, onOpenNote, cameFromId }) {
+function ContextPane({ note, onAsk, connections, onOpenNote, cameFromId, onHide }) {
   const [tab, setTab] = React.useState('backlinks');
   const conns = connections || [];
   return (
     <div style={edS.context}>
+      {/* Header: chat opens the Ask panel (same as the bottom CTA, reachable
+          without scrolling); hide collapses the pane (reopen via the tab-strip
+          panel icon). */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 8px 0', justifyContent: 'flex-end' }}>
+        <EdIconBtn icon="sparkles" label="Chat about this note" size="sm" onClick={onAsk} />
+        <EdIconBtn icon="panel-right-close" label="Hide pane" size="sm" onClick={onHide} />
+      </div>
       <div style={{ padding: '0 12px' }}>
         <EdTabs value={tab} onChange={setTab} tabs={[
           { value: 'backlinks', label: 'Backlinks', count: conns.length },

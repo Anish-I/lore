@@ -68,6 +68,9 @@ contextBridge.exposeInMainWorld('lore', {
     return () => ipcRenderer.removeListener('scrape:progress', handler);
   },
 
+  // --- stats (live counts for graph/tree refresh polling) ---
+  stats: (tenant) => ipcRenderer.invoke('stats:get', tenant),
+
   // --- graph ---
   // Fetches {nodes, edges} from the backend via main (avoids CORS).
   // opts: {tenant, scopes} where scopes may be an array or comma-separated string.

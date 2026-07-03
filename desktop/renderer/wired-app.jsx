@@ -289,6 +289,9 @@ function App() {
   const [theme, setTheme] = React.useState('dark');
   const [view, setView] = React.useState('workspace');
   const [askOpen, setAskOpen] = React.useState(false);
+  // Context pane (backlinks/outline) visibility — hidden via its header button,
+  // reopened via the tab-strip panel icon.
+  const [contextOpen, setContextOpen] = React.useState(true);
   const [askSource, setAskSource] = React.useState('all');
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [treeData, setTreeData] = React.useState(null);
@@ -839,6 +842,26 @@ function App() {
     if (flags.openImport) setShowImportModal(true);
   }, [loadTree, updateProgress]);
 
+  // LIVE graph: poll cheap /stats counts and refetch the graph whenever they
+  // change — new notes/edges captured from agent sessions (Claude/Codex hooks,
+  // auto-index) pop into the canvas within seconds, no manual refresh.
+  const statsRef = React.useRef('');
+  React.useEffect(() => {
+    if (!identityReady || !window.lore?.stats) return;
+    const timer = setInterval(async () => {
+      try {
+        const st = await window.lore.stats(tenant);
+        const sig = st ? `${st.notes}|${st.edges}|${st.chunks}` : '';
+        if (sig && statsRef.current && sig !== statsRef.current) {
+          setGraphNonce((n) => n + 1);
+          if (treeData) loadTree(treeData.root); // keep the file tree in step too
+        }
+        if (sig) statsRef.current = sig;
+      } catch { /* backend briefly down — next tick retries */ }
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [identityReady, tenant, treeData, loadTree]);
+
   // Load real graph data once identity is configured — NOT gated on the Graph tab
   // being open. The note editor's ContextPane (backlinks/connections) also reads
   // graphData, so fetching it only on view==='graph' meant every note falsely
@@ -854,7 +877,16 @@ function App() {
     }
     window.lore.graph({ tenant, scopes }).then((g) => {
       setGraphData(g); setGraphLoading(false);
-    }).catch(() => setGraphLoading(false));
+    }).catch((e) => {
+      // Surface it — a silently-empty graph next to a populated file tree was
+      // undiagnosable from the UI (audit: silent-failure culture). Root cause
+      // of the boot-time flavor: the renderer asks before the backend finishes
+      // starting (tree is fs = instant, graph is backend = seconds), and one
+      // failure used to stick forever. Retry until the backend is up.
+      console.error('[graph] fetch failed (retrying in 3s):', e && e.message);
+      setGraphLoading(false);
+      setTimeout(() => setGraphNonce((n) => n + 1), 3000);
+    });
   }, [tenant, identityReady, (persona.scopes || []).join('\u0000'), graphNonce]);
 
   // After an import: refresh the graph and the file tree so new nodes/files show up.
@@ -1060,15 +1092,15 @@ function App() {
               sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} onSectionPromote={onSectionPromote} theme={theme} />
             <PaneResizer side="sidebar" />
             {activeBucket
-              ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onOpen={() => setAskOpen(true)} />
+              ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onTogglePane={() => setContextOpen((o) => !o)} onOpen={() => setAskOpen(true)} />
               : (editorNote
                 ? <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
-                    <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
+                    <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onTogglePane={() => setContextOpen((o) => !o)} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} />
                     {FloatingGraph && <FloatingGraph note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} />}
                   </div>
                 : <EmptyEditor />)}
-            {!askOpen && editorNote && <PaneResizer side="context" />}
-            {askOpen ? askPanel : (editorNote && <ContextPane note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} onAsk={() => setAskOpen(true)} />)}
+            {!askOpen && editorNote && contextOpen && <PaneResizer side="context" />}
+            {askOpen ? askPanel : (editorNote && contextOpen && <ContextPane note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} onAsk={() => setAskOpen(true)} onHide={() => setContextOpen(false)} />)}
           </React.Fragment>
         )}
 
