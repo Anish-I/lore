@@ -20,9 +20,10 @@
     "lint": "eslint ."
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "electron": "^31.3.0",
     "electron-builder": "^24.13.3",
-    "eslint": "^9.39.4",
+    "eslint": "^10.6.0",
     "playwright": "^1.61.1",
     "vitest": "^3.2.6"
   },
