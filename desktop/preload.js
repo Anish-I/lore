@@ -32,6 +32,23 @@ contextBridge.exposeInMainWorld('lore', {
     get: ()        => ipcRenderer.invoke('config:get'),
     // Shallow-merges partial into current config, persists, and returns the merged result.
     set: (partial) => ipcRenderer.invoke('config:set', partial),
+    // Opens a file picker for a JSON settings file (retrieval/upkeep keys only,
+    // validated in main). Returns {ok, applied, ignored} or {ok:false, reason}.
+    importRetrieval: () => ipcRenderer.invoke('config:import-retrieval'),
+  },
+
+  // --- retrieval config (backend GET /config/retrieval proxy) ---
+  // config() → {embeddingModel, reranker, contextualRetrieval, localFallback} or {error}
+  retrieval: {
+    config: () => ipcRenderer.invoke('retrieval:config'),
+  },
+
+  // --- CLI install (put `lore` on the user's PATH; no sudo, idempotent) ---
+  // status()  → {installed, path, target?, mechanism?, onPath, hint?}
+  // install() → {ok, path, mechanism, onPath, hint?} or {ok:false, reason}
+  cli: {
+    status:  () => ipcRenderer.invoke('cli:status'),
+    install: () => ipcRenderer.invoke('cli:install'),
   },
 
   // --- scraper ---

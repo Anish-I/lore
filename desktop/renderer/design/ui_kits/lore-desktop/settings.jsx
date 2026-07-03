@@ -55,6 +55,15 @@ function stText(value, fallback = 'None') {
   try { return JSON.stringify(value); } catch { return fallback; }
 }
 
+// "provider · model" label for the /config/retrieval snapshot ({error}/null aware).
+function stRetrievalModel(retrieval, key) {
+  if (retrieval === null) return 'checking…';
+  if (retrieval.error) return 'backend offline';
+  const m = retrieval[key];
+  if (!m || !m.model) return 'unknown';
+  return m.provider ? `${m.provider} · ${m.model}` : String(m.model);
+}
+
 function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
   const s = {
     account: {},
@@ -80,8 +89,18 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
   const [authBusy, setAuthBusy] = React.useState(false);
   const [authError, setAuthError] = React.useState('');
 
-  // Data upkeep state
-  const [upkeepAuto, setUpkeepAuto] = React.useState(false);
+  // Indexing & recall state (real wiring: config flag + backend /config/retrieval)
+  const [autoIndexOnSave, setAutoIndexOnSave] = React.useState(true); // default ON; explicit false disables
+  const [retrieval, setRetrieval] = React.useState(null); // {embeddingModel, reranker, contextualRetrieval, localFallback} | {error} | null while loading
+  const [importResult, setImportResult] = React.useState(null); // {ok, applied, ignored} | {ok:false, reason}
+
+  // Lore CLI install state
+  const [cliStatus, setCliStatus] = React.useState(null); // {installed, path, onPath, hint?} | null while checking
+  const [cliInstalling, setCliInstalling] = React.useState(false);
+  const [cliResult, setCliResult] = React.useState(null); // install() result | null
+
+  // Data upkeep state — defaults ON; only an explicit cfg.upkeepAuto === false disables
+  const [upkeepAuto, setUpkeepAuto] = React.useState(true);
   const [upkeepRunning, setUpkeepRunning] = React.useState(false);
   const [upkeepResult, setUpkeepResult] = React.useState(null); // {dateNotes, topics, folded} | {error}
   const [upkeepStatusLine, setUpkeepStatusLine] = React.useState('');
@@ -110,11 +129,24 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
     }
     if (window.lore && window.lore.config && window.lore.config.get) {
       window.lore.config.get()
-        .then((c) => { setCfg(c || null); setDefScope((c && c.scope) || ''); })
+        .then((c) => {
+          setCfg(c || null);
+          setDefScope((c && c.scope) || '');
+          setAutoIndexOnSave(!(c && c.autoIndexOnSave === false));
+          setUpkeepAuto(!(c && c.upkeepAuto === false));
+        })
         .catch(() => {});
     }
     if (window.lore && window.lore.auth && window.lore.auth.status) {
       window.lore.auth.status().then((u) => setAuthUser(u || null)).catch(() => {});
+    }
+    if (window.lore && window.lore.retrieval && window.lore.retrieval.config) {
+      window.lore.retrieval.config().then((r) => setRetrieval(r || { error: 'no response' })).catch((e) => setRetrieval({ error: String(e) }));
+    } else {
+      setRetrieval({ error: 'unavailable' });
+    }
+    if (window.lore && window.lore.cli && window.lore.cli.status) {
+      window.lore.cli.status().then((s) => setCliStatus(s || null)).catch(() => setCliStatus(null));
     }
   }, []);
 
@@ -137,6 +169,10 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
   React.useEffect(() => {
     setCfg(config || null);
     setDefScope((config && config.scope) || '');
+    if (config) {
+      setAutoIndexOnSave(config.autoIndexOnSave !== false);
+      setUpkeepAuto(config.upkeepAuto !== false);
+    }
   }, [config]);
 
   const stCopy = (text, key) => {
@@ -180,6 +216,51 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
       setUpkeepResult({ error: String((e && e.message) || e) });
     }
     setUpkeepRunning(false);
+  };
+
+  const stSetAutoIndex = (v) => {
+    setAutoIndexOnSave(v);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      // Persist explicitly (true AND false) so the off-state survives restarts.
+      window.lore.config.set({ autoIndexOnSave: !!v }).catch(() => {});
+    }
+  };
+
+  const stImportConfig = async () => {
+    if (!window.lore || !window.lore.config || !window.lore.config.importRetrieval) return;
+    setImportResult(null);
+    try {
+      const r = await window.lore.config.importRetrieval();
+      if (r && r.reason === 'canceled') return; // user closed the picker — not an error
+      setImportResult(r || { ok: false, reason: 'no response' });
+      if (r && r.ok && window.lore.config.get) {
+        // Refresh local state so imported toggles show immediately.
+        const c = await window.lore.config.get();
+        setCfg(c || null);
+        setAutoIndexOnSave(!(c && c.autoIndexOnSave === false));
+        setUpkeepAuto(!(c && c.upkeepAuto === false));
+        if (c && c.llmProvider) setLlmProvider(c.llmProvider);
+      }
+    } catch (e) {
+      setImportResult({ ok: false, reason: String((e && e.message) || e) });
+    }
+  };
+
+  const stInstallCli = async () => {
+    if (!window.lore || !window.lore.cli || !window.lore.cli.install) return;
+    setCliInstalling(true);
+    setCliResult(null);
+    try {
+      const r = await window.lore.cli.install();
+      setCliResult(r || { ok: false, reason: 'no response' });
+      if (window.lore.cli.status) {
+        const s = await window.lore.cli.status();
+        setCliStatus(s || null);
+      }
+    } catch (e) {
+      setCliResult({ ok: false, reason: String((e && e.message) || e) });
+    }
+    setCliInstalling(false);
   };
 
   const stSetUpkeepAuto = (v) => {
@@ -262,21 +343,39 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
         </Section>
 
         <Section icon="cpu" title="Indexing & recall">
-          <Row label="Auto-index on save" hint="This control is not wired to persistent config yet.">
-            <StBadge tone="neutral">not configured</StBadge>
+          <Row label="Auto-index on save" hint="Re-index a note automatically when its file changes on disk. Off: re-index manually (right-click a note → Re-index Note).">
+            <StSwitch checked={autoIndexOnSave} onChange={stSetAutoIndex} />
           </Row>
-          <Row label="Contextual retrieval" hint="No retrieval transform is configured from the desktop app yet.">
-            <StBadge tone="neutral">not configured</StBadge>
+          <Row label="Contextual retrieval" hint="Every chunk is stored with a situating context sentence for better recall. Built into the indexing pipeline.">
+            <StBadge tone={retrieval === null ? 'neutral' : retrieval.error ? 'neutral' : 'success'} dot={!!(retrieval && !retrieval.error)}>
+              {retrieval === null ? 'checking…' : retrieval.error ? 'backend offline' : 'enabled'}
+            </StBadge>
           </Row>
           <Row label="Embedding model">
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{displayNone(s.indexing.embedder)}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stRetrievalModel(retrieval, 'embeddingModel')}</span>
           </Row>
           <Row label="Reranker">
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{displayNone(s.indexing.reranker)}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stRetrievalModel(retrieval, 'reranker')}</span>
           </Row>
-          <Row label="Local fallback" hint="No local fallback is configured." last>
-            <StBadge tone="neutral">not configured</StBadge>
+          <Row label="Local fallback" hint="On-device fastembed models. Always used for hook captures and imports; primary for search when no cloud key is set.">
+            {(() => {
+              const lf = retrieval && !retrieval.error ? retrieval.localFallback : null;
+              const tone = !lf ? 'neutral' : lf.active ? 'success' : lf.available ? 'info' : 'neutral';
+              const label = retrieval === null ? 'checking…' : retrieval.error ? 'backend offline'
+                : lf && lf.active ? 'active' : lf && lf.available ? 'available' : 'not available';
+              return <StBadge tone={tone} dot={!!(lf && lf.active)}>{label}</StBadge>;
+            })()}
           </Row>
+          <Row label="Import config" hint="Apply retrieval and upkeep settings from a JSON file — another Lore install or a shared team config." last>
+            <StButton variant="secondary" size="sm" icon="folder-open" onClick={stImportConfig}>Import…</StButton>
+          </Row>
+          {importResult && (
+            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6, color: importResult.ok ? 'var(--text-muted)' : 'var(--clay-400)' }}>
+              {importResult.ok
+                ? `Applied: ${Object.keys(importResult.applied || {}).join(', ')}${(importResult.ignored || []).length ? ` · ignored: ${importResult.ignored.join(', ')}` : ''}`
+                : `Import failed: ${stText(importResult.reason, 'unknown error')}`}
+            </div>
+          )}
         </Section>
 
         <Section icon="refresh-cw" title="Sync & storage">
@@ -308,7 +407,26 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
 
         {/* ── CLI ── */}
         <Section icon="terminal" title="CLI">
-          <Row label="Install" hint="Run once in your terminal to make `lore` available globally.">
+          <Row label="Lore CLI" hint={cliStatus && cliStatus.installed ? `Installed at ${cliStatus.path}` : 'One click puts the `lore` command on your PATH — no sudo, no venv activation.'}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StBadge tone={cliStatus === null ? 'neutral' : cliStatus.installed ? 'success' : 'neutral'} dot={!!(cliStatus && cliStatus.installed)}>
+                {cliStatus === null ? 'checking…' : cliStatus.installed ? 'installed' : 'not installed'}
+              </StBadge>
+              <StButton variant="secondary" size="sm" icon="download" disabled={cliInstalling} onClick={stInstallCli}>
+                {cliInstalling ? 'Installing…' : cliStatus && cliStatus.installed ? 'Reinstall' : 'Install'}
+              </StButton>
+            </div>
+          </Row>
+          {(cliResult || (cliStatus && cliStatus.installed && !cliStatus.onPath)) && (
+            <div style={{ padding: '0 16px 10px', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6, color: cliResult && cliResult.ok === false ? 'var(--clay-400)' : 'var(--text-muted)' }}>
+              {cliResult && cliResult.ok === false && <div>Install failed: {stText(cliResult.reason, 'unknown error')}</div>}
+              {cliResult && cliResult.ok && <div>Installed ({cliResult.mechanism}) at {cliResult.path}</div>}
+              {((cliResult && cliResult.ok && !cliResult.onPath) || (!cliResult && cliStatus && !cliStatus.onPath)) && (
+                <div>That folder isn’t on your PATH yet — run: <code>{(cliResult && cliResult.hint) || (cliStatus && cliStatus.hint) || ''}</code></div>
+              )}
+            </div>
+          )}
+          <Row label="Manual install" hint="Or run once in your terminal to make `lore` available globally.">
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <code style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-body)', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '3px 8px' }}>{ST_CLI_INSTALL}</code>
               <StButton variant="ghost" size="sm" icon={copiedKey === 'cli-install' ? 'check' : 'copy'} onClick={() => stCopy(ST_CLI_INSTALL, 'cli-install')}>

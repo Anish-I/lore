@@ -8,6 +8,7 @@ const { spawn } = require('child_process');
 const { runScrape } = require('./scraper');
 const installer    = require('./hooks-installer');
 const mcpInstaller = require('./mcp-installer');
+const cliInstaller = require('./cli-installer');
 const googleOauth  = require('./lib/google-oauth');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
@@ -324,6 +325,28 @@ function countNotes(tree) {
   return tree.reduce((n, x) => n + (x.kind === 'note' ? 1 : countNotes(x.children || [])), 0);
 }
 
+// ---------- auto-index on save ----------
+// When cfg.autoIndexOnSave !== false (default ON), a watched .md add/change triggers a
+// single-file /reindex so the index tracks edits without a manual re-scan. An explicit
+// false (Settings toggle) keeps the watcher UI-only (tree refresh) — the user re-indexes
+// manually (right-click → Re-index Note, or a full scan).
+const autoIndexLast = new Map(); // path -> last trigger ms (debounces editor save bursts)
+
+function maybeAutoIndex(event, p) {
+  if (event !== 'add' && event !== 'change') return;
+  const cfg = loadConfig() || {};
+  if (cfg.autoIndexOnSave === false) return;
+  if (!cfg.owner || !cfg.scope || !cfg.tenant) return; // identity not configured yet
+  const now = Date.now();
+  if (now - (autoIndexLast.get(p) || 0) < 2000) return;
+  autoIndexLast.set(p, now);
+  fetch(`${BACKEND_URL()}/reindex`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: p, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }),
+  }).catch(() => { /* fail soft — backend may be down */ });
+}
+
 function startWatch(root) {
   if (watcher) { watcher.close(); watcher = null; }
   // Defensive: refuse to watch a bare drive root (C:\ etc.) — chokidar would
@@ -339,7 +362,11 @@ function startWatch(root) {
     const chokidar = require('chokidar');
     // Watch only the chosen vault root — never the whole drive.
     watcher = chokidar.watch(root, { ignoreInitial: true, depth: 8, ignored: /(^|[\/\\])\../ });
-    const notify = (event, p) => { if (win && p && p.toLowerCase().endsWith('.md')) win.webContents.send('vault:changed', { event, path: p }); };
+    const notify = (event, p) => {
+      if (!p || !p.toLowerCase().endsWith('.md')) return;
+      if (win) win.webContents.send('vault:changed', { event, path: p });
+      maybeAutoIndex(event, p);
+    };
     watcher.on('add', (p) => notify('add', p)).on('change', (p) => notify('change', p)).on('unlink', (p) => notify('unlink', p));
   } catch (e) { console.error('watch error', e); }
 }
@@ -646,6 +673,49 @@ ipcMain.handle('config:set', (_e, partial) => {
   const merged = { ...current, ...partial };
   saveConfig(merged);
   return merged;
+});
+
+// ---------- IPC: config import (retrieval/upkeep settings from a JSON file) ----------
+// Lets a user apply settings exported from another Lore install (or a shared team
+// config). Only whitelisted keys with valid values are accepted — never a blind merge.
+const IMPORTABLE_CONFIG_KEYS = {
+  autoIndexOnSave:       (v) => typeof v === 'boolean',
+  upkeepAuto:            (v) => typeof v === 'boolean',
+  upkeepIntervalMinutes: (v) => Number.isFinite(v) && v >= 5 && v <= 24 * 60,
+  llmProvider:           (v) => ['codex', 'claude', 'byok'].includes(v),
+};
+
+ipcMain.handle('config:import-retrieval', async () => {
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Import Lore settings',
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+    properties: ['openFile'],
+  });
+  if (r.canceled || !r.filePaths.length) return { ok: false, reason: 'canceled' };
+  let data;
+  try { data = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8')); }
+  catch (e) { return { ok: false, reason: `Not valid JSON: ${String((e && e.message) || e)}` }; }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { ok: false, reason: 'Expected a JSON object of settings.' };
+  }
+  const applied = {}, ignored = [];
+  for (const [k, v] of Object.entries(data)) {
+    const validate = IMPORTABLE_CONFIG_KEYS[k];
+    if (!validate) { ignored.push(k); continue; }
+    if (!validate(v)) return { ok: false, reason: `Invalid value for "${k}".` };
+    applied[k] = v;
+  }
+  if (!Object.keys(applied).length) {
+    return { ok: false, reason: `No recognized settings in that file (expected: ${Object.keys(IMPORTABLE_CONFIG_KEYS).join(', ')}).` };
+  }
+  const merged = { ...(loadConfig() || {}), ...applied };
+  saveConfig(merged);
+  // An imported upkeepAuto takes effect immediately (same behavior as the Settings toggle).
+  if ('upkeepAuto' in applied) {
+    if (applied.upkeepAuto === false) stopUpkeepInterval();
+    else if (merged.tenant) startUpkeepInterval(merged.tenant);
+  }
+  return { ok: true, applied, ignored };
 });
 
 // ---------- IPC: scrape ----------
@@ -1322,6 +1392,25 @@ ipcMain.handle('upkeep:set-auto', (_e, on) => {
   return { ok: true, upkeepAuto: cfg.upkeepAuto };
 });
 
+// ---------- IPC: retrieval config (backend /config/retrieval proxy) ----------
+// Truthful snapshot of the retrieval stack (embedder/reranker/contextual/local-fallback)
+// for the Settings "Indexing & recall" section. {error} when the backend is down.
+ipcMain.handle('retrieval:config', async () => {
+  try {
+    const cfg = loadConfig() || {};
+    const qs = cfg.tenant ? `?tenant=${encodeURIComponent(cfg.tenant)}` : '';
+    const r = await fetch(`${BACKEND_URL()}/config/retrieval${qs}`);
+    return await r.json();
+  } catch (e) {
+    return { error: String(e) };
+  }
+});
+
+// ---------- IPC: CLI install (put `lore` on the user's PATH) ----------
+// Delegates to cli-installer.js; no sudo, user-writable PATH dir only, idempotent.
+ipcMain.handle('cli:status',  () => cliInstaller.cliStatus());
+ipcMain.handle('cli:install', () => cliInstaller.installCli());
+
 // ---------- IPC: graph ----------
 // Fetches /graph from the backend in main-process (avoids CORS from renderer).
 ipcMain.handle('graph:get', async (_e, opts) => {
@@ -1445,7 +1534,9 @@ app.whenReady().then(async () => {
   }
 
   const cfg = loadConfig();
-  if (cfg && cfg.upkeepAuto === true && cfg.tenant) startUpkeepInterval(cfg.tenant);
+  // Upkeep defaults to auto-ON for a configured user: undefined/missing means on;
+  // only an explicit false (the user toggled it off in Settings) disables it.
+  if (cfg && cfg.upkeepAuto !== false && cfg.tenant) startUpkeepInterval(cfg.tenant);
 
   // ---------- embedded Postgres ----------
   // Embedded Postgres is ONLY for an explicit server-mode build/config — the

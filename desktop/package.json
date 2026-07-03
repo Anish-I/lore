@@ -31,6 +31,7 @@
       "scraper.js",
       "hooks-installer.js",
       "mcp-installer.js",
+      "cli-installer.js",
       "wizards-catalog.json",
       "assets/**/*"
     ],
