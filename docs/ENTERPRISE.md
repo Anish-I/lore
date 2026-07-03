@@ -95,7 +95,7 @@ the no-leak property is re-proven on every change.
 | Redaction gate on confidentiality broadening | **shipping** |
 | Local API token (lock the on-device backend port) | **shipping** |
 | Per-answer scope trace | **shipping** |
-| Query audit log | planned, near-term |
+| Query audit log (hashed, per-tenant, purgeable) | **shipping** |
 | Okta / Entra OIDC + group→scope mapping | planned |
 | SCIM auto-provisioning | planned |
 | Encryption at rest, retention policies, DLP hooks | roadmap |
