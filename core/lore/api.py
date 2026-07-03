@@ -95,6 +95,80 @@ def require_user(authorization: Optional[str] = Header(default=None)) -> str:
     return claims["sub"]
 
 
+# --- Server-mode data-plane authorization gate -----------------------------
+# The whole data plane historically trusts client-supplied `tenant_id` + `scopes`
+# (fine for the single-user, 127.0.0.1-bound desktop app). For a shared/hosted
+# deployment that is a cross-tenant read/write hole. LORE_SERVER_MODE=1 turns on
+# server-side enforcement WITHOUT changing local/solo behavior (default OFF =
+# passthrough), so existing single-user installs are untouched.
+#
+# The ACL that actually gates recall is the Qdrant `scope_ids` filter, so the
+# enforcement is: restrict the caller's effective scopes to (authorized team
+# scopes ∩ requested) + the caller's OWN private scope. A user can therefore
+# never read another user's private scope or a team they don't belong to, even
+# within a shared tenant namespace.
+
+def _server_mode() -> bool:
+    return os.environ.get("LORE_SERVER_MODE") == "1"
+
+
+def private_scope_id(user_id: str) -> str:
+    """Canonical per-user private scope id used for hosted (server-mode) data.
+    Private notes are tagged `private:{user_id}`; only that user may read them."""
+    return f"private:{user_id}"
+
+
+def _as_scope_list(scopes) -> list[str]:
+    if scopes is None:
+        return []
+    if isinstance(scopes, str):
+        return [s.strip() for s in scopes.split(",") if s.strip()]
+    return [s for s in scopes if s and s.strip()]
+
+
+def _authorize_read(authorization, requested_scopes, tenant):
+    """Server-mode read ACL. Returns (user_id|None, effective_scopes, tenant).
+    Local mode: passthrough (trusts the request) — solo/desktop unchanged."""
+    if not _server_mode():
+        return None, requested_scopes, tenant
+    user_id = require_user(authorization)               # 401 without a valid token
+    requested = _as_scope_list(requested_scopes)
+    allowed = set(tenancy.authorize_scopes(_conn, user_id, requested or None))
+    priv = private_scope_id(user_id)
+    if not requested or priv in requested:              # own private is always grantable
+        allowed.add(priv)
+    allowed = sorted(allowed)
+    if not allowed:
+        raise HTTPException(status_code=403, detail="no authorized scopes for this request")
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return user_id, allowed, tenant
+
+
+def _authorize_write(authorization, scope, owner, tenant):
+    """Server-mode write ACL. Returns (owner, scope, tenant). The write scope must be
+    the caller's own private scope or an authorized team scope; owner is forced to the
+    caller. Local mode: passthrough."""
+    if not _server_mode():
+        return owner, scope, tenant
+    user_id = require_user(authorization)
+    allowed = set(tenancy.authorize_scopes(_conn, user_id, [scope] if scope else None))
+    allowed.add(private_scope_id(user_id))
+    if scope not in allowed:
+        raise HTTPException(status_code=403, detail="scope not authorized for this user")
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return user_id, scope, tenant
+
+
+def _require_user_in_server_mode(authorization) -> Optional[str]:
+    """For maintenance/destructive endpoints: require a valid token in server mode,
+    no-op locally. Returns the user_id (or None in local mode)."""
+    if not _server_mode():
+        return None
+    return require_user(authorization)
+
+
 @app.get("/auth/me")
 def auth_me(user_id: str = Depends(require_user)):
     """Return the authenticated user's id + their authorized team scopes (from membership)."""
@@ -182,8 +256,42 @@ class IngestReq(BaseModel):
     source_type: Optional[str] = None
     content_hash: Optional[str] = None
 
+def _allowed_vault_roots() -> list[str]:
+    """Real-path'd list of directories /reindex may read from. Empty => unconfigured.
+
+    Read from the environment at call time (VAULT_ROOTS, then VAULT_ROOT) so a value
+    injected by the desktop spawn — or a test — is honored without a frozen snapshot."""
+    raw = os.environ.get("VAULT_ROOTS") or os.environ.get("VAULT_ROOT") or settings.vault_roots
+    if not raw:
+        return []
+    return [os.path.realpath(p) for p in raw.split(os.pathsep) if p.strip()]
+
+
+def _guard_reindex_path(path: str) -> None:
+    """Reject a /reindex path that escapes every configured vault root.
+
+    Closes the unauthenticated-arbitrary-file-read hole: without this, any local
+    client could POST an absolute path (e.g. secrets/.env, ~/.ssh/id_rsa) and read
+    it back via /search or /notes. When no roots are configured (legacy/dev), the
+    guard is a no-op — set VAULT_ROOTS to activate containment.
+    """
+    roots = _allowed_vault_roots()
+    if not roots:
+        return
+    target = os.path.realpath(path)
+    for root in roots:
+        if target == root or target.startswith(root + os.sep):
+            return
+    raise HTTPException(status_code=400, detail="path escapes the allowed vault root(s)")
+
+
 @app.post("/reindex")
-def reindex(req: ReindexReq, embedder=Depends(get_embedder), sparse=Depends(get_sparse_embedder)):
+def reindex(req: ReindexReq, embedder=Depends(get_embedder), sparse=Depends(get_sparse_embedder),
+            authorization: Optional[str] = Header(default=None)):
+    owner_id, scope_id, tenant_id = _authorize_write(
+        authorization, req.scope_id, req.owner_id, req.tenant_id)
+    req.owner_id, req.scope_id, req.tenant_id = owner_id, scope_id, tenant_id
+    _guard_reindex_path(req.path)
     # Tombstone guard: a path upkeep folded into a topic (and deleted) must not
     # be re-indexed by reconcile/scrape sweeps — that recreates the churn loop.
     # A file EDITED after folding is live again: drop the tombstone and index it.
@@ -206,7 +314,7 @@ def reindex(req: ReindexReq, embedder=Depends(get_embedder), sparse=Depends(get_
     return {"indexed_chunks": n}
 
 @app.post("/ingest")
-def ingest(req: IngestReq):
+def ingest(req: IngestReq, authorization: Optional[str] = Header(default=None)):
     """Index pre-normalized text from an external source.
 
     IMPORTANT: always uses the local embedder regardless of VOYAGE_API_KEY.
@@ -214,6 +322,7 @@ def ingest(req: IngestReq):
     embedding API (Voyage) would be a data-leak path.  LocalEmbedder runs fully
     on-device.  In VAULT_FAKE=1 test mode FakeEmbedder is used instead.
     """
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant)
     if _FAKE:
         embedder = FakeEmbedder()
         sparse = None
@@ -223,7 +332,7 @@ def ingest(req: IngestReq):
 
     n = index_document(
         source_id=req.source_id, title=req.title, text=req.text,
-        scope_id=req.scope, owner_id=req.owner, tenant_id=req.tenant,
+        scope_id=scope, owner_id=owner, tenant_id=tenant,
         embedder=embedder, conn=_conn, sparse_embedder=sparse,
         source_type=req.source_type, content_hash=req.content_hash,
     )
@@ -231,8 +340,10 @@ def ingest(req: IngestReq):
 
 @app.post("/ask")
 def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
-        sparse=Depends(get_sparse_embedder)):
-    hits = retrieve(req.question, embedder, reranker, req.principal_scopes, req.tenant_id,
+        sparse=Depends(get_sparse_embedder),
+        authorization: Optional[str] = Header(default=None)):
+    _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
+    hits = retrieve(req.question, embedder, reranker, scopes, tenant,
                     sparse_embedder=sparse)
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
     text, engine = llm.answer(req.question, chunks, model=req.model)
@@ -241,17 +352,19 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
 
 @app.post("/trace")
 def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
-          sparse=Depends(get_sparse_embedder)):
+          sparse=Depends(get_sparse_embedder),
+          authorization: Optional[str] = Header(default=None)):
     """Full pipeline trace for the visualizer: per-lane candidates, fusion, rerank, answer."""
+    _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
     if sparse is None:
         return {"error": "trace requires real models (unset VAULT_FAKE)"}
     _, tr = retrieve_traced(req.question, embedder, reranker, sparse,
-                            req.principal_scopes, req.tenant_id)
+                            scopes, tenant)
     chunks = [{"title": f["title"], "text": f["text"]} for f in tr["final"]]
     text, engine = llm.answer(req.question, chunks, model=req.model)
     tr["answer"] = text
     tr["engine"] = engine
-    tr["scopes_asked"] = req.principal_scopes
+    tr["scopes_asked"] = scopes
     return tr
 
 @app.get("/presets")
@@ -259,7 +372,8 @@ def presets():
     return active_profile()
 
 @app.get("/graph")
-def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
+def graph(tenant: Optional[str] = None, scopes: Optional[str] = None,
+          authorization: Optional[str] = Header(default=None)):
     """Return the knowledge graph for a tenant filtered by ACL scope.
 
     Query params:
@@ -284,6 +398,11 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None):
         - Node `links` counts degree AFTER scope filtering.
         - Node list is capped at 1500 (most-connected first); edges follow.
     """
+    # Server-mode: authenticate + restrict scopes to the caller's own; the returned
+    # `scopes` replaces whatever was requested. Local mode: passthrough.
+    if _server_mode():
+        _uid, srv_scopes, tenant = _authorize_read(authorization, scopes, tenant)
+        scopes = ",".join(srv_scopes)
     profile = active_profile()
     active_tenant = tenant or profile.get("tenant")
     if not active_tenant:
@@ -464,7 +583,7 @@ def _local_sparse():
     return None if _FAKE else LocalSparseEmbedder()
 
 @app.post("/capture")
-def capture(req: CaptureReq):
+def capture(req: CaptureReq, authorization: Optional[str] = Header(default=None)):
     """Index a Claude session transcript after server-side secret redaction.
 
     Text is redacted before embedding or storage.  Re-POSTing the same
@@ -473,11 +592,12 @@ def capture(req: CaptureReq):
     Body: {session_id, title, text, scope, owner, tenant, mode}
     Returns: {ok, note_id, chunks}
     """
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant)
     safe_text = redact(req.text)
     note_id = _session_note_id(req.session_id)
     n = index_document(
         source_id=note_id, title=req.title, text=safe_text,
-        scope_id=req.scope, owner_id=req.owner, tenant_id=req.tenant,
+        scope_id=scope, owner_id=owner, tenant_id=tenant,
         embedder=_local_embedder(), conn=_conn, sparse_embedder=_local_sparse(),
         source_type="claude-session",
     )
@@ -510,11 +630,12 @@ class ForgetReq(BaseModel):
     path_prefix: str
 
 @app.post("/forget")
-def forget(req: ForgetReq):
+def forget(req: ForgetReq, authorization: Optional[str] = Header(default=None)):
     """Delete all notes whose source_path starts with path_prefix for the given tenant.
     Normalizes backslashes to forward slashes before comparison.
     Removes from Qdrant, cleans edges (both directions), deletes notes (chunks cascade).
     Body: {tenant, path_prefix}. Returns {forgotten: n}"""
+    _require_user_in_server_mode(authorization)  # no anonymous destruction when hosted
     if not req.tenant:
         raise HTTPException(status_code=422, detail="tenant is required")
     if not req.path_prefix:
@@ -542,7 +663,8 @@ def forget(req: ForgetReq):
     return {"forgotten": forgotten}
 
 @app.delete("/capture")
-def capture_delete(source_type: Optional[str] = None, tenant: Optional[str] = None):
+def capture_delete(source_type: Optional[str] = None, tenant: Optional[str] = None,
+                   authorization: Optional[str] = Header(default=None)):
     """Privacy purge: delete all notes of the given source_type within a tenant.
 
     Removes matching notes from Postgres (chunks cascade), their outgoing/incoming
@@ -551,6 +673,7 @@ def capture_delete(source_type: Optional[str] = None, tenant: Optional[str] = No
     Query params: source_type (required), tenant (required)
     Returns: {deleted: n}
     """
+    _require_user_in_server_mode(authorization)  # no anonymous destruction when hosted
     active_tenant = tenant or active_profile().get("tenant")
     if not active_tenant:
         raise HTTPException(status_code=422, detail="tenant is required")
@@ -572,18 +695,25 @@ def capture_delete(source_type: Optional[str] = None, tenant: Optional[str] = No
     return {"deleted": deleted}
 
 @app.get("/notes/{note_id}")
-def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] = None):
+def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] = None,
+             authorization: Optional[str] = Header(default=None)):
     """Retrieve a note's metadata and original body by ID.
 
     Query params:
         tenant: tenant_id to read from. No tenant is assumed when omitted.
         scopes: comma-separated ACL scopes; when supplied the note must be in one of
-                them or a 404 is returned.  Omit to skip scope filtering.
+                them or a 404 is returned.  In server mode scope filtering is MANDATORY
+                and derived from the authenticated user (client scopes cannot widen it).
 
     Returns {id, title, scope, body, updated}.  body is the original markdown
     as stored at index time (lossless; chunk text is NOT a full reconstruction).
     404 if the note does not exist or is not visible to the caller.
     """
+    # Server-mode: authenticate and force the scope filter to the caller's own scopes
+    # (never optional). Local mode: preserve the existing optional-filter behavior.
+    if _server_mode():
+        _uid, srv_scopes, tenant = _authorize_read(authorization, scopes, tenant)
+        scopes = ",".join(srv_scopes)
     active_tenant = tenant or active_profile().get("tenant")
     if not active_tenant:
         raise HTTPException(status_code=422, detail="tenant is required")
@@ -620,20 +750,23 @@ class SearchReq(BaseModel):
 
 @app.post("/search")
 def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
-           sparse=Depends(get_sparse_embedder)):
+           sparse=Depends(get_sparse_embedder),
+           authorization: Optional[str] = Header(default=None)):
     """Hybrid-retrieve ranked chunks filtered by the given scopes.
 
     Body: {query, scopes:[...], tenant_id, k?:int=10}
     Returns: {results:[{note_id, title, scope, heading_path, text, score}]}
 
-    scopes is REQUIRED and must not be empty (never defaults to all).
+    scopes is REQUIRED and must not be empty (never defaults to all). In server mode
+    the effective scopes are derived from the authenticated user, not the request.
     """
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=422, detail="query must not be blank")
     if not req.scopes or not any(s.strip() for s in req.scopes):
         raise HTTPException(status_code=422, detail="scopes is required and must not be empty")
+    _uid, scopes, tenant = _authorize_read(authorization, req.scopes, req.tenant_id)
     k = max(1, min(req.k, 50))
-    hits = retrieve(req.query, embedder, reranker, req.scopes, req.tenant_id,
+    hits = retrieve(req.query, embedder, reranker, scopes, tenant,
                     limit=k, sparse_embedder=sparse)
     # Fetch note metadata (title, scope) for the returned hits in one query.
     note_ids = list(dict.fromkeys(h.note_id for h in hits))

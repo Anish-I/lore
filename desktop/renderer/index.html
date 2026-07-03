@@ -3,6 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Content-Security-Policy: damage-control for the current CDN-loaded runtime.
+     script-src still trusts unpkg/jsdelivr (and needs 'unsafe-eval'/'unsafe-inline'
+     because JSX is compiled in-browser by @babel/standalone) — the REAL fix is to
+     bundle React/Babel/markdown-it/d3/lucide locally and drop these to 'self'.
+     Until then this still blocks the worst outcomes of a compromised/injected script:
+       - connect-src localhost only  => no data exfiltration to attacker hosts
+       - object-src 'none', base-uri  => no <object>/<embed>/<base> hijack
+       - frame-src / form-action 'none' => no hidden iframes or form POSTs
+     TODO(security): vendor the CDN scripts locally + precompile JSX, then tighten
+     script-src to 'self'. Never ship lucide@latest unpinned. -->
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'self';
+  script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.jsdelivr.net;
+  style-src 'self' 'unsafe-inline';
+  img-src 'self' data: blob: https:;
+  font-src 'self' data:;
+  connect-src 'self' http://localhost:* http://127.0.0.1:*;
+  object-src 'none';
+  base-uri 'self';
+  form-action 'none';
+  frame-src 'none';
+">
+
 <title>Lore — Knowledge OS</title>
 <link rel="stylesheet" href="design/styles.css">
 <style>

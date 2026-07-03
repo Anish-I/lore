@@ -234,6 +234,15 @@ async function ensureBackend() {
     delete childEnv.QDRANT_URL; // ensure embedded mode, not a server client
   }
 
+  // Path-traversal containment for POST /reindex: tell the backend which dirs it
+  // may read files from. Without this the backend would index (and thus expose via
+  // /search) any absolute path a local client names. Mirrors the allowedRoots set.
+  {
+    const roots = new Set(allowedRoots);
+    if (Array.isArray(cfg && cfg.roots)) cfg.roots.forEach((r) => r && roots.add(path.normalize(r)));
+    if (roots.size) childEnv.VAULT_ROOTS = Array.from(roots).join(path.delimiter);
+  }
+
   if (app.isPackaged) {
     // Packaged: launch the PyInstaller-frozen backend directly — no Python, no CORE_DIR.
     // (Reached BEFORE the no-core guard, which only applies to the dev/python path.)
@@ -505,7 +514,14 @@ ipcMain.handle('vault:create', async (_e, opts) => {
 
 ipcMain.handle('vault:tree', (_e, root) => {
   if (!root || !fs.existsSync(root)) return null;
-  registerRoot(root);   // path-guard: allow reads/writes inside this vault
+  // Path-guard: NEVER register an arbitrary renderer-supplied path here — that would
+  // let a compromised renderer whitelist any directory (e.g. C:\Users\me) and then
+  // read/write anything under it via note:read / note:write. A root becomes allowed
+  // only through a native picker (vault:pick / vault:create) or persisted config
+  // (blessed at boot). Reading the tree of an unblessed path is refused.
+  if (!isUnderAllowedRoot(root)) {
+    return { root, name: path.basename(root), tree: null, error: 'Access denied: open this folder via "Open library" first.' };
+  }
   startWatch(root);
   const tree = buildTree(root);
   return { root, name: path.basename(root), tree, indexed: countNotes(tree) };
@@ -1504,6 +1520,8 @@ async function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,          // preload only uses contextBridge/ipcRenderer/fetch — sandbox-safe
+      webSecurity: true,      // explicit: keep same-origin policy on for the renderer
     },
   };
   if (process.platform === 'darwin') {
@@ -1512,6 +1530,23 @@ async function createWindow() {
   }
   win = new BrowserWindow(windowOptions);
   win.removeMenu();
+
+  // Navigation lockdown: the renderer should only ever be the bundled index.html.
+  // Any attempt to navigate elsewhere (e.g. injected code doing location=…) is blocked,
+  // and window.open / target=_blank goes to the OS browser, never a node-less Electron
+  // child window. Defends the IPC bridge even if renderer content is compromised.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  const blockNav = (e, url) => {
+    if (url !== win.webContents.getURL()) {
+      e.preventDefault();
+      if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    }
+  };
+  win.webContents.on('will-navigate', blockNav);
+  win.webContents.on('will-redirect', blockNav);
   // Diagnostic: capture renderer console warnings/errors + crashes to a log file.
   const rlog = path.join(app.getPath('userData'), 'lore-renderer.log');
   try { fs.writeFileSync(rlog, ''); } catch { /* ignore */ }
@@ -1538,6 +1573,10 @@ app.whenReady().then(async () => {
   }
 
   const cfg = loadConfig();
+  // Path-guard: bless the user's persisted library roots on boot so the renderer can
+  // reopen them (readTree/read/write) without vault:tree having to self-register an
+  // arbitrary renderer-supplied path. Only these + native-dialog picks are ever allowed.
+  if (cfg && Array.isArray(cfg.roots)) cfg.roots.forEach(registerRoot);
   // Upkeep defaults to auto-ON for a configured user: undefined/missing means on;
   // only an explicit false (the user toggled it off in Settings) disables it.
   if (cfg && cfg.upkeepAuto !== false && cfg.tenant) startUpkeepInterval(cfg.tenant);

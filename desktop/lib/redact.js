@@ -19,6 +19,14 @@ const SECRET_PATTERNS = [
   /xox[baprs]-[0-9A-Za-z]{4,}-[0-9A-Za-z\-]+/g,
   // GitHub personal access tokens and app tokens
   /\bgh[ps]_[A-Za-z0-9]{36,}/g,
+  // Google API keys (AIza + 35 chars)
+  /\bAIza[0-9A-Za-z_\-]{35}\b/g,
+  // Google OAuth client secrets
+  /\bGOCSPX-[0-9A-Za-z_\-]{20,}\b/g,
+  // Stripe live secret / restricted keys
+  /\b(?:sk|rk)_live_[0-9A-Za-z]{10,}\b/g,
+  // OpenAI / Anthropic-style secret keys (sk-… / sk-ant-…)
+  /\bsk-(?:ant-)?[A-Za-z0-9_\-]{20,}\b/g,
   // JWTs (three dot-separated base64url segments)
   /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]{10,}/g,
   // Generic labeled secret assignments: api_key=..., password=..., token=..., etc.

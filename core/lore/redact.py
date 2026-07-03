@@ -26,6 +26,14 @@ _AWS_RE = re.compile(r'\bAKIA[0-9A-Z]{16}\b')
 _SLACK_RE = re.compile(r'\bxox[baprs]-[A-Za-z0-9\-]+')
 # GitHub personal-access / server-to-server tokens.
 _GH_RE = re.compile(r'\bgh[ps]_[A-Za-z0-9]{20,}\b')
+# Google API keys (Maps, Cloud, etc.): AIza + 35 chars.
+_GOOGLE_API_RE = re.compile(r'\bAIza[0-9A-Za-z_\-]{35}\b')
+# Google OAuth client secrets.
+_GOOGLE_OAUTH_RE = re.compile(r'\bGOCSPX-[0-9A-Za-z_\-]{20,}\b')
+# Stripe live secret / restricted keys.
+_STRIPE_RE = re.compile(r'\b(?:sk|rk)_live_[0-9A-Za-z]{10,}\b')
+# OpenAI / Anthropic-style secret keys (sk-… , sk-ant-…).
+_OPENAI_RE = re.compile(r'\bsk-(?:ant-)?[A-Za-z0-9_\-]{20,}\b')
 # JWTs: three base64url segments of at least 10 chars each.
 _JWT_RE = re.compile(
     r'\b[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b'
@@ -35,7 +43,8 @@ _KV_RE = re.compile(
     r'(?i)(?:api[_-]?key|secret|token|password)\s*[:=]\s*\S+'
 )
 
-_PATTERNS = [_PEM_RE, _AWS_RE, _SLACK_RE, _GH_RE, _JWT_RE, _KV_RE]
+_PATTERNS = [_PEM_RE, _AWS_RE, _SLACK_RE, _GH_RE, _GOOGLE_API_RE,
+             _GOOGLE_OAUTH_RE, _STRIPE_RE, _OPENAI_RE, _JWT_RE, _KV_RE]
 
 
 def redact(text: str) -> str:

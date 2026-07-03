@@ -163,17 +163,41 @@ def pending_invites_for(conn, email: str) -> list[dict]:
              "invited_by": r[3], "role": r[4]} for r in rows]
 
 
+# Invites are single-use AND time-limited: a leaked/forwarded invite id must not
+# stay redeemable forever. 7 days matches typical SaaS invite windows.
+INVITE_TTL_DAYS = 7
+
+
+def _invite_expired(created_at, max_age_days: int = INVITE_TTL_DAYS) -> bool:
+    """True if an invite created at `created_at` is older than the TTL.
+    Handles both tz-aware datetimes (Postgres / SQLite converter) and ISO strings."""
+    import datetime as _dt
+    if created_at is None:
+        return False
+    if isinstance(created_at, str):
+        try:
+            created_at = _dt.datetime.fromisoformat(created_at)
+        except ValueError:
+            return False
+    now = _dt.datetime.now(created_at.tzinfo) if created_at.tzinfo else _dt.datetime.utcnow()
+    return (now - created_at) > _dt.timedelta(days=max_age_days)
+
+
 def accept_invite(conn, invite_id: str, user_id: str, user_email: str) -> dict:
     """Accept an invite as the authenticated user. The user's verified login email
     must match the invited address (case-insensitive) — an invite id alone is not
-    enough to join. Grants an active membership and closes the invite."""
+    enough to join. Invites expire after INVITE_TTL_DAYS. Grants an active
+    membership and closes the invite."""
     row = conn.execute(
-        "select team_id, email, role, status from invites where id=%s", (invite_id,)).fetchone()
+        "select team_id, email, role, status, created_at from invites where id=%s", (invite_id,)).fetchone()
     if row is None:
         raise InviteError("invite not found")
-    team_id, invited_email, role, status = row
+    team_id, invited_email, role, status, created_at = row
     if status != "pending":
         raise InviteError(f"invite already {status}")
+    if _invite_expired(created_at):
+        conn.execute("update invites set status='expired' where id=%s", (invite_id,))
+        raise InviteError("invite has expired")
     if (user_email or "").strip().lower() != invited_email:
         raise InviteError("invite was issued to a different email")
     org = conn.execute("select org_id from teams where id=%s", (team_id,)).fetchone()
