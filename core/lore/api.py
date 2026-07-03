@@ -50,6 +50,21 @@ async def _local_token_guard(request, call_next):
 _conn = db.connect(); db.bootstrap_schema(_conn)
 tenancy.bootstrap_tenancy(_conn)  # users/orgs/teams/memberships for multi-tenant auth
 
+
+def _audit(endpoint: str, tenant, principal, scopes, query: str, hits: int) -> None:
+    """Record a retrieval for the compliance audit log. Stores a SHA-256 of the
+    query, never the raw text — enough to correlate/count without keeping the
+    question itself. Best-effort: a logging failure never breaks the request."""
+    try:
+        qh = hashlib.sha256((query or "").encode()).hexdigest()[:16]
+        _conn.execute(
+            "insert into query_log(tenant_id, endpoint, principal, scopes, query_hash, hits) "
+            "values(%s,%s,%s,%s,%s,%s)",
+            (tenant, endpoint, principal or "local", ",".join(scopes or []), qh, int(hits)),
+        )
+    except Exception:
+        pass
+
 # Model selection: Voyage if an API key is set, else REAL local models (fastembed),
 # and only Fake if explicitly forced (VAULT_FAKE=1) for fast unit tests.
 _FAKE = os.environ.get("VAULT_FAKE") == "1"
@@ -379,6 +394,7 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
                     sparse_embedder=sparse)
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
     text, engine = llm.answer(req.question, chunks, model=req.model)
+    _audit("ask", tenant, _uid, scopes, req.question, len(hits))
     return {"answer": text, "engine": engine,
             "scopes_used": list(scopes),
             "citations": [{"note_id": h.note_id, "heading_path": h.heading_path, "why": h.why} for h in hits]}
@@ -516,6 +532,34 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None,
         "nodes": nodes,
         "edges": [[src, dst, kind, round(weight or 0, 2)] for src, dst, kind, weight in filtered_edges],
     }
+
+@app.get("/query-log")
+def query_log(tenant: Optional[str] = None, limit: int = 50):
+    """The compliance audit trail: the most recent retrievals for a tenant.
+    Query text is never stored — only a hash — so this shows *that* a search
+    happened, its scopes, and how many hits, not the question itself."""
+    if not tenant:
+        return {"entries": []}
+    n = max(1, min(limit, 500))
+    rows = _conn.execute(
+        "select ts, endpoint, principal, scopes, query_hash, hits from query_log "
+        "where tenant_id=%s order by ts desc limit %s", (tenant, n)).fetchall()
+    return {"entries": [
+        {"ts": str(r[0]), "endpoint": r[1], "principal": r[2],
+         "scopes": (r[3] or "").split(",") if r[3] else [], "query_hash": r[4], "hits": r[5]}
+        for r in rows]}
+
+
+class QueryLogPurgeReq(BaseModel):
+    tenant: str
+
+
+@app.post("/query-log/purge")
+def query_log_purge(req: QueryLogPurgeReq):
+    """Clear the audit trail for a tenant (user-initiated from Settings)."""
+    _conn.execute("delete from query_log where tenant_id=%s", (req.tenant,))
+    return {"ok": True}
+
 
 @app.get("/stats")
 def stats(tenant: Optional[str] = None):
@@ -822,6 +866,7 @@ def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_
             "text": h.text,
             "score": round(h.score, 4),
         })
+    _audit("search", tenant, _uid, scopes, req.query, len(hits))
     return {"results": results, "scopes_used": list(scopes)}
 
 

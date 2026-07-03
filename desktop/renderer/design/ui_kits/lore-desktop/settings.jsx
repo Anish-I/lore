@@ -106,6 +106,8 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const [backupDir, setBackupDir] = React.useState('');
   const [backupStatus, setBackupStatus] = React.useState(null);
   const [backupBusy, setBackupBusy] = React.useState(false);
+  const [auditOpen, setAuditOpen] = React.useState(false);
+  const [auditEntries, setAuditEntries] = React.useState(null);
   const [autoFileObvious, setAutoFileObvious] = React.useState(false); // default OFF; only explicit true enables
   const [retrieval, setRetrieval] = React.useState(null); // {embeddingModel, reranker, contextualRetrieval, localFallback} | {error} | null while loading
   const [importResult, setImportResult] = React.useState(null); // {ok, applied, ignored} | {ok:false, reason}
@@ -299,6 +301,20 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     finally { setBackupBusy(false); }
   };
 
+  const stLoadAudit = async () => {
+    if (!window.lore || !window.lore.queryLog || !cfg || !cfg.tenant) { setAuditEntries([]); return; }
+    try { const r = await window.lore.queryLog.list(cfg.tenant, 50); setAuditEntries((r && r.entries) || []); }
+    catch { setAuditEntries([]); }
+  };
+  const stToggleAudit = () => {
+    setAuditOpen((o) => { const next = !o; if (next) stLoadAudit(); return next; });
+  };
+  const stPurgeAudit = async () => {
+    if (!window.lore || !window.lore.queryLog || !cfg || !cfg.tenant) return;
+    await window.lore.queryLog.purge(cfg.tenant);
+    setAuditEntries([]);
+  };
+
   const stImportConfig = async () => {
     if (!window.lore || !window.lore.config || !window.lore.config.importRetrieval) return;
     setImportResult(null);
@@ -449,6 +465,38 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
                 <StButton variant="secondary" size="sm" onClick={stRunBackup} disabled={backupBusy}>{backupBusy ? 'Backing up…' : 'Back up now'}</StButton>
               </div>
             </Row>
+          )}
+        </Section>
+
+        <Section icon="shield" title="Security">
+          <Row label="On-device lock" hint="Lore's local backend requires a per-install token, so no other app on this machine can read your knowledge base. Managed automatically." last={!auditOpen}>
+            <StBadge tone="success" dot>locked</StBadge>
+          </Row>
+          <Row label="Access log" hint="Every search and question is recorded (as a hash — never the raw text) so you can audit what's been queried.">
+            <StButton variant="secondary" size="sm" onClick={stToggleAudit}>{auditOpen ? 'Hide' : 'View log'}</StButton>
+          </Row>
+          {auditOpen && (
+            <div style={{ padding: '4px 16px 14px' }}>
+              {(!auditEntries || !auditEntries.length) ? (
+                <div style={{ fontSize: 12, color: 'var(--text-faint)', padding: '6px 0' }}>No queries recorded yet.</div>
+              ) : (
+                <React.Fragment>
+                  <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--divider)', borderRadius: 'var(--radius-sm)' }}>
+                    {auditEntries.map((e, i) => (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderBottom: i < auditEntries.length - 1 ? '1px solid var(--divider)' : 'none', fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>
+                        <span style={{ color: 'var(--text-faint)', width: 132, flexShrink: 0 }}>{stAgo(e.ts)}</span>
+                        <StBadge tone="neutral">{e.endpoint}</StBadge>
+                        <span style={{ color: 'var(--text-subtle)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{(e.scopes || []).join(', ')}</span>
+                        <span style={{ color: 'var(--text-faint)' }}>{e.hits} hits</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+                    <StButton variant="secondary" size="sm" onClick={stPurgeAudit}>Clear log</StButton>
+                  </div>
+                </React.Fragment>
+              )}
+            </div>
           )}
         </Section>
 

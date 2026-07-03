@@ -21,6 +21,21 @@ contextBridge.exposeInMainWorld('lore', {
   // has secrets unless force:true. Resolves {ok, scope, broadened} or {ok:false, reason}.
   setNoteScope:   (path, scope, force) => ipcRenderer.invoke('note:set-scope', { path, scope, force }),
 
+  // --- audit log (compliance trail) ---
+  queryLog: {
+    list: async (tenant, limit) => {
+      const r = await fetch(`${BACKEND}/query-log?tenant=${encodeURIComponent(tenant)}&limit=${limit || 50}`, { headers: authH() });
+      return r.json();
+    },
+    purge: async (tenant) => {
+      const r = await fetch(`${BACKEND}/query-log/purge`, {
+        method: 'POST', headers: authH({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ tenant }),
+      });
+      return r.json();
+    },
+  },
+
   // --- backup mirror (SharePoint/OneDrive assurance) ---
   backup: {
     pickDir: () => ipcRenderer.invoke('backup:pick-dir'),

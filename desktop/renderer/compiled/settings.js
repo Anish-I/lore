@@ -106,6 +106,8 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const [backupDir, setBackupDir] = React.useState('');
   const [backupStatus, setBackupStatus] = React.useState(null);
   const [backupBusy, setBackupBusy] = React.useState(false);
+  const [auditOpen, setAuditOpen] = React.useState(false);
+  const [auditEntries, setAuditEntries] = React.useState(null);
   const [autoFileObvious, setAutoFileObvious] = React.useState(false); // default OFF; only explicit true enables
   const [retrieval, setRetrieval] = React.useState(null); // {embeddingModel, reranker, contextualRetrieval, localFallback} | {error} | null while loading
   const [importResult, setImportResult] = React.useState(null); // {ok, applied, ignored} | {ok:false, reason}
@@ -299,6 +301,20 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     {setBackupBusy(false);}
   };
 
+  const stLoadAudit = async () => {
+    if (!window.lore || !window.lore.queryLog || !cfg || !cfg.tenant) {setAuditEntries([]);return;}
+    try {const r = await window.lore.queryLog.list(cfg.tenant, 50);setAuditEntries(r && r.entries || []);}
+    catch {setAuditEntries([]);}
+  };
+  const stToggleAudit = () => {
+    setAuditOpen((o) => {const next = !o;if (next) stLoadAudit();return next;});
+  };
+  const stPurgeAudit = async () => {
+    if (!window.lore || !window.lore.queryLog || !cfg || !cfg.tenant) return;
+    await window.lore.queryLog.purge(cfg.tenant);
+    setAuditEntries([]);
+  };
+
   const stImportConfig = async () => {
     if (!window.lore || !window.lore.config || !window.lore.config.importRetrieval) return;
     setImportResult(null);
@@ -448,6 +464,38 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     ), /*#__PURE__*/
     React.createElement(StButton, { variant: "secondary", size: "sm", onClick: stRunBackup, disabled: backupBusy }, backupBusy ? 'Backing up…' : 'Back up now')
     )
+    )
+
+    ), /*#__PURE__*/
+
+    React.createElement(Section, { icon: "shield", title: "Security" }, /*#__PURE__*/
+    React.createElement(Row, { label: "On-device lock", hint: "Lore's local backend requires a per-install token, so no other app on this machine can read your knowledge base. Managed automatically.", last: !auditOpen }, /*#__PURE__*/
+    React.createElement(StBadge, { tone: "success", dot: true }, "locked")
+    ), /*#__PURE__*/
+    React.createElement(Row, { label: "Access log", hint: "Every search and question is recorded (as a hash \u2014 never the raw text) so you can audit what's been queried." }, /*#__PURE__*/
+    React.createElement(StButton, { variant: "secondary", size: "sm", onClick: stToggleAudit }, auditOpen ? 'Hide' : 'View log')
+    ),
+    auditOpen && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '4px 16px 14px' } },
+    !auditEntries || !auditEntries.length ? /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 12, color: 'var(--text-faint)', padding: '6px 0' } }, "No queries recorded yet.") : /*#__PURE__*/
+
+    React.createElement(React.Fragment, null, /*#__PURE__*/
+    React.createElement("div", { style: { maxHeight: 220, overflowY: 'auto', border: '1px solid var(--divider)', borderRadius: 'var(--radius-sm)' } },
+    auditEntries.map((e, i) => /*#__PURE__*/
+    React.createElement("div", { key: i, style: { display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', borderBottom: i < auditEntries.length - 1 ? '1px solid var(--divider)' : 'none', fontFamily: 'var(--font-mono)', fontSize: 10.5 } }, /*#__PURE__*/
+    React.createElement("span", { style: { color: 'var(--text-faint)', width: 132, flexShrink: 0 } }, stAgo(e.ts)), /*#__PURE__*/
+    React.createElement(StBadge, { tone: "neutral" }, e.endpoint), /*#__PURE__*/
+    React.createElement("span", { style: { color: 'var(--text-subtle)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, (e.scopes || []).join(', ')), /*#__PURE__*/
+    React.createElement("span", { style: { color: 'var(--text-faint)' } }, e.hits, " hits")
+    )
+    )
+    ), /*#__PURE__*/
+    React.createElement("div", { style: { marginTop: 8, display: 'flex', justifyContent: 'flex-end' } }, /*#__PURE__*/
+    React.createElement(StButton, { variant: "secondary", size: "sm", onClick: stPurgeAudit }, "Clear log")
+    )
+    )
+
     )
 
     ), /*#__PURE__*/

@@ -252,6 +252,16 @@ create table if not exists folded_paths(
   path text not null,
   folded_at timestamptz default now(),
   primary key (tenant_id, path));
+create table if not exists query_log(
+  id bigserial primary key,
+  tenant_id text,
+  ts timestamptz default now(),
+  endpoint text,
+  principal text,
+  scopes text,
+  query_hash text,
+  hits integer);
+create index if not exists query_log_ts on query_log(tenant_id, ts desc);
 """
 
 # PG migration note: personal_wizards / personal_wizard_chats are NEW tables, so the
@@ -406,6 +416,16 @@ create table if not exists folded_paths(
   path text not null,
   folded_at timestamp default current_timestamp,
   primary key (tenant_id, path));
+create table if not exists query_log(
+  id integer primary key autoincrement,
+  tenant_id text,
+  ts timestamp default current_timestamp,
+  endpoint text,
+  principal text,
+  scopes text,
+  query_hash text,
+  hits integer);
+create index if not exists query_log_ts on query_log(tenant_id, ts desc);
 """
 
 
