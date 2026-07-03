@@ -38,30 +38,10 @@ function grEdgeColorMap(theme) {
 // Daily-thread / journal notes named by date — hidden by default so topics dominate the graph.
 const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 
-// Node fill colors, one per Section (top-level folder) — 14 hues per theme,
-// chosen to stay distinguishable from each other and from the edge palette
-// above. Assigned deterministically by name (a stable hash, not array
-// position) so a section's color doesn't shift as sections are added/removed.
-const GR_SECTION_PALETTE_DARK = [
-  '#c9a24b', '#5b8def', '#e0883a', '#3fa85f', '#d6504f', '#a36bd6',
-  '#3fa89a', '#d97ba8', '#8bb04a', '#5ba3c9', '#c96b3f', '#7a8bb0',
-  '#b0955b', '#4f9e8f',
-];
-const GR_SECTION_PALETTE_LIGHT = [
-  '#8a6a1f', '#2f5fc7', '#b8621a', '#1f7a3f', '#b8302f', '#7a3fb0',
-  '#1f7a6e', '#a8437a', '#5c7a1f', '#2f6f96', '#8a431f', '#45568a',
-  '#7a5f2e', '#2f6f62',
-];
-function grHashStr(s) {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-function grSectionColor(name, theme) {
-  if (!name) return null;
-  const pal = theme === 'light' ? GR_SECTION_PALETTE_LIGHT : GR_SECTION_PALETTE_DARK;
-  return pal[grHashStr(name) % pal.length];
-}
+// Section (top-level folder) → node color: shared with the file explorer via
+// window.LoreSectionColor (wired-data.js) so a section reads as the same color
+// on both surfaces.
+const grSectionColor = window.LoreSectionColor;
 
 // bases: top-level folder ("Section") names present in the library.
 // kbFilter: the SAME array the sidebar's Sections switcher owns ([] = show all).

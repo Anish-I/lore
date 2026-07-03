@@ -173,7 +173,10 @@ function ActivityRail({ view, askOpen, onView, onAsk }) {
 
 // VS Code-style file tree row — replaces FileTreeItem for tighter, denser layout.
 const TREE_INDENT = 12; // px per depth level
-function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMenu, onRenameCommit, onRenameCancel }) {
+// sectionName: the top-level ancestor folder's name (a node IS its own section
+// at depth 0; children inherit it unchanged) — used to color-match the folder
+// icon to the same Section color used in the knowledge graph.
+function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMenu, onRenameCommit, onRenameCancel, sectionName, theme }) {
   const [hover, setHover] = React.useState(false);
   const isFolder = node.kind === 'folder';
   const isActive = node.kind === 'note' && node.id === activeNote;
@@ -229,12 +232,16 @@ function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMen
         ) : (
           <span style={{ width: 11, flexShrink: 0 }} />
         )}
-        {/* Folder / file icon */}
+        {/* Folder / file icon — folders colored by Section (same color as the
+            knowledge graph, via window.LoreSectionColor), so the same palette
+            reads consistently across both surfaces. */}
         <Icon
           name={isFolder ? (node.open ? 'folder-open' : 'folder') : 'file-text'}
           size={13}
           style={{
-            color: isActive ? 'var(--brand-fg)' : isFolder ? 'var(--text-subtle)' : node.scope ? SH_scopeColor(node.scope) : 'var(--text-faint)',
+            color: isActive ? 'var(--brand-fg)'
+              : isFolder ? ((sectionName && window.LoreSectionColor(sectionName, theme)) || 'var(--text-subtle)')
+              : node.scope ? SH_scopeColor(node.scope) : 'var(--text-faint)',
             flexShrink: 0,
           }}
         />
@@ -287,7 +294,8 @@ function TreeNode({ node, activeNote, onOpen, onToggle, renamingId, onContextMen
       </div>
       {isFolder && node.open && node.children && node.children.map((c) => (
         <TreeNode key={c.id} node={c} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}
-          renamingId={renamingId} onContextMenu={onContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
+          renamingId={renamingId} onContextMenu={onContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
+          sectionName={depth === 0 ? node.name : sectionName} theme={theme} />
       ))}
     </React.Fragment>
   );
@@ -297,7 +305,7 @@ function SH_baseName(p) {
   return String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, discoveredLibraries, onOpenDiscovered, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo }) {
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, discoveredLibraries, onOpenDiscovered, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo, theme }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
   // Library up/down switcher — only shown with more than one configured library (root folder).
   const showLibrarySwitcher = Array.isArray(roots) && roots.length > 1 && typeof onSwitchRoot === 'function';
@@ -516,7 +524,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
           </div>
         ) : tree.map((n) => (
           <TreeNode key={n.id} node={n} activeNote={activeNote} onOpen={onOpen} onToggle={onToggle}
-            renamingId={renamingId} onContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel} />
+            renamingId={renamingId} onContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
+            sectionName={n.name} theme={theme} />
         ))}
       </div>
       <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', flexDirection: 'column', gap: 7 }}>

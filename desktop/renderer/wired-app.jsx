@@ -1048,7 +1048,7 @@ function App() {
               renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
               roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary}
               discoveredLibraries={otherLibraries} onOpenDiscovered={openDiscoveredLibrary}
-              sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} />
+              sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} theme={theme} />
             <PaneResizer side="sidebar" />
             {activeBucket
               ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onOpen={() => setAskOpen(true)} />
