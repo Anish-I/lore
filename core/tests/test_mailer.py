@@ -1,5 +1,4 @@
 """Invite email delivery: honest status, never raises into the invite flow."""
-import pytest
 
 from lore import mailer
 

@@ -20,7 +20,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - run: pip install ruff
+      - run: pip install ruff==0.15.20   # pinned — lint drift between local and CI broke the first run
       - run: ruff check core/
 
   python-tests:

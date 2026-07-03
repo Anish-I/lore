@@ -4,7 +4,7 @@ from lore import db
 from lore.embed import FakeEmbedder
 from lore.index import index_document
 from lore.relations import (extract_relations, extract_entity_pairs, recompute_importance,
-                            RELATION_KINDS, build_title_index)
+                            build_title_index)
 
 
 def _title_index(*pairs):
