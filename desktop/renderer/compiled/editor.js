@@ -5,9 +5,10 @@ const { Icon: EdIcon, IconButton: EdIconBtn, WikiLink, ScopeTag: EdScope, Tabs: 
 
 const edS = {
   center: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-canvas)' },
-  tabbar: { display: 'flex', alignItems: 'center', height: 38, background: 'var(--surface-base)', borderBottom: '1px solid var(--border-subtle)', paddingRight: 8, flexShrink: 0 },
+  tabbar: { display: 'flex', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden', height: 38, background: 'var(--surface-base)', borderBottom: '1px solid var(--border-subtle)', paddingRight: 8, flexShrink: 0 },
   tab: (on) => ({
     display: 'flex', alignItems: 'center', gap: 7, height: '100%', padding: '0 14px',
+    minWidth: 0, flexShrink: 1,
     borderRight: '1px solid var(--border-subtle)', cursor: 'pointer',
     background: on ? 'var(--surface-canvas)' : 'transparent',
     color: on ? 'var(--text-strong)' : 'var(--text-subtle)', fontSize: 13,
@@ -77,7 +78,7 @@ function TabStrip({ tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePa
         React.createElement("div", { key: t.id, style: edS.tab(on), onClick: () => onTab && onTab(t.id), title: t.title,
           onMouseEnter: () => setHoverTab(t.id), onMouseLeave: () => setHoverTab((h) => h === t.id ? null : h) }, /*#__PURE__*/
         React.createElement(EdIcon, { name: t.kind === 'bucket' ? 'library' : 'file-text', size: 13, style: { color: on ? 'var(--brand-fg)' : 'var(--text-faint)' } }), /*#__PURE__*/
-        React.createElement("span", { style: { maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.title),
+        React.createElement("span", { style: { maxWidth: 150, minWidth: 18, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.title),
         onCloseOthers && all.length > 1 && /*#__PURE__*/
         React.createElement("span", { onClick: (e) => {e.stopPropagation();onCloseOthers(t.id);}, title: "Close other tabs",
           style: { display: 'inline-flex', marginLeft: 2, opacity: 0.55, borderRadius: 3, visibility: hoverTab === t.id ? 'visible' : 'hidden' },
