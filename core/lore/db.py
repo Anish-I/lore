@@ -195,9 +195,12 @@ create table if not exists edges(
   kind text not null,
   weight real default 1.0,
   evidence text,
+  origin text default 'index',
   updated_at timestamptz default now(),
   constraint edges_unique unique (tenant_id, src_note_id, dst_note_id, kind),
-  constraint edges_kind_check check (kind in ('link','folder','tag','topic')));
+  constraint edges_kind_check check (kind in (
+    'link','folder','tag','topic',
+    'supports','contradicts','causes','depends_on','supersedes','implements','relates_to')));
 create index if not exists edges_src on edges(src_note_id);
 create index if not exists edges_dst on edges(dst_note_id);
 create index if not exists edges_tenant on edges(tenant_id);

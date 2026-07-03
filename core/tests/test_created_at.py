@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from lore.api import app, get_embedder, get_reranker
 from lore.embed import FakeEmbedder
 from lore.rerank import FakeReranker
-from lore.index import derive_created_at, index_document, backfill_created_at
+from lore.index import derive_created_at, backfill_created_at
 
 app.dependency_overrides[get_embedder] = lambda: FakeEmbedder()
 app.dependency_overrides[get_reranker] = lambda: FakeReranker()

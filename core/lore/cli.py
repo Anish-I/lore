@@ -18,7 +18,7 @@ Examples:
     lore search "RAG pipeline" --scope <scope> --tenant <tenant>
     lore graph --scope <scope> --tenant <tenant>
 """
-import argparse, json, socket, sys
+import argparse, json, sys
 import urllib.request, urllib.error
 
 DEFAULT_URL = "http://localhost:8099"

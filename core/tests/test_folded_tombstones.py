@@ -40,6 +40,11 @@ def test_delete_note_without_path_no_tombstone(conn):
 def test_reindex_skips_tombstoned_path(tmp_path):
     p = tmp_path / "folded.md"
     p.write_text("# Folded\n\nsome real prose that would otherwise index fine here.")
+    # Backdate the file well before the tombstone: sub-second clock/mtime
+    # resolution differences (bit us on the Windows CI runner) must never make
+    # a just-written file look "edited after folding".
+    past = time.time() - 3600
+    os.utime(p, (past, past))
     _conn.execute(
         "insert into folded_paths(tenant_id, path, folded_at) values(%s,%s,now())"
         " on conflict (tenant_id, path) do update set folded_at=excluded.folded_at",
