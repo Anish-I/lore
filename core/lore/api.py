@@ -348,6 +348,7 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
     text, engine = llm.answer(req.question, chunks, model=req.model)
     return {"answer": text, "engine": engine,
+            "scopes_used": list(scopes),
             "citations": [{"note_id": h.note_id, "heading_path": h.heading_path, "why": h.why} for h in hits]}
 
 @app.post("/trace")
@@ -789,7 +790,7 @@ def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_
             "text": h.text,
             "score": round(h.score, 4),
         })
-    return {"results": results}
+    return {"results": results, "scopes_used": list(scopes)}
 
 
 # --- Upkeep state (in-process; reset on restart) ---

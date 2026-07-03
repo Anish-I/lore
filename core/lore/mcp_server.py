@@ -176,7 +176,9 @@ try:
         })
         if err:
             return f"Error calling Lore: {err}"
-        return data.get("answer", "No answer returned.")
+        answer = data.get("answer", "No answer returned.")
+        used = data.get("scopes_used") or []
+        return f"{answer}\n\n_(answered from: {', '.join(used)})_" if used else answer
 
     @_mcp.tool()
     def lore_search(
@@ -341,7 +343,11 @@ except ImportError:
             })
             if err:
                 return [_types.TextContent(type="text", text=f"Error: {err}")]
-            return [_types.TextContent(type="text", text=data.get("answer", "No answer."))]
+            _ans = data.get("answer", "No answer.")
+            _used = data.get("scopes_used") or []
+            if _used:
+                _ans = f"{_ans}\n\n_(answered from: {', '.join(_used)})_"
+            return [_types.TextContent(type="text", text=_ans)]
         elif name == "lore_search":
             data, err = _safe_post("/search", {
                 "query": arguments["query"],

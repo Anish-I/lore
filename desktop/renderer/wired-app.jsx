@@ -967,8 +967,10 @@ function App() {
     const words = String(trace.answer || 'No notes in your scope mention this yet.').split(/(\s+)/).filter(Boolean).map((w) => ({ x: w }));
     const evidence = evidenceFromTrace(trace);
     const sources = (trace.final || []).length;
-    const scopesAsked = trace.scopes_asked || scopes;
-    const scopesLabel = `${sourceLabel(askSource, scopes)} · ${sources} chunks · ${scopesAsked.join(', ')}`;
+    // Prefer the scopes the backend ACTUALLY searched (scopes_used) — makes the
+    // confidentiality boundary of each answer honest and visible.
+    const used = (trace.scopes_used && trace.scopes_used.length) ? trace.scopes_used : (trace.scopes_asked || scopes);
+    const scopesLabel = `answered from ${used.map(scopeLabel).join(', ')} · ${sources} chunks`;
     let i = 0;
     clearInterval(timer.current);
     timer.current = setInterval(() => {
