@@ -6,8 +6,31 @@
 const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
+const { execFileSync } = require('child_process');
 const runtime   = require('./lib/runtime');
 const codexToml = require('./lib/codex-toml');
+
+// ---------- node resolution ----------
+
+// The hook scripts are plain Node programs. Inside an Electron main process,
+// process.execPath is the ELECTRON binary — writing it into a hook/notify
+// command would launch a second app instance instead of running the script.
+// Resolve a real node from PATH (Claude Code and Codex users necessarily have
+// one — both CLIs run on Node). Returns null when none is found; callers must
+// surface that as a clear install error, never write a broken command.
+function resolveNode() {
+  const lookup = process.platform === 'win32' ? 'where' : 'which';
+  try {
+    const out = execFileSync(lookup, ['node'], { encoding: 'utf8', windowsHide: true });
+    for (const line of out.split(/\r?\n/)) {
+      const t = line.trim();
+      if (t && path.isAbsolute(t) && fs.existsSync(t)) return t;
+    }
+  } catch { /* fall through */ }
+  // Running under plain node (tests, CLI usage) — execPath IS node then.
+  if (!process.versions.electron && process.execPath) return process.execPath;
+  return null;
+}
 
 // ---------- paths ----------
 
@@ -158,6 +181,11 @@ function installClaude(opts) {
     return { ok: false, reason: `Failed to materialize hook files: ${e.message}` };
   }
 
+  // Absolute node when resolvable (robust against a minimal PATH inside Claude
+  // Code, and never Electron's execPath); bare `node` as the historical fallback.
+  const resolved = resolveNode();
+  const nodeCmd = resolved ? JSON.stringify(resolved) : 'node';
+
   // Read existing settings, tolerating missing or malformed file.
   let rawContent = '';
   let settings   = {};
@@ -195,7 +223,7 @@ function installClaude(opts) {
     // Tool-scoped events (PostToolUse) take an empty matcher = all tools;
     // Stop is not tool-scoped, so it omits the matcher.
     const entry = {
-      hooks: [{ type: 'command', command: `node "${HOOK_SCRIPT}" ${modeArg}` }],
+      hooks: [{ type: 'command', command: `${nodeCmd} "${HOOK_SCRIPT}" ${modeArg}` }],
       _lore: true,
     };
     if (event !== 'Stop') entry.matcher = '';
@@ -208,7 +236,7 @@ function installClaude(opts) {
   if (injectEnabled) {
     settings.hooks.UserPromptSubmit.push({
       matcher: '',
-      hooks: [{ type: 'command', command: `node "${INJECT_SCRIPT}"` }],
+      hooks: [{ type: 'command', command: `${nodeCmd} "${INJECT_SCRIPT}"` }],
       _lore: true,
     });
   }
@@ -288,7 +316,10 @@ function installCodex() {
   try {
     const text = codexToml.read();
     codexToml.backupOnce(text);
-    const node   = process.execPath;
+    const node = resolveNode();
+    if (!node) {
+      return { ok: false, reason: 'Node.js not found on PATH — the Lore capture bridge needs it (Codex itself runs on Node; check your PATH).' };
+    }
     const cur    = codexToml.getRootKey(text, 'notify');
 
     // Already the Lore bridge → no-op (idempotent).
@@ -364,6 +395,7 @@ function dropRootKey(text, key) {
 function installCopilot() { return { ok: false, reason: 'experimental — coming soon' }; }
 
 module.exports = {
+  resolveNode,
   detectTools,
   installClaude,
   uninstallClaude,

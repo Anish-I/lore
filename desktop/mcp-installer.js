@@ -50,6 +50,37 @@ function pythonWorks(candidate) {
   } catch { return false; }
 }
 
+// ---------- MCP command resolution (packaged vs dev) ----------
+
+// The single decision that determines whether the agent-memory loop survives
+// packaging. A user who installed the dmg/exe has NO repo, NO venv, and (in
+// general) no system Python with `mcp` installed — for them, the MCP server is
+// the frozen backend binary in `mcp` mode (`lore-backend mcp`, shipped inside
+// the app's Resources; see core/run_server.py). In dev, prefer the repo's own
+// .venv (system python3 provably lacks the deps on some machines) and fall
+// back to a probed system Python only when the venv is absent.
+// @returns {{ command, args, cwd?, extraEnv }}
+function resolveMcpCommand() {
+  // Packaged: process.resourcesPath exists in any Electron process; the frozen
+  // backend lives there via electron-builder extraResources.
+  const exeName = process.platform === 'win32' ? 'lore-backend.exe' : 'lore-backend';
+  const frozen = process.resourcesPath
+    ? path.join(process.resourcesPath, 'lore-backend', exeName)
+    : null;
+  if (frozen && fs.existsSync(frozen)) {
+    return { command: frozen, args: ['mcp'], extraEnv: {} };
+  }
+  // Dev: this repo's venv first — mirrors ensureBackend's spawn fix in main.js.
+  const venvPy = path.join(CORE_DIR, '..', '.venv',
+    process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  if (fs.existsSync(venvPy)) {
+    return { command: venvPy, args: ['-m', 'lore.mcp_server'], cwd: CORE_DIR,
+             extraEnv: { PYTHONPATH: CORE_DIR } };
+  }
+  return { command: resolvePython(), args: ['-m', 'lore.mcp_server'], cwd: CORE_DIR,
+           extraEnv: { PYTHONPATH: CORE_DIR } };
+}
+
 // Resolves the system Python to an absolute path so the MCP server entry
 // does not depend on the user's PATH inside Claude Code.  Probes each candidate
 // with `-c` and returns the first that actually runs; falls back to the bare
@@ -98,7 +129,7 @@ function detectMcp() {
 // into place.  All other mcpServers entries and top-level keys are untouched.
 // @returns {{ ok: boolean, backupPath: string, configPath: string, reason?: string }}
 function installMcp() {
-  const pythonPath = resolvePython();
+  const mcpCmd = resolveMcpCommand();
 
   // Read existing config, tolerating missing or malformed.
   let rawContent = '';
@@ -140,10 +171,10 @@ function installMcp() {
   // env pins identity so the tools default scopes/tenant and are callable argless.
   const id = loadLoreIdentity();
   config.mcpServers.lore = {
-    command: pythonPath,
-    args:    ['-m', 'lore.mcp_server'],
-    cwd:     CORE_DIR,
-    env:     { LORE_TENANT: id.tenant, LORE_SCOPES: id.scope },
+    command: mcpCmd.command,
+    args:    mcpCmd.args,
+    ...(mcpCmd.cwd ? { cwd: mcpCmd.cwd } : {}),
+    env:     { ...mcpCmd.extraEnv, LORE_TENANT: id.tenant, LORE_SCOPES: id.scope },
   };
 
   // Atomic write: write to a temp file, then rename over the target.
@@ -199,23 +230,24 @@ function uninstallMcp() {
 // module is reached via PYTHONPATH=<CORE_DIR> instead.
 function installCodexMcp() {
   try {
-    const pythonPath = resolvePython();
+    const mcpCmd = resolveMcpCommand();
     const id = loadLoreIdentity();
     let text = codexToml.read();
     codexToml.backupOnce(text);
-    if (!codexToml.hasTable(text, 'mcp_servers.lore')) {
-      text = codexToml.appendTable(text, 'mcp_servers.lore', [
-        `command = ${JSON.stringify(pythonPath)}`,
-        `args = ["-m", "lore.mcp_server"]`,
-      ]);
-    }
-    if (!codexToml.hasTable(text, 'mcp_servers.lore.env')) {
-      text = codexToml.appendTable(text, 'mcp_servers.lore.env', [
-        `PYTHONPATH = ${JSON.stringify(CORE_DIR)}`,
-        `LORE_TENANT = ${JSON.stringify(id.tenant)}`,
-        `LORE_SCOPES = ${JSON.stringify(id.scope)}`,
-      ]);
-    }
+    // REPLACE rather than skip-if-present: an existing entry may point at a
+    // stale interpreter (e.g. a system python without deps, or a repo path
+    // that no longer exists after packaging) — re-install must repair it.
+    text = codexToml.removeTable(text, 'mcp_servers.lore.env');
+    text = codexToml.removeTable(text, 'mcp_servers.lore');
+    text = codexToml.appendTable(text, 'mcp_servers.lore', [
+      `command = ${JSON.stringify(mcpCmd.command)}`,
+      `args = ${JSON.stringify(mcpCmd.args)}`,
+    ]);
+    text = codexToml.appendTable(text, 'mcp_servers.lore.env', [
+      ...Object.entries(mcpCmd.extraEnv).map(([k, v]) => `${k} = ${JSON.stringify(v)}`),
+      `LORE_TENANT = ${JSON.stringify(id.tenant)}`,
+      `LORE_SCOPES = ${JSON.stringify(id.scope)}`,
+    ]);
     codexToml.atomicWrite(text);
     return { ok: true };
   } catch (e) {
@@ -249,6 +281,7 @@ function detectMcpTools() {
 }
 
 module.exports = {
+  resolveMcpCommand,
   detectMcp, installMcp, uninstallMcp,
   installCodexMcp, uninstallCodexMcp, detectMcpTools,
 };
