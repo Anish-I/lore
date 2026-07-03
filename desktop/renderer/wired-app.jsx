@@ -985,6 +985,7 @@ function App() {
   };
 
   const D = window.VaultDesignSystem_ffbf58;
+  const simpleMode = !!(appConfig && appConfig.simpleMode);
   const Titlebar = window.LoreTitlebar, Rail = window.LoreActivityRail, Sidebar = window.LoreSidebar,
     Editor = window.LoreEditor, ContextPane = window.LoreContextPane, FloatingGraph = window.LoreFloatingGraph, AskPanel = window.LoreAskPanel,
     TeamsView = window.LoreTeamsView, GraphView = window.LoreGraphView,
@@ -1095,9 +1096,9 @@ function App() {
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-sunken)' }}
       onDragOver={(e) => { e.preventDefault(); }} onDrop={onDropImport}>
-      <Titlebar theme={theme} onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')} onSearch={() => setSearchOpen(true)} onAsk={() => setAskOpen(true)} onSettings={() => setView('settings')} onProfile={() => setView('settings')} onImport={onImport} scopeFilter={scopeFilter} onScopeFilter={setScopeFilter} />
+      <Titlebar theme={theme} onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')} onSearch={() => setSearchOpen(true)} onAsk={() => setAskOpen(true)} onSettings={() => setView('settings')} onProfile={() => setView('settings')} onImport={onImport} scopeFilter={scopeFilter} onScopeFilter={simpleMode ? null : setScopeFilter} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
-        <Rail view={view} askOpen={askOpen}
+        <Rail view={view} askOpen={askOpen} simpleMode={simpleMode}
           onView={(v) => { if (v === 'search') setSearchOpen(true); else setView(v); }}
           onAsk={() => setAskOpen((o) => !o)} />
 
@@ -1141,7 +1142,7 @@ function App() {
           </React.Fragment>
         )}
         {view === 'buckets' && (<React.Fragment><BucketsView buckets={M.buckets} onAsk={() => setAskOpen(true)} onOpen={openBucket} onChanged={reloadAfterImport} scopes={persona.scopes} />{askOpen && askPanel}</React.Fragment>)}
-        {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onOpenSetup={() => setShowOnboarding(true)} />}
+        {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onConfig={setAppConfig} onOpenSetup={() => setShowOnboarding(true)} />}
         {view === 'hooks' && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} tenant={tenant} scope={persona.scopes && persona.scopes[0]} onOpenSetup={() => setShowOnboarding(true)} />}
         </LoreErrorBoundary>
 

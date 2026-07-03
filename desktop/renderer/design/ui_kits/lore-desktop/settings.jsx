@@ -64,7 +64,7 @@ function stRetrievalModel(retrieval, key) {
   return m.provider ? `${m.provider} · ${m.model}` : String(m.model);
 }
 
-function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
+function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSetup }) {
   const s = {
     account: {},
     indexing: {},
@@ -91,6 +91,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
 
   // Indexing & recall state (real wiring: config flag + backend /config/retrieval)
   const [autoIndexOnSave, setAutoIndexOnSave] = React.useState(true); // default ON; explicit false disables
+  const [simpleMode, setSimpleMode] = React.useState(false);
   const [autoFileObvious, setAutoFileObvious] = React.useState(false); // default OFF; only explicit true enables
   const [retrieval, setRetrieval] = React.useState(null); // {embeddingModel, reranker, contextualRetrieval, localFallback} | {error} | null while loading
   const [importResult, setImportResult] = React.useState(null); // {ok, applied, ignored} | {ok:false, reason}
@@ -134,6 +135,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
           setCfg(c || null);
           setDefScope((c && c.scope) || '');
           setAutoIndexOnSave(!(c && c.autoIndexOnSave === false));
+      setSimpleMode(!!(c && c.simpleMode));
           setAutoFileObvious(!!(c && c.autoFileObvious === true));
           setUpkeepAuto(!(c && c.upkeepAuto === false));
         })
@@ -173,6 +175,7 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
     setDefScope((config && config.scope) || '');
     if (config) {
       setAutoIndexOnSave(config.autoIndexOnSave !== false);
+      setSimpleMode(!!config.simpleMode);
       setAutoFileObvious(config.autoFileObvious === true);
       setUpkeepAuto(config.upkeepAuto !== false);
     }
@@ -233,6 +236,22 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
     setAutoFileObvious(v);
     if (window.lore && window.lore.config && window.lore.config.set) {
       window.lore.config.set({ autoFileObvious: !!v }).catch(() => {});
+    }
+  };
+
+  const stSetDefaultScope = (id) => {
+    setDefScope(id);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      // cfg.scope is what the capture hooks read — persist it so new notes land here.
+      window.lore.config.set({ scope: id }).then((next) => { if (onConfig) onConfig(next); }).catch(() => {});
+    }
+  };
+
+  const stSetSimpleMode = (v) => {
+    setSimpleMode(v);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      // onConfig re-renders the app with the new config so the rail updates live.
+      window.lore.config.set({ simpleMode: !!v }).then((next) => { if (onConfig) onConfig(next); }).catch(() => {});
     }
   };
 
@@ -344,11 +363,23 @@ function SettingsView({ settings, config, scopeOptions = [], onOpenSetup }) {
             </div>
           </Row>
           {authError && <div style={{ padding: '0 16px 10px', color: 'var(--clay-400)', fontSize: 12 }}>{authError}</div>}
-          <Row label="Note scope" hint="New notes use this permission when configured." last>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              {defScope ? <StScope scope={defScope} size="sm" /> : <StBadge tone="neutral">none</StBadge>}
-              {scopeOptions.filter((sc) => sc !== defScope).slice(0, 3).map((sc) => <StScope key={sc} scope={sc} size="sm" />)}
+          <Row label="New notes are saved as" hint="The permission every newly captured note gets — this is what your AI hooks write with. Change it per-note anytime from the editor's visibility control.">
+            <div style={{ display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 2, gap: 2 }}>
+              {[['private', 'Private'], ['team', 'Team'], ['company', 'Company']].map(([id, label]) => {
+                const on = (defScope === id) || (id === 'private' && !['team', 'company', 'enterprise'].includes(defScope));
+                return (
+                  <button key={id} onClick={() => stSetDefaultScope(id)} style={{
+                    border: 'none', cursor: 'pointer', padding: '4px 11px', borderRadius: 'var(--radius-xs)',
+                    background: on ? 'var(--surface-raised)' : 'transparent',
+                    color: on ? 'var(--brand-fg)' : 'var(--text-subtle)',
+                    fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: on ? 600 : 400,
+                  }}>{label}</button>
+                );
+              })}
             </div>
+          </Row>
+          <Row label="Simple mode" hint="Hide the graph, wizards, teams and automation surfaces — leaving just your files, search and ask. Everything keeps working underneath; flip back anytime. Best for non-technical use.">
+            <StSwitch checked={simpleMode} onChange={stSetSimpleMode} />
           </Row>
         </Section>
 

@@ -151,8 +151,14 @@ function Titlebar({ theme, onToggleTheme, onSearch, onAsk, onSettings, onProfile
 
 }
 
-function ActivityRail({ view, askOpen, onView, onAsk }) {
-  const items = [
+function ActivityRail({ view, askOpen, onView, onAsk, simpleMode }) {
+  // Simple mode (business face): only Files / Search — the graph, wizards,
+  // teams and hooks surfaces are the "developer daydream" that overwhelms a
+  // SharePoint user. Everything keeps working underneath; toggle in Settings.
+  const items = simpleMode ? [
+  { id: 'workspace', icon: 'files', label: 'Files' },
+  { id: 'search', icon: 'search', label: 'Search' }] :
+  [
   { id: 'workspace', icon: 'files', label: 'Files' },
   { id: 'search', icon: 'search', label: 'Search' },
   { id: 'graph', icon: 'network', label: 'Graph' },

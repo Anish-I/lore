@@ -985,6 +985,7 @@ function App() {
   };
 
   const D = window.VaultDesignSystem_ffbf58;
+  const simpleMode = !!(appConfig && appConfig.simpleMode);
   const Titlebar = window.LoreTitlebar,Rail = window.LoreActivityRail,Sidebar = window.LoreSidebar,
     Editor = window.LoreEditor,ContextPane = window.LoreContextPane,FloatingGraph = window.LoreFloatingGraph,AskPanel = window.LoreAskPanel,
     TeamsView = window.LoreTeamsView,GraphView = window.LoreGraphView,
@@ -1095,9 +1096,9 @@ function App() {
   return (/*#__PURE__*/
     React.createElement("div", { style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-sunken)' },
       onDragOver: (e) => {e.preventDefault();}, onDrop: onDropImport }, /*#__PURE__*/
-    React.createElement(Titlebar, { theme: theme, onToggleTheme: () => setTheme((t) => t === 'dark' ? 'light' : 'dark'), onSearch: () => setSearchOpen(true), onAsk: () => setAskOpen(true), onSettings: () => setView('settings'), onProfile: () => setView('settings'), onImport: onImport, scopeFilter: scopeFilter, onScopeFilter: setScopeFilter }), /*#__PURE__*/
+    React.createElement(Titlebar, { theme: theme, onToggleTheme: () => setTheme((t) => t === 'dark' ? 'light' : 'dark'), onSearch: () => setSearchOpen(true), onAsk: () => setAskOpen(true), onSettings: () => setView('settings'), onProfile: () => setView('settings'), onImport: onImport, scopeFilter: scopeFilter, onScopeFilter: simpleMode ? null : setScopeFilter }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', minHeight: 0, position: 'relative' } }, /*#__PURE__*/
-    React.createElement(Rail, { view: view, askOpen: askOpen,
+    React.createElement(Rail, { view: view, askOpen: askOpen, simpleMode: simpleMode,
       onView: (v) => {if (v === 'search') setSearchOpen(true);else setView(v);},
       onAsk: () => setAskOpen((o) => !o) }), /*#__PURE__*/
 
@@ -1141,7 +1142,7 @@ function App() {
     ),
 
     view === 'buckets' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(BucketsView, { buckets: M.buckets, onAsk: () => setAskOpen(true), onOpen: openBucket, onChanged: reloadAfterImport, scopes: persona.scopes }), askOpen && askPanel),
-    view === 'settings' && /*#__PURE__*/React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions, onOpenSetup: () => setShowOnboarding(true) }),
+    view === 'settings' && /*#__PURE__*/React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions, onConfig: setAppConfig, onOpenSetup: () => setShowOnboarding(true) }),
     view === 'hooks' && HooksView && /*#__PURE__*/React.createElement(HooksView, { scopeOptions: scopeOptions, identityReady: identityReady, tenant: tenant, scope: persona.scopes && persona.scopes[0], onOpenSetup: () => setShowOnboarding(true) })
     ),
 
