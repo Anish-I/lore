@@ -17,10 +17,21 @@ describe('resolveMcpCommand', () => {
 
   it('dev: prefers the repo venv python with -m lore.mcp_server', () => {
     delete process.resourcesPath; // plain-node test env = dev
-    const r = mcpInstaller.resolveMcpCommand();
+    // Deterministic fixture: a temp core dir with a sibling .venv, injected via the
+    // coreDir param (avoids depending on whether an actual repo venv exists on the
+    // test machine — the CI runners and clean checkouts have none).
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'lore-dev-'));
+    const coreDir = path.join(parent, 'core');
+    fs.mkdirSync(coreDir, { recursive: true });
+    const venvPy = path.join(parent, '.venv',
+      process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    fs.mkdirSync(path.dirname(venvPy), { recursive: true });
+    fs.writeFileSync(venvPy, '');
+    const r = mcpInstaller.resolveMcpCommand(coreDir);
     expect(r.command).toContain('.venv');
+    expect(r.command).toBe(venvPy);
     expect(r.args).toEqual(['-m', 'lore.mcp_server']);
-    expect(r.extraEnv.PYTHONPATH).toBeTruthy();
+    expect(r.extraEnv.PYTHONPATH).toBe(coreDir);
   });
 
   it('packaged: uses the frozen backend binary in mcp mode', () => {

@@ -60,7 +60,9 @@ function pythonWorks(candidate) {
 // .venv (system python3 provably lacks the deps on some machines) and fall
 // back to a probed system Python only when the venv is absent.
 // @returns {{ command, args, cwd?, extraEnv }}
-function resolveMcpCommand() {
+// @param {string} [coreDir=CORE_DIR] — override the core dir (used by tests to
+//   point the venv/PYTHONPATH probe at a temp fixture; production passes nothing).
+function resolveMcpCommand(coreDir = CORE_DIR) {
   // Packaged: process.resourcesPath exists in any Electron process; the frozen
   // backend lives there via electron-builder extraResources.
   const exeName = process.platform === 'win32' ? 'lore-backend.exe' : 'lore-backend';
@@ -71,14 +73,14 @@ function resolveMcpCommand() {
     return { command: frozen, args: ['mcp'], extraEnv: {} };
   }
   // Dev: this repo's venv first — mirrors ensureBackend's spawn fix in main.js.
-  const venvPy = path.join(CORE_DIR, '..', '.venv',
+  const venvPy = path.join(coreDir, '..', '.venv',
     process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
   if (fs.existsSync(venvPy)) {
-    return { command: venvPy, args: ['-m', 'lore.mcp_server'], cwd: CORE_DIR,
-             extraEnv: { PYTHONPATH: CORE_DIR } };
+    return { command: venvPy, args: ['-m', 'lore.mcp_server'], cwd: coreDir,
+             extraEnv: { PYTHONPATH: coreDir } };
   }
-  return { command: resolvePython(), args: ['-m', 'lore.mcp_server'], cwd: CORE_DIR,
-           extraEnv: { PYTHONPATH: CORE_DIR } };
+  return { command: resolvePython(), args: ['-m', 'lore.mcp_server'], cwd: coreDir,
+           extraEnv: { PYTHONPATH: coreDir } };
 }
 
 // Resolves the system Python to an absolute path so the MCP server entry

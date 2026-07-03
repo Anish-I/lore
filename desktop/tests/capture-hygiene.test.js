@@ -18,7 +18,10 @@ const BUF = path.join(SCRATCH, '.lore', 'sessions', 'vitest-sess.md');
 function run(prompt) {
   execFileSync(process.execPath, [HOOK, 'userprompt'], {
     input: JSON.stringify({ prompt }),
-    env: { ...process.env, HOME: SCRATCH, CLAUDE_SESSION_ID: 'vitest-sess' },
+    // The hook resolves its buffer under os.homedir(). On Unix that honors HOME,
+    // but on Windows os.homedir() reads USERPROFILE — so set both, or the hook
+    // writes to the real home and this test reads an empty scratch dir.
+    env: { ...process.env, HOME: SCRATCH, USERPROFILE: SCRATCH, CLAUDE_SESSION_ID: 'vitest-sess' },
     timeout: 10_000,
   });
 }
