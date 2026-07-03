@@ -9,15 +9,21 @@
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --win",
-    "dist:mac": "electron-builder --mac"
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "test": "vitest run",
+    "lint": "eslint ."
   },
   "devDependencies": {
     "electron": "^31.3.0",
     "electron-builder": "^24.13.3",
-    "playwright": "^1.61.1"
+    "eslint": "^9.39.4",
+    "playwright": "^1.61.1",
+    "vitest": "^3.2.6"
   },
   "dependencies": {
     "chokidar": "^3.6.0",
+    "electron-updater": "^6.8.9",
     "embedded-postgres": "^18.4.0-beta.17"
   },
   "build": {
@@ -61,6 +67,25 @@
         "zip"
       ],
       "category": "public.app-category.productivity"
-    }
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/icon.png",
+      "category": "Utility",
+      "maintainer": "Anish-I"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Anish-I",
+      "repo": "lore"
+    },
+    "artifactName": "Lore-${version}-${os}-${arch}.${ext}"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Anish-I/lore.git"
   }
 }

@@ -370,6 +370,5 @@ module.exports = {
   installCodex,
   uninstallCodex,
   captureStatus,
-  installCodex,
   installCopilot,
 };

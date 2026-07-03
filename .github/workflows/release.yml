@@ -1,8 +1,17 @@
 name: Release
 
-# Builds the Lore desktop freeware installer when a version tag is pushed.
-# Tag a release with:  git tag v0.1.0 && git push origin v0.1.0
-# (The repo can stay private; Releases/artifacts are produced for distribution.)
+# Tag → 3-platform matrix build → boot-gated artifacts → DRAFT GitHub Release.
+#   git tag v0.1.0-beta.1 && git push origin v0.1.0-beta.1
+# Beta/rc tags (any tag containing '-') are marked prerelease automatically.
+#
+# Every job freezes the Python backend (PyInstaller) and SMOKE-BOOTS it against
+# /presets before packaging — an installer whose backend can't start never ships.
+#
+# Code signing is READY but optional: builds are unsigned until the repo secrets
+# below exist, at which point the same workflow produces signed artifacts.
+#   mac:  CSC_LINK, CSC_KEY_PASSWORD, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+#   win:  WIN_CSC_LINK, WIN_CSC_KEY_PASSWORD
+# See docs/RELEASING.md for the full runbook.
 
 on:
   push:
@@ -10,12 +19,41 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # needed to create the GitHub Release
+  contents: write   # create/update the GitHub Release
 
 jobs:
-  build-macos:
-    name: Build macOS dmg
-    runs-on: macos-latest
+  build:
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            freeze: bash build_backend_mac.sh
+            backend_bin: ./pyi-dist/lore-backend/lore-backend
+            dist: npm run dist:mac
+            artifacts: |
+              desktop/dist/*.dmg
+              desktop/dist/*-mac.zip
+              desktop/dist/latest-mac.yml
+              desktop/dist/*.blockmap
+          - os: windows-latest
+            freeze: bash build_backend.sh
+            backend_bin: ./pyi-dist/lore-backend/lore-backend.exe
+            dist: npm run dist
+            artifacts: |
+              desktop/dist/*.exe
+              desktop/dist/latest.yml
+              desktop/dist/*.blockmap
+          - os: ubuntu-latest
+            freeze: bash build_backend_mac.sh
+            backend_bin: ./pyi-dist/lore-backend/lore-backend
+            dist: npm run dist:linux
+            artifacts: |
+              desktop/dist/*.AppImage
+              desktop/dist/*.deb
+              desktop/dist/latest-linux.yml
     steps:
       - uses: actions/checkout@v4
 
@@ -26,17 +64,25 @@ jobs:
 
       - name: Freeze the Python backend (PyInstaller)
         working-directory: core
+        shell: bash
+        env:
+          PYTHON: python   # the freeze scripts default to the repo venv; CI uses setup-python
         run: |
           pip install -e ".[local]" pyinstaller
-          bash build_backend_mac.sh
+          ${{ matrix.freeze }}
 
       - name: Smoke-boot the frozen backend
         working-directory: core
+        shell: bash
         run: |
           DATABASE_URL="sqlite:///$RUNNER_TEMP/t.db" QDRANT_PATH="$RUNNER_TEMP/q" LORE_PORT=8210 \
-            ./pyi-dist/lore-backend/lore-backend &
+            ${{ matrix.backend_bin }} &
+          BACKEND_PID=$!
           for i in $(seq 1 40); do
-            curl -sf http://localhost:8210/presets && exit 0
+            if curl -sf http://localhost:8210/presets > /dev/null; then
+              kill $BACKEND_PID || true
+              exit 0
+            fi
             sleep 2
           done
           echo "frozen backend did not boot" && exit 1
@@ -47,71 +93,35 @@ jobs:
 
       - name: Install desktop deps
         working-directory: desktop
-        run: npm ci || npm install
-
-      - name: Build dmg (electron-builder)
-        working-directory: desktop
-        run: npm run dist:mac
-        env:
-          # Unsigned for now — no Developer ID cert in CI.
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: lore-macos
-          path: |
-            desktop/dist/*.dmg
-            desktop/dist/*-mac.zip
-          if-no-files-found: warn
-
-      - name: Attach to GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            desktop/dist/*.dmg
-            desktop/dist/*-mac.zip
-          draft: true
-          generate_release_notes: true
-
-  build-windows:
-    name: Build Windows installer
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install desktop deps
-        working-directory: desktop
+        shell: bash
         run: npm ci || npm install
 
       - name: Build installer (electron-builder)
         working-directory: desktop
-        run: npm run dist
+        shell: bash
+        run: ${{ matrix.dist }} -- --publish never
         env:
-          # Disable code-signing in CI (no cert); ship unsigned for now.
+          # Signing: unsigned when the secrets are empty (electron-builder skips
+          # signing for empty CSC_LINK); signed+notarized automatically once set.
+          CSC_LINK: ${{ matrix.os == 'windows-latest' && secrets.WIN_CSC_LINK || secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ matrix.os == 'windows-latest' && secrets.WIN_CSC_KEY_PASSWORD || secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lore-windows
-          path: |
-            desktop/dist/*.exe
-            desktop/dist/*.blockmap
-            desktop/dist/latest.yml
+          name: lore-${{ matrix.os }}
+          path: ${{ matrix.artifacts }}
           if-no-files-found: warn
 
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            desktop/dist/*.exe
-            desktop/dist/latest.yml
+          files: ${{ matrix.artifacts }}
           draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true

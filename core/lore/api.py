@@ -874,7 +874,7 @@ def enrich(req: EnrichReq):
     Uses the configured LLM provider — Codex subscription, Claude subscription, or BYOK.
     Body: {tenant, limit?, force?, provider?}. Returns {notesProcessed, edges, skipped, provider}."""
     from .llm_relations import enrich_relations
-    from .llm_providers import resolve_llm_call, provider_available, ProviderError
+    from .llm_providers import provider_available, ProviderError
     prov = (req.provider or os.environ.get("LORE_LLM_PROVIDER") or "byok").lower()
     if not provider_available(prov):
         raise HTTPException(status_code=400,

@@ -14,3 +14,18 @@ lore-mcp = "lore.mcp_server:main"
 [project.optional-dependencies]
 dev = ["pytest","httpx"]
 local = ["fastembed"]   # offline semantic embeddings + cross-encoder rerank (no API key)
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Never lint frozen-backend bundles or build output.
+exclude = ["pyi-dist", "build", "dist", "*.spec"]
+
+[tool.ruff.lint]
+# Default E/F set minus rules that fight the codebase's deliberate terse style:
+# E701/E702 (compound one-liners), E401 (grouped imports), E402 (scripts that
+# set sys.path/env before imports — conftest, scrub_store).
+ignore = ["E701", "E702", "E401", "E402"]
