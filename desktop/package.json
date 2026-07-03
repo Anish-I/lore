@@ -7,6 +7,11 @@
   "author": "Anish Ivaturi",
   "license": "UNLICENSED",
   "scripts": {
+    "build:renderer": "node scripts/build-renderer.cjs",
+    "prestart": "npm run build:renderer",
+    "predist": "npm run build:renderer",
+    "predist:mac": "npm run build:renderer",
+    "predist:linux": "npm run build:renderer",
     "start": "electron .",
     "dist": "electron-builder --win",
     "dist:mac": "electron-builder --mac",

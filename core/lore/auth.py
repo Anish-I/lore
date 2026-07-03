@@ -59,6 +59,10 @@ def _jwt_secret() -> str:
     env = os.environ.get("LORE_JWT_SECRET")
     if env:
         return env
+    # Fail closed in a shared/hosted deployment: never silently run on an
+    # auto-generated on-disk secret a leak of which forges any user's session.
+    if os.environ.get("LORE_SERVER_MODE") == "1":
+        raise AuthError("LORE_JWT_SECRET must be set explicitly in server mode")
     path = os.path.join(os.path.dirname(_DEFAULT_CLIENT_FILE), "jwt_secret.txt")
     if os.path.exists(path):
         with open(path, "r", encoding="utf-8") as f:
