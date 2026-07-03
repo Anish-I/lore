@@ -5,33 +5,63 @@
 const grNS = window.VaultDesignSystem_ffbf58;
 const { Icon: GrIcon, ScopeTag: GrScope, Button: GrButton } = grNS;
 
-// Every edge kind Lore can produce → color + human label + whether it's a
-// reasoned (LLM/cue-inferred) relation or a plain structural link (always present
-// from plain indexing, no /enrich required). Single source of truth for the canvas
-// draw AND the on-screen legend, so every line on the graph is explained — nothing
-// renders as an unlabeled gray line. Reasoned kinds stay visually dominant
-// (confidence-scaled opacity/width in the draw below); structural kinds are
-// tasteful-but-muted, never the near-invisible `pal.edge` gray they used to be.
+// Every edge kind Lore can produce → color (dark/light theme variants) + human
+// label + whether it's a reasoned (LLM/cue-inferred) relation or a plain
+// structural link (always present from plain indexing, no /enrich required).
+// Single source of truth for the canvas draw AND the on-screen legend, so every
+// line on the graph is explained — nothing renders as an unlabeled gray line.
+// Reasoned kinds stay visually dominant (confidence-scaled opacity/width in the
+// draw below); structural kinds are tasteful-but-muted, never the near-invisible
+// `pal.edge` gray they used to be. Light-mode hexes are deliberately darker/more
+// saturated than their dark-mode counterparts — a hue tuned for a near-black
+// canvas washes out against a near-white one.
 const GR_EDGE_KINDS = [
-  { kind: 'depends_on',  color: '#5b8def', label: 'depends on',  structural: false },
-  { kind: 'supersedes',  color: '#a36bd6', label: 'supersedes',  structural: false },
-  { kind: 'causes',      color: '#e0883a', label: 'causes',      structural: false },
-  { kind: 'supports',    color: '#3fa85f', label: 'supports',    structural: false },
-  { kind: 'contradicts', color: '#d6504f', label: 'contradicts', structural: false },
-  { kind: 'implements',  color: '#3fa89a', label: 'implements',  structural: false },
-  { kind: 'relates_to',  color: '#c98a56', label: 'relates to',  structural: false },
-  { kind: 'link',   color: '#c9a24b', label: 'wikilink',      structural: true },
-  { kind: 'tag',    color: '#d6b34a', label: 'shared tag',    structural: true },
-  // Grayscale hexes here would blend into the near-black canvas and read as
-  // "uncolored" — folder is the most common edge kind by far, so it must be a
-  // real, distinguishable hue even muted, not gray.
-  { kind: 'folder', color: '#6c7bb0', label: 'same folder',   structural: true },
-  { kind: 'topic',  color: '#3a8f8a', label: 'topic',         structural: true },
+  { kind: 'depends_on',  dark: '#5b8def', light: '#2f5fc7', label: 'depends on',  structural: false },
+  { kind: 'supersedes',  dark: '#a36bd6', light: '#7a3fb0', label: 'supersedes',  structural: false },
+  { kind: 'causes',      dark: '#e0883a', light: '#b8621a', label: 'causes',      structural: false },
+  { kind: 'supports',    dark: '#3fa85f', light: '#1f7a3f', label: 'supports',    structural: false },
+  { kind: 'contradicts', dark: '#d6504f', light: '#b8302f', label: 'contradicts', structural: false },
+  { kind: 'implements',  dark: '#3fa89a', light: '#1f7a6e', label: 'implements',  structural: false },
+  { kind: 'relates_to',  dark: '#c98a56', light: '#9c5f2e', label: 'relates to',  structural: false },
+  { kind: 'link',   dark: '#c9a24b', light: '#8a6a1f', label: 'wikilink',      structural: true },
+  { kind: 'tag',    dark: '#d6b34a', light: '#96781f', label: 'shared tag',    structural: true },
+  // Grayscale hexes here would blend into the canvas and read as "uncolored" —
+  // folder is the most common edge kind by far, so it must be a real,
+  // distinguishable hue in both themes, not gray.
+  { kind: 'folder', dark: '#6c7bb0', light: '#45568a', label: 'same folder',   structural: true },
+  { kind: 'topic',  dark: '#3a8f8a', light: '#1f6b66', label: 'topic',         structural: true },
 ];
-const GR_EDGE_COLORS = Object.fromEntries(GR_EDGE_KINDS.map((e) => [e.kind, e.color]));
 const GR_EDGE_STRUCTURAL = new Set(GR_EDGE_KINDS.filter((e) => e.structural).map((e) => e.kind));
+function grEdgeColorMap(theme) {
+  return Object.fromEntries(GR_EDGE_KINDS.map((e) => [e.kind, theme === 'light' ? e.light : e.dark]));
+}
 // Daily-thread / journal notes named by date — hidden by default so topics dominate the graph.
 const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
+
+// Node fill colors, one per Section (top-level folder) — 14 hues per theme,
+// chosen to stay distinguishable from each other and from the edge palette
+// above. Assigned deterministically by name (a stable hash, not array
+// position) so a section's color doesn't shift as sections are added/removed.
+const GR_SECTION_PALETTE_DARK = [
+  '#c9a24b', '#5b8def', '#e0883a', '#3fa85f', '#d6504f', '#a36bd6',
+  '#3fa89a', '#d97ba8', '#8bb04a', '#5ba3c9', '#c96b3f', '#7a8bb0',
+  '#b0955b', '#4f9e8f',
+];
+const GR_SECTION_PALETTE_LIGHT = [
+  '#8a6a1f', '#2f5fc7', '#b8621a', '#1f7a3f', '#b8302f', '#7a3fb0',
+  '#1f7a6e', '#a8437a', '#5c7a1f', '#2f6f96', '#8a431f', '#45568a',
+  '#7a5f2e', '#2f6f62',
+];
+function grHashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function grSectionColor(name, theme) {
+  if (!name) return null;
+  const pal = theme === 'light' ? GR_SECTION_PALETTE_LIGHT : GR_SECTION_PALETTE_DARK;
+  return pal[grHashStr(name) % pal.length];
+}
 
 // bases: top-level folder ("Section") names present in the library.
 // kbFilter: the SAME array the sidebar's Sections switcher owns ([] = show all).
@@ -39,7 +69,7 @@ const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 // Scope filtering (All/Private/Team/Plugins) already happened one level up — the
 // `graph` prop is pre-filtered by the parent's kbFilter+scopeFilter, so this
 // component owns no filtering of its own beyond the date-cutoff scrubber below.
-function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
+function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
   const wrapRef = React.useRef(null);
   const canvasRef = React.useRef(null);
   const simRef = React.useRef(null);
@@ -63,15 +93,42 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
 
   // Which edge kinds are actually present → the legend only lists relevant colors.
   // Any kind not in GR_EDGE_KINDS (future/unknown) folds into the 'link' row.
+  const GR_EDGE_KIND_SET = React.useMemo(() => new Set(GR_EDGE_KINDS.map((e) => e.kind)), []);
   const legend = React.useMemo(() => {
     const present = new Set();
     for (const e of (graph.edges || [])) {
       const k = e[2] || 'link';
-      present.add(GR_EDGE_COLORS[k] ? k : 'link');
+      present.add(GR_EDGE_KIND_SET.has(k) ? k : 'link');
     }
     return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)) };
-  }, [graph]);
+  }, [graph, GR_EDGE_KIND_SET]);
   const [sel, setSel] = React.useState(null);
+  // With many Sections the pill row would overflow the toolbar — show a capped
+  // number inline (prioritizing whichever are actively filtered-on, so an
+  // engaged filter never silently hides itself in the overflow) and collapse
+  // the rest into a "+N more" popover, same pattern as the editor's tab overflow.
+  const SECTION_PILL_CAP = 5;
+  const [sectionMenuOpen, setSectionMenuOpen] = React.useState(false);
+  const sectionRows = React.useMemo(() => {
+    const all = bases || [];
+    if (all.length <= SECTION_PILL_CAP) return { shown: all, overflow: [] };
+    const active = kbFilter && kbFilter.length ? all.filter((n) => kbFilter.includes(n)) : [];
+    const rest = all.filter((n) => !active.includes(n));
+    const shown = [...active, ...rest].slice(0, SECTION_PILL_CAP);
+    const overflow = all.filter((n) => !shown.includes(n));
+    return { shown, overflow };
+  }, [bases, kbFilter]);
+  // Mirrors the canvas draw's data-theme observer so the React-rendered legend
+  // and section pills also pick the light/dark-optimized swatch.
+  const [theme, setThemeState] = React.useState(() =>
+    document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+  React.useEffect(() => {
+    const mo = new MutationObserver(() => {
+      setThemeState(document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark');
+    });
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+    return () => mo.disconnect();
+  }, []);
   // Version-control date scrubber: show only notes created on/before `cutoff`.
   // Scrubs on the note's real creation date (`created` — frontmatter created:/date:,
   // else file mtime, else first-seen; see core/lore/index.py derive_created_at) so
@@ -98,10 +155,11 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
     const cv = canvasRef.current, wrap = wrapRef.current;
     if (!d3 || !cv || !wrap) return;
 
-    // ---- palette from CSS vars (canvas can't use var()) ----
+    // ---- palette from CSS vars (canvas can't use var()) + theme-aware edge colors ----
     const readPalette = () => {
       const cs = getComputedStyle(document.documentElement);
       const v = (n, f) => (cs.getPropertyValue(n).trim() || f);
+      const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
       palRef.current = {
         team: v('--jade-500', '#3fb27f'), enterprise: v('--azure-500', '#4a90d9'),
         private: v('--obsidian-400', '#8b8f9a'),
@@ -109,12 +167,12 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
         edge: v('--border-strong', '#2a2d34'), edgeLit: v('--brand-fg', '#c9a24b'),
         text: v('--text-muted', '#9aa0aa'), textStrong: v('--text-strong', '#f0f0f2'),
         brand: v('--brand-fg', '#c9a24b'),
+        theme, edgeColors: grEdgeColorMap(theme),
       };
     };
     readPalette();
 
     // ---- edge kind → color map (shared with the legend, GR_EDGE_KINDS above) ----
-    const EDGE_KIND_COLORS = GR_EDGE_COLORS;
     const STRUCTURAL_KINDS = GR_EDGE_STRUCTURAL;
 
     // ---- data (d3 mutates node objects in place) ----
@@ -170,7 +228,7 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
         // Every kind (reasoned AND structural) gets its own typed color from
         // GR_EDGE_KINDS — pal.edge is now only a last-resort fallback for a
         // genuinely unrecognized kind, not the default for structural edges.
-        const kindColor = EDGE_KIND_COLORS[l.kind] || pal.edge;
+        const kindColor = pal.edgeColors[l.kind] || pal.edge;
         const conf = l.weight != null ? l.weight : 0.9;
         ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
         ctx.strokeStyle = lit ? pal.edgeLit : kindColor;
@@ -188,7 +246,11 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
         const near = !focus || nb.has(n.id) || n.id === focus;
         ctx.globalAlpha = near ? 1 : 0.22;
         ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, 6.283185);
-        ctx.fillStyle = pal[n.scope] || pal.custom || pal.private;
+        // Color by Section (top-level folder) when known — the pills above filter
+        // by section, so node color should match what you're toggling. Falls back
+        // to scope-based coloring for notes outside any tracked folder (e.g.
+        // synthetic session/topic nodes with no baseOf).
+        ctx.fillStyle = (baseOf && grSectionColor(baseOf(n.path), pal.theme)) || pal[n.scope] || pal.custom || pal.private;
         ctx.fill();
         if (n.id === selRef.current) {
           ctx.lineWidth = 2 / t.k; ctx.strokeStyle = pal.brand; ctx.stroke();
@@ -327,7 +389,7 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
       sim.on('tick', null); sim.stop();
       drawRef.current = null;
     };
-  }, [graphSig, onOpen, setSel]);
+  }, [graphSig, onOpen, setSel, baseOf]);
 
   const reheat = () => { if (simRef.current) simRef.current.alpha(0.55).restart(); };
   const fit = () => { if (zoomRef.current && zoomRef.current.fit) zoomRef.current.fit(); };
@@ -350,12 +412,37 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
       </div>
 
       <div style={{ position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '68%' }}>
-        {(bases || []).map((name) => (
+        {sectionRows.shown.map((name) => (
           <button key={name} onClick={() => onToggleBase && onToggleBase(name)} title={`Toggle the "${name}" section`}
             style={pill(!kbFilter || !kbFilter.length || kbFilter.includes(name))}>
-            {name}
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: grSectionColor(name, theme), flexShrink: 0 }} />{name}
           </button>
         ))}
+        {sectionRows.overflow.length > 0 && (
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setSectionMenuOpen((o) => !o)} style={pill(sectionRows.overflow.some((n) => !kbFilter || !kbFilter.length || kbFilter.includes(n)))}>
+              +{sectionRows.overflow.length} more
+            </button>
+            {sectionMenuOpen && (
+              <React.Fragment>
+                <div onClick={() => setSectionMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, zIndex: 41, minWidth: 180, maxHeight: 280, overflowY: 'auto', padding: 6, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)' }}>
+                  {sectionRows.overflow.map((name) => {
+                    const active = !kbFilter || !kbFilter.length || kbFilter.includes(name);
+                    return (
+                      <div key={name} onClick={() => onToggleBase && onToggleBase(name)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 9px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', opacity: active ? 1 : 0.45, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-muted)' }}
+                        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                        <span style={{ width: 8, height: 8, borderRadius: '50%', background: grSectionColor(name, theme), flexShrink: 0 }} />{name}
+                      </div>
+                    );
+                  })}
+                </div>
+              </React.Fragment>
+            )}
+          </div>
+        )}
         <div title="Scrub the graph by note creation date (version control) — drag to see knowledge as of any date" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 11px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-raised)' }}>
           <GrIcon name="history" size={12} style={{ color: 'var(--text-faint)' }} />
           <input type="range" min={dateBounds.lo} max={dateBounds.hi} value={Math.min(cutoff, dateBounds.hi)} step={86400000}
@@ -373,7 +460,7 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase }) {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {legend.kinds.map((e) => (
               <div key={e.kind} style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, color: 'var(--text-muted)' }}>
-                <span style={{ width: 14, height: 2.5, borderRadius: 2, background: e.color, flexShrink: 0 }} />{e.label}
+                <span style={{ width: 14, height: 2.5, borderRadius: 2, background: theme === 'light' ? e.light : e.dark, flexShrink: 0 }} />{e.label}
               </div>
             ))}
           </div>
