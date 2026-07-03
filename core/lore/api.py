@@ -802,6 +802,8 @@ class UpkeepRunReq(BaseModel):
     use_llm: bool = False   # when True: Ollama-assisted topic extraction (slower, capped at 25 notes)
     auto_classify: bool = False      # opt-in (cfg.autoClassify): tag notes + propose Sections
     section_threshold: int = 5       # notes on one topic before a Section is proposed
+    auto_file: bool = False          # opt-in (cfg.autoFileObvious): record unambiguous notes
+                                     # into existing applied sections (state only; desktop moves)
 
 @app.post("/upkeep/run")
 def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
@@ -809,15 +811,20 @@ def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
 
     With auto_classify=true also tags untagged notes and upserts Section PROPOSALS —
     state only; no files are ever moved by upkeep (apply is an explicit user action).
+    With auto_file=true (opt-in setting, default OFF) unambiguous notes are recorded
+    into existing applied sections and the move plan returned in stats.autoFile —
+    still state only; the DESKTOP executes those moves under its path-guard.
 
-    Body: {tenant, scope?, use_llm?:bool=False, auto_classify?:bool=False, section_threshold?:int=5}
+    Body: {tenant, scope?, use_llm?:bool=False, auto_classify?:bool=False,
+           section_threshold?:int=5, auto_file?:bool=False}
     Returns: {dateNotes, topics, folded, ...}
     """
     from .upkeep import run_upkeep
     global _upkeep_last_run, _upkeep_last_stats
     stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm,
                        auto_classify=req.auto_classify,
-                       section_threshold=req.section_threshold)
+                       section_threshold=req.section_threshold,
+                       auto_file=req.auto_file)
     # Opportunistic backfill: any note still missing created_at (e.g. indexed before
     # the column existed) gets it derived now from its source file, so the graph
     # date-scrubber keeps improving as upkeep runs without a separate user action.
@@ -863,6 +870,15 @@ class SectionApplyReq(BaseModel):
 class SectionReq(BaseModel):
     tenant: str
 
+class SectionCreateReq(BaseModel):
+    tenant: str
+    name: str
+    note_ids: list[str]
+
+class SectionPromoteReq(BaseModel):
+    tenant: str
+    share_scope: str = 'private'   # 'private' | 'team' | 'public' (team/public: forward-looking)
+
 
 @app.get("/sections")
 def sections_list(tenant: Optional[str] = None):
@@ -881,6 +897,18 @@ def sections_apply(section_id: str, req: SectionApplyReq):
     from . import sections
     try:
         return sections.apply_section(_conn, req.tenant, section_id, dest_dir=req.dest_dir)
+    except sections.SectionError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/sections/create")
+def sections_create(req: SectionCreateReq):
+    """Create an APPLIED section from an explicit note set (chat-driven wizard
+    creation). No proposal step, NO file moves — membership is the recorded
+    note_ids; the notes stay where they are. Body: {tenant, name, note_ids}."""
+    from . import sections
+    try:
+        return sections.create_section_from_notes(_conn, req.tenant, req.name, req.note_ids)
     except sections.SectionError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -917,13 +945,15 @@ class WizardAskReq(BaseModel):
 
 
 @app.post("/sections/{section_id}/promote")
-def sections_promote(section_id: str, req: SectionReq):
+def sections_promote(section_id: str, req: SectionPromoteReq):
     """Promote an APPLIED section to a Personal Wizard (idempotent).
-    Body: {tenant}. 409 unless the section's status is 'applied' — the notes
-    must already live together as a real folder before a wizard can scope to them."""
+    Body: {tenant, share_scope?='private'}. 409 unless the section's status is
+    'applied' — the note set must be settled before a wizard can scope to it.
+    share_scope 'team'/'public' are stored-only flags until sync/publish land."""
     from . import sections
     try:
-        return sections.promote_section(_conn, req.tenant, section_id)
+        return sections.promote_section(_conn, req.tenant, section_id,
+                                        share_scope=req.share_scope)
     except sections.SectionError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -963,6 +993,19 @@ def wizards_personal_ask(wizard_id: str, req: WizardAskReq, embedder=Depends(get
     sections.append_wizard_chat(_conn, req.tenant, wizard_id, "user", req.question)
     sections.append_wizard_chat(_conn, req.tenant, wizard_id, "assistant", text, sources=citations)
     return {"answer": text, "engine": engine, "citations": citations}
+
+
+@app.get("/wizards/personal/{wizard_id}/notes")
+def wizards_personal_notes(wizard_id: str, tenant: Optional[str] = None):
+    """The wizard's member notes (detail-view "what's inside").
+    Returns {notes:[{id, title, path}]} sorted by title; 404 on unknown wizard."""
+    from . import sections
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    try:
+        return {"notes": sections.wizard_notes(_conn, tenant, wizard_id)}
+    except sections.SectionError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @app.get("/wizards/personal/{wizard_id}/chat")

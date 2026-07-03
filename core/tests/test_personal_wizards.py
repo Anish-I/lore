@@ -97,13 +97,19 @@ def test_promote_applied_section_is_idempotent(tmp_path):
     assert r2.status_code == 200 and r2.json()["id"] == body["id"]
     assert len(list_personal_wizards(conn, tenant)) == 1
 
-    # Listing endpoint carries the folder from the recorded move plan.
+    # Listing endpoint carries the folder from the recorded move plan, and the
+    # share scope defaults to 'private' when promote doesn't name one.
     lr = client.get(f"/wizards/personal?tenant={tenant}")
     assert lr.status_code == 200
     wiz = lr.json()["wizards"]
     assert len(wiz) == 1
     assert wiz[0]["folder"] == dest
     assert wiz[0]["topic"] == "Kalshi Trading"
+    assert wiz[0]["share_scope"] == "private"
+
+    # Re-promote with a different scope: idempotent — the existing row wins.
+    r3 = client.post(f"/sections/{sid}/promote", json={"tenant": tenant, "share_scope": "public"})
+    assert r3.status_code == 200 and r3.json()["share_scope"] == "private"
 
     # Section undo stays possible after promotion (wizard is just a view).
     ur = client.post(f"/sections/{sid}/undo", json={"tenant": tenant})
@@ -142,6 +148,27 @@ def test_wizard_members_union_of_folder_and_recorded_ids(tmp_path):
 
     with pytest.raises(SectionError):
         wizard_members(conn, tenant, "wiz:nope:missing")
+
+
+def test_wizard_notes_endpoint_lists_members(tmp_path):
+    tenant = "wiz-notes"
+    conn = _conn()
+    sid, members, outsider = _seed_section(conn, tenant, tmp_path)
+    apply_section(conn, tenant, sid,
+                  dest_dir=str(tmp_path / "Kalshi Trading").replace("\\", "/"))
+    wid = promote_section(conn, tenant, sid)["id"]
+
+    r = client.get(f"/wizards/personal/{wid}/notes?tenant={tenant}")
+    assert r.status_code == 200
+    notes = r.json()["notes"]
+    assert {n["id"] for n in notes} == set(members)
+    assert outsider not in {n["id"] for n in notes}
+    assert all(n["title"] and n["path"] for n in notes)
+    titles = [n["title"] for n in notes]
+    assert titles == sorted(titles, key=str.lower)
+
+    assert client.get(f"/wizards/personal/wiz:none/notes?tenant={tenant}").status_code == 404
+    assert client.get(f"/wizards/personal/{wid}/notes").status_code == 422  # tenant required
 
 
 def test_wizard_ask_scopes_citations_and_persists_chat(tmp_path):

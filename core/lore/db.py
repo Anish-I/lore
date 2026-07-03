@@ -233,7 +233,9 @@ create table if not exists personal_wizards(
   name text not null,
   topic text not null,
   note_count int default 0,
-  created_at timestamptz default now());
+  share_scope text not null default 'private',
+  created_at timestamptz default now(),
+  constraint pw_share_scope_check check (share_scope in ('private','team','public')));
 create index if not exists personal_wizards_tenant on personal_wizards(tenant_id);
 create table if not exists personal_wizard_chats(
   id text primary key,
@@ -255,6 +257,15 @@ create table if not exists folded_paths(
 # PG migration note: personal_wizards / personal_wizard_chats are NEW tables, so the
 # CREATE TABLE IF NOT EXISTS in SCHEMA above IS the migration (bootstrap step 3) —
 # same pattern section_proposals used; no ALTER/DO$$ entry needed.
+#
+# share_scope migration note: pre-existing personal_wizards tables (both dialects)
+# lack the column, so bootstrap adds it — PG via ADD COLUMN IF NOT EXISTS below,
+# SQLite via probe-and-add in bootstrap_schema (same pattern as notes.created_at).
+# Migrated columns don't get the CHECK constraint; sections.promote_section
+# validates the value in code, so nothing invalid can be written either way.
+_WIZARD_SCOPE_MIGRATION = [
+    "alter table personal_wizards add column if not exists share_scope text not null default 'private'",
+]
 
 # Columns added in M1 (Hooks milestone).  ADD COLUMN IF NOT EXISTS is idempotent
 # on PostgreSQL 9.6+.  Run before the SCHEMA block so existing databases get the
@@ -376,7 +387,9 @@ create table if not exists personal_wizards(
   name text not null,
   topic text not null,
   note_count int default 0,
-  created_at timestamp default current_timestamp);
+  share_scope text not null default 'private',
+  created_at timestamp default current_timestamp,
+  constraint pw_share_scope_check check (share_scope in ('private','team','public')));
 create index if not exists personal_wizards_tenant on personal_wizards(tenant_id);
 create table if not exists personal_wizard_chats(
   id text primary key,
@@ -417,6 +430,13 @@ def bootstrap_schema(conn):
             conn.execute("alter table notes add column created_at timestamp")
         except Exception:
             pass  # column already exists
+        # Same probe-and-add for personal_wizards.share_scope (stores created
+        # before the wizard share-scope shipped).
+        try:
+            conn.execute(
+                "alter table personal_wizards add column share_scope text not null default 'private'")
+        except Exception:
+            pass  # column already exists
         return
 
     # Step 1a: add source_type to notes (M1 migration).
@@ -443,6 +463,13 @@ def bootstrap_schema(conn):
 
     # Step 1d: add created_at to notes (graph date-scrubber).
     for stmt in _CREATED_MIGRATION:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # table may not exist yet
+
+    # Step 1e: add share_scope to personal_wizards (wizard sharing milestone).
+    for stmt in _WIZARD_SCOPE_MIGRATION:
         try:
             conn.execute(stmt)
         except Exception:

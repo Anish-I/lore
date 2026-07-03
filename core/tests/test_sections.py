@@ -12,10 +12,11 @@ from fastapi.testclient import TestClient
 
 from lore import db
 from lore.api import app
+from lore.autofile import auto_file_notes
 from lore.classify import classify_fallback, classify_untagged
 from lore.sections import (
-    SectionError, apply_section, dismiss_section, list_sections,
-    propose_sections, undo_section,
+    SectionError, apply_section, create_section_from_notes, dismiss_section,
+    list_sections, propose_sections, undo_section,
 )
 from lore.upkeep import run_upkeep
 from lore.embed import FakeEmbedder
@@ -323,6 +324,195 @@ def test_sections_endpoints_roundtrip(tmp_path):
 
     # unknown id → 409 (section not found)
     assert client.post("/sections/sec:none:x/apply", json={"tenant": tenant}).status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# create_section_from_notes (chat-driven wizard creation)
+# ---------------------------------------------------------------------------
+
+def test_create_section_from_notes_applied_without_moves(tmp_path):
+    tenant = "sec-create"
+    conn = _conn()
+    files = []
+    for i in range(3):
+        p = tmp_path / f"c-{i}.md"
+        p.write_text("# c\n", encoding="utf-8")
+        files.append(str(p))
+        _insert_note(conn, tenant, f"cr-{i}", f"cr {i}", "body", path=str(p))
+    _insert_note(conn, tenant, "cr-nofile", "cr nofile", "body")  # DB-only note
+
+    res = create_section_from_notes(conn, tenant, "Trading Bots",
+                                    ["cr-0", "cr-1", "cr-2", "cr-nofile", "cr-stale"])
+    assert res["ok"] and res["status"] == "applied"
+    assert res["id"] == f"sec:{tenant}:trading-bots"
+    assert res["note_ids"] == ["cr-0", "cr-1", "cr-2", "cr-nofile"]  # stale id dropped
+
+    # SAFEGUARD: nothing moved; membership is recorded state only.
+    for f in files:
+        assert os.path.exists(f)
+    sec = list_sections(conn, tenant)[0]
+    assert sec["status"] == "applied"
+    assert {n["id"] for n in sec["notes"]} == {"cr-0", "cr-1", "cr-2", "cr-nofile"}
+    # original_paths mirror apply-without-dest: from recorded, to=None (no folder).
+    assert all(mv["to"] is None for mv in sec["original_paths"])
+
+    # Duplicate name (same slug) refuses rather than clobbering.
+    try:
+        create_section_from_notes(conn, tenant, "trading bots", ["cr-0"])
+        assert False, "duplicate section name should raise"
+    except SectionError:
+        pass
+    # Empty inputs refuse.
+    for bad in [("", ["cr-0"]), ("X", []), ("Y", ["nope"])]:
+        try:
+            create_section_from_notes(conn, tenant, bad[0], bad[1])
+            assert False, f"create with {bad!r} should raise"
+        except SectionError:
+            pass
+
+
+def test_sections_create_endpoint_and_promote_share_scope(tmp_path):
+    tenant = "sec-create-http"
+    conn = _conn()
+    for i in range(2):
+        p = tmp_path / f"h-{i}.md"
+        p.write_text("# h\n", encoding="utf-8")
+        _insert_note(conn, tenant, f"ch-{i}", f"ch {i}", "body", path=str(p))
+
+    r = client.post("/sections/create",
+                    json={"tenant": tenant, "name": "My Wizard", "note_ids": ["ch-0", "ch-1"]})
+    assert r.status_code == 200
+    sid = r.json()["id"]
+    assert r.json()["status"] == "applied"
+
+    # Created-applied section promotes directly (the chat-builder flow), scope stored.
+    r = client.post(f"/sections/{sid}/promote", json={"tenant": tenant, "share_scope": "team"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["share_scope"] == "team"
+    lr = client.get(f"/wizards/personal?tenant={tenant}").json()["wizards"]
+    assert lr[0]["share_scope"] == "team"
+
+    # 409s: duplicate name, empty note set, bad share_scope.
+    assert client.post("/sections/create",
+                       json={"tenant": tenant, "name": "My Wizard", "note_ids": ["ch-0"]}).status_code == 409
+    assert client.post("/sections/create",
+                       json={"tenant": tenant, "name": "Other", "note_ids": []}).status_code == 409
+    assert client.post(f"/sections/{sid}/promote",
+                       json={"tenant": tenant, "share_scope": "everyone"}).status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# auto-file (opt-in): unambiguous notes into existing applied sections
+# ---------------------------------------------------------------------------
+
+def _applied_section(conn, tenant, topic, tmp_path, n=5, prefix="af"):
+    """Seed n topic notes, propose + apply into <tmp_path>/<topic>. Returns section id."""
+    for i in range(n):
+        p = tmp_path / f"{prefix}-{i}.md"
+        p.write_text("# n\n", encoding="utf-8")
+        _insert_note(conn, tenant, f"{prefix}-{i}", f"{prefix} {i}", "body", path=str(p))
+        conn.execute(
+            "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+            "values(%s,%s,%s,'topic','llm') on conflict do nothing",
+            (f"{prefix}-{i}", tenant, topic))
+    propose_sections(conn, tenant, threshold=n)
+    sid = f"sec:{tenant}:" + topic.lower().replace(' ', '-')
+    apply_section(conn, tenant, sid, dest_dir=str(tmp_path / topic).replace("\\", "/"))
+    return sid
+
+
+def test_auto_file_unambiguous_note_recorded_not_moved(tmp_path):
+    tenant = "af-clear"
+    conn = _conn()
+    sid = _applied_section(conn, tenant, "Kalshi Bot", tmp_path)
+
+    # A NEW note classified squarely into the applied section's topic.
+    p = tmp_path / "new-note.md"
+    p.write_text("# new\n", encoding="utf-8")
+    _insert_note(conn, tenant, "af-new", "af new", "body", path=str(p))
+    conn.execute(
+        "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+        "values('af-new',%s,'Kalshi Bot','topic','llm') on conflict do nothing", (tenant,))
+
+    res = auto_file_notes(conn, tenant)
+    assert res["filed"] == 1
+    mv = res["moves"][0]
+    dest = str(tmp_path / "Kalshi Bot").replace("\\", "/")
+    assert mv["note_id"] == "af-new" and mv["section_id"] == sid
+    assert mv["to"] == f"{dest}/new-note.md"
+
+    # SAFEGUARD: backend recorded state only — the file did not move.
+    assert os.path.exists(str(p))
+
+    # Membership + undo path recorded on the section.
+    sec = list_sections(conn, tenant)[0]
+    assert "af-new" in {n["id"] for n in sec["notes"]}
+    assert any(o["note_id"] == "af-new" and o["to"] == mv["to"] for o in sec["original_paths"])
+
+    # Claimed now: neither re-filed nor re-proposed.
+    assert auto_file_notes(conn, tenant)["filed"] == 0
+    assert propose_sections(conn, tenant, threshold=2)["proposed"] == 0
+
+
+def test_auto_file_ambiguous_or_weak_notes_stay_proposals(tmp_path):
+    tenant = "af-ambig"
+    conn = _conn()
+    _applied_section(conn, tenant, "Alpha Proj", tmp_path, prefix="aa")
+    _applied_section(conn, tenant, "Beta Proj", tmp_path, prefix="bb")
+
+    # Topic matches BOTH sections → tie, margin 0 → not filed.
+    p1 = tmp_path / "both.md"
+    p1.write_text("# both\n", encoding="utf-8")
+    _insert_note(conn, tenant, "af-both", "af both", "body", path=str(p1))
+    for topic in ("Alpha Proj", "Beta Proj"):
+        conn.execute(
+            "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+            "values('af-both',%s,%s,'topic','llm') on conflict do nothing", (tenant, topic))
+
+    # Weak signal only (a tag, no topic match) → below the bar → not filed.
+    p2 = tmp_path / "weak.md"
+    p2.write_text("# weak\n", encoding="utf-8")
+    _insert_note(conn, tenant, "af-weak", "af weak", "body", path=str(p2))
+    conn.execute(
+        "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+        "values('af-weak',%s,'Somewhere Else','topic','llm') on conflict do nothing", (tenant,))
+    conn.execute(
+        "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+        "values('af-weak',%s,'alpha-proj','tag','llm') on conflict do nothing", (tenant,))
+
+    res = auto_file_notes(conn, tenant)
+    assert res["filed"] == 0
+    assert res["checked"] >= 2
+
+
+def test_upkeep_auto_file_default_off_and_opt_in(tmp_path):
+    tenant = "af-upkeep"
+    conn = _conn()
+    sid = _applied_section(conn, tenant, "Gamma Proj", tmp_path, prefix="gg")
+    p = tmp_path / "obvious.md"
+    p.write_text("# obvious\n", encoding="utf-8")
+    _insert_note(conn, tenant, "af-obv", "af obv", "body", path=str(p))
+    conn.execute(
+        "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+        "values('af-obv',%s,'Gamma Proj','topic','llm') on conflict do nothing", (tenant,))
+
+    # Default (OFF): no autoFile key, section membership untouched.
+    stats = run_upkeep(conn, FakeEmbedder(), tenant, scope=_SCOPE)
+    assert "autoFile" not in stats
+    sec = list_sections(conn, tenant)[0]
+    assert "af-obv" not in {n["id"] for n in sec["notes"]}
+
+    # Same via HTTP with the default body: still no auto-file.
+    r = client.post("/upkeep/run", json={"tenant": tenant})
+    assert r.status_code == 200 and "autoFile" not in r.json()
+
+    # Opt-in: the move plan appears (state only — file still in place).
+    r = client.post("/upkeep/run", json={"tenant": tenant, "auto_file": True})
+    assert r.status_code == 200
+    af = r.json()["autoFile"]
+    assert af["filed"] == 1 and af["moves"][0]["section_id"] == sid
+    assert os.path.exists(str(p))
 
 
 def test_run_upkeep_auto_classify_proposes_sections():

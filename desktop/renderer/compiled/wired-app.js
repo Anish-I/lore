@@ -20,22 +20,22 @@ function flatten(tree, acc = []) {
 }
 function firstNote(tree) {return flatten(tree)[0] || null;}
 
-// Top-bar scope filter (All / Private / Team / Plugins) — shared predicate used for BOTH the
+// Top-bar scope filter (All / Private / Team / Wizards) — shared predicate used for BOTH the
 // file tree (below) and the graph (see filteredGraph). `wizardHit` is precomputed by the caller
 // (a wizard-id Set built from the unfiltered tree) since graph nodes don't carry a wizard flag.
 function passesScopeFilter(filter, scopeValue, wizardHit) {
   if (!filter || filter === 'all') return true;
   // Solo libraries use a purpose-based scope (e.g. "engineering"), not a literal
   // "private" tag — so "Private" means YOUR own notes: anything that isn't an
-  // installed plugin/wizard and isn't explicitly shared to a team/enterprise.
+  // installed store wizard and isn't explicitly shared to a team/enterprise.
   if (filter === 'private') return !wizardHit && scopeValue !== 'team' && scopeValue !== 'enterprise';
   if (filter === 'team') return scopeValue === 'team' || scopeValue === 'enterprise';
-  if (filter === 'plugins') return Boolean(wizardHit);
+  if (filter === 'plugins') return Boolean(wizardHit); // id predates the Wizards label
   return true;
 }
 
 // Collects the ids of wizard-installed notes (main.js buildTree sets `wizard: true` from
-// frontmatter) so both the tree filter and the graph filter can detect "Plugins" notes.
+// frontmatter) so both the tree filter and the graph filter can detect "Wizards" notes.
 // Ids are lowercased since graph node paths and tree note ids may differ in case.
 function collectWizardIds(tree, out = new Set()) {
   for (const n of tree || []) {
@@ -318,7 +318,7 @@ function App() {
   const [graphLoading, setGraphLoading] = React.useState(false);
   const [graphNonce, setGraphNonce] = React.useState(0);
   const [kbFilter, setKbFilter] = React.useState([]); // selected knowledge bases (top-level folders); [] = all
-  const [scopeFilter, setScopeFilter] = React.useState('all'); // top-bar segmented filter: all | private | team | plugins
+  const [scopeFilter, setScopeFilter] = React.useState('all'); // top-bar segmented filter: all | private | team | plugins (labelled Wizards)
   const [showImportModal, setShowImportModal] = React.useState(false);
   const [renamingId, setRenamingId] = React.useState(null); // sidebar node currently showing an inline rename input
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
@@ -457,9 +457,9 @@ function App() {
   }, [treeData]);
   // Built from the UNFILTERED tree — main.js buildTree/scopeOf() sets `wizard: true` on notes
   // whose frontmatter has a `wizard:` key. Graph nodes carry no wizard flag of their own, so
-  // this Set (keyed by lowercased path) is reused to detect "Plugins" notes on both surfaces.
+  // this Set (keyed by lowercased path) is reused to detect "Wizards" notes on both surfaces.
   const wizardIds = React.useMemo(() => collectWizardIds(tree), [tree]);
-  // Scope filter (All/Private/Team/Plugins) — recursive, prunes empty folders. Applied BEFORE
+  // Scope filter (All/Private/Team/Wizards) — recursive, prunes empty folders. Applied BEFORE
   // the Sections (kbFilter) filter below so the two compose rather than one replacing the other.
   const scopeFilteredTree = React.useMemo(
     () => filterTreeByScope(tree, (n) => passesScopeFilter(scopeFilter, n.scope, wizardIds.has(String(n.id).toLowerCase()))),
@@ -1120,7 +1120,7 @@ function App() {
     askOpen && askPanel
     ),
 
-    view === 'buckets' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(BucketsView, { buckets: M.buckets, onAsk: () => setAskOpen(true), onOpen: openBucket, onChanged: reloadAfterImport }), askOpen && askPanel),
+    view === 'buckets' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(BucketsView, { buckets: M.buckets, onAsk: () => setAskOpen(true), onOpen: openBucket, onChanged: reloadAfterImport, scopes: persona.scopes }), askOpen && askPanel),
     view === 'settings' && /*#__PURE__*/React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions, onOpenSetup: () => setShowOnboarding(true) }),
     view === 'hooks' && HooksView && /*#__PURE__*/React.createElement(HooksView, { scopeOptions: scopeOptions, identityReady: identityReady, tenant: tenant, scope: persona.scopes && persona.scopes[0], onOpenSetup: () => setShowOnboarding(true) })
     ),

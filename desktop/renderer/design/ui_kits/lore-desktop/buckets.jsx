@@ -1,5 +1,13 @@
 /* global React */
-// Lore desktop - Buckets: shared knowledge collections pooled across libraries
+// Lore desktop - Wizards view: the store, split into two clear halves.
+//   Knowledge bases — bundles of lore notes: your Personal wizards, shared
+//     collections, and curated catalog packs. Chat without installing (preview),
+//     or create your own by DESCRIBING it (wizard-builder.jsx, the primary flow).
+//   Tools — plugins that connect external data/capabilities INTO Lore: MCP
+//     servers, agent skills, marketplace integrations. Connected ones show
+//     status; catalog ones install.
+// Clicking a card's title opens an inline DETAIL view (no router — same
+// conditional-render pattern as the rest of the app).
 const bkNS = window.VaultDesignSystem_ffbf58;
 const { Icon: BkIcon, Card: BkCard, ScopeTag: BkScope, Avatar: BkAvatar, Badge: BkBadge, Button: BkButton, Tabs: BkTabs } = bkNS;
 
@@ -8,6 +16,12 @@ const bkS = {
   head: { display: 'flex', alignItems: 'center', gap: 12, padding: '22px 28px 0' },
   body: { padding: '18px 28px 60px', maxWidth: 1040, margin: '0 auto' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 },
+  h2: { fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' },
+  sub: { fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 10px' },
+  cardIcon: { width: 32, height: 32, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' },
+  // Card titles open the detail view — underline on hover says "clickable".
+  titleLink: { fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)', cursor: 'pointer', textDecoration: 'none' },
+  chip: (active) => ({ padding: '4px 11px', borderRadius: 'var(--radius-full)', cursor: 'pointer', border: `1px solid ${active ? 'var(--brand-soft-border)' : 'var(--border)'}`, background: active ? 'var(--brand-soft-bg)' : 'var(--surface-inset)', color: active ? 'var(--brand-fg)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11, textTransform: 'capitalize' }),
 };
 
 function Recall({ value }) {
@@ -25,9 +39,7 @@ function BucketCard({ b, onOpen }) {
   return (
     <BkCard interactive onClick={() => onOpen && onOpen(b)} style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ width: 32, height: 32, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
-          <BkIcon name="library" size={17} style={{ color: 'var(--brand-fg)' }} />
-        </span>
+        <span style={bkS.cardIcon}><BkIcon name="library" size={17} style={{ color: 'var(--brand-fg)' }} /></span>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)' }}>{b.name}</div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', marginTop: 1 }}>{b.group} · {b.notes} notes</div>
@@ -66,18 +78,28 @@ function BkStars({ value, onRate }) {
   );
 }
 
-function WizardStoreCard({ w, onInstall, onRate, onUninstall }) {
+// Shared Install / Uninstall action pair (card footers + the detail view).
+function InstallActions({ w, onInstall, onUninstall }) {
   const [busy, setBusy] = React.useState(false);
   const [unbusy, setUnbusy] = React.useState(false);
+  return w.installed
+    ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+        <BkBadge tone="success" dot>installed</BkBadge>
+        <BkButton variant="secondary" size="sm" icon={unbusy ? 'loader' : 'trash'} onClick={async () => { setUnbusy(true); await onUninstall(w.id); setUnbusy(false); }}>{unbusy ? 'Removing…' : 'Uninstall'}</BkButton>
+      </span>
+    : <BkButton variant="primary" size="sm" icon={busy ? 'loader' : 'download'} onClick={async () => { setBusy(true); await onInstall(w.id); setBusy(false); }}>{busy ? 'Installing…' : 'Install'}</BkButton>;
+}
+
+function StoreCard({ w, onInstall, onRate, onUninstall, onOpen }) {
+  const isTool = w.kind === 'tool';
   return (
     <BkCard style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ width: 32, height: 32, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
-          <BkIcon name="sparkles" size={16} style={{ color: 'var(--brand-fg)' }} />
-        </span>
+        <span style={bkS.cardIcon}><BkIcon name={isTool ? 'plug-zap' : 'sparkles'} size={16} style={{ color: 'var(--brand-fg)' }} /></span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)' }}>{w.name}</div>
-          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{w.author} · {w.noteCount} notes</div>
+          <div style={bkS.titleLink} onClick={() => onOpen(w)} title="Open details"
+            onMouseEnter={(e) => { e.target.style.textDecoration = 'underline'; }} onMouseLeave={(e) => { e.target.style.textDecoration = 'none'; }}>{w.name}</div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{w.author}{isTool ? '' : ` · ${w.noteCount} notes`}</div>
         </div>
         <BkScope scope={w.scope} size="sm" showLabel={false} />
       </div>
@@ -87,85 +109,39 @@ function WizardStoreCard({ w, onInstall, onRate, onUninstall }) {
         <BkStars value={w.myRating || Math.round(w.rating || 0)} onRate={(s) => onRate(w.id, s)} />
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{w.rating} · {(w.installs || 0).toLocaleString()}</span>
         <div style={{ flex: 1 }} />
-        {w.installed
-          ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-              <BkBadge tone="success" dot>installed</BkBadge>
-              <BkButton variant="secondary" size="sm" icon={unbusy ? 'loader' : 'trash'} onClick={async () => { setUnbusy(true); await onUninstall(w.id); setUnbusy(false); }}>{unbusy ? 'Removing…' : 'Uninstall'}</BkButton>
-            </span>
-          : <BkButton variant="primary" size="sm" icon={busy ? 'loader' : 'download'} onClick={async () => { setBusy(true); await onInstall(w.id); setBusy(false); }}>{busy ? 'Installing…' : 'Install'}</BkButton>}
+        <InstallActions w={w} onInstall={onInstall} onUninstall={onUninstall} />
       </div>
     </BkCard>
   );
 }
 
-function WizardStore({ onChanged }) {
-  const [catalog, setCatalog] = React.useState(null);
+// Search box + chip row + capped grid over a catalog slice. Shared by both tabs.
+function CatalogBrowser({ items, placeholder, chips, chipOf, onInstall, onRate, onUninstall, onOpen }) {
   const [q, setQ] = React.useState('');
-  const [cat, setCat] = React.useState('all');
+  const [chip, setChip] = React.useState('all');
+  const [installedOnly, setInstalledOnly] = React.useState(false);
   const [shown, setShown] = React.useState(40);
-  const [kindTab, setKindTab] = React.useState('all');
-  const load = React.useCallback(async () => {
-    if (!window.lore || !window.lore.wizards || !window.lore.wizards.catalog) { setCatalog([]); return; }
-    try { setCatalog(await window.lore.wizards.catalog()); } catch { setCatalog([]); }
-  }, []);
-  React.useEffect(() => { load(); }, [load]);
-  const install = async (id) => { try { await window.lore.wizards.install(id); } catch { /* */ } await load(); if (onChanged) onChanged(); };
-  const rate = async (id, s) => { try { await window.lore.wizards.rate(id, s); } catch { /* */ } load(); };
-  const uninstall = async (id) => { try { await window.lore.wizards.uninstall(id); } catch { /* */ } await load(); if (onChanged) onChanged(); };
-  if (catalog === null) return <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', padding: '24px 0' }}>Loading knowledge bases…</div>;
-  if (!catalog.length) return null;
-
-  const catOf = (w) => w.kind === 'wizard' ? 'featured' : ((w.topics && w.topics[0]) || 'tool');
-  const cats = ['all', 'featured', 'skill', 'mcp', 'marketplace'];
   const ql = q.trim().toLowerCase();
-
-  // Kind-level tab counts (from full catalog, unaffected by search)
-  const installedCount = catalog.filter((w) => !!w.installed).length;
-  const tabCounts = {
-    all: catalog.length,
-    bases: catalog.filter((w) => w.kind === 'wizard').length,
-    tools: catalog.filter((w) => w.kind === 'tool').length,
-    installed: installedCount,
-  };
-  const storeTabs = [
-    { value: 'all', label: 'All', count: tabCounts.all },
-    { value: 'bases', label: 'Bases', count: tabCounts.bases },
-    { value: 'tools', label: 'Tools', count: tabCounts.tools },
-  ];
-  if (installedCount > 0) storeTabs.push({ value: 'installed', label: 'Installed', count: installedCount });
-
-  // Kind tab pre-filter, then category chip + search filter
-  const kindFiltered = catalog.filter((w) => {
-    if (kindTab === 'bases') return w.kind === 'wizard';
-    if (kindTab === 'tools') return w.kind === 'tool';
-    if (kindTab === 'installed') return !!w.installed;
-    return true;
-  });
-  const filtered = kindFiltered.filter((w) => {
-    if (cat !== 'all' && catOf(w) !== cat) return false;
+  const filtered = items.filter((w) => {
+    if (installedOnly && !w.installed) return false;
+    if (chip !== 'all' && chipOf && chipOf(w) !== chip) return false;
     if (!ql) return true;
     return (w.name + ' ' + (w.desc || '') + ' ' + (w.topics || []).join(' ')).toLowerCase().includes(ql);
-  }).sort((a, b) => ((b.kind === 'wizard') - (a.kind === 'wizard')) || ((b.installs || 0) - (a.installs || 0)));
+  }).sort((a, b) => (b.installs || 0) - (a.installs || 0));
   const visible = filtered.slice(0, shown);
-  const chip = (active) => ({ padding: '4px 11px', borderRadius: 'var(--radius-full)', cursor: 'pointer', border: `1px solid ${active ? 'var(--brand-soft-border)' : 'var(--border)'}`, background: active ? 'var(--brand-soft-bg)' : 'var(--surface-inset)', color: active ? 'var(--brand-fg)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 11, textTransform: 'capitalize' });
-
   return (
-    <div style={{ marginTop: 28 }}>
-      <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' }}>Discover knowledge bases & tools</h2>
-      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 10px' }}>{catalog.length.toLocaleString()} available — curated knowledge bases + tools sourced from the web. Install to add into your library.</p>
-      <div style={{ marginBottom: 12 }}>
-        <BkTabs value={kindTab} onChange={(v) => { setKindTab(v); setCat('all'); setShown(40); }} tabs={storeTabs} />
-      </div>
+    <div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 7, flex: '1 1 220px', minWidth: 200, padding: '0 10px', height: 32, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
           <BkIcon name="search" size={14} style={{ color: 'var(--text-faint)' }} />
-          <input value={q} onChange={(e) => { setQ(e.target.value); setShown(40); }} placeholder="Search wizards & tools…" style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 13 }} />
+          <input value={q} onChange={(e) => { setQ(e.target.value); setShown(40); }} placeholder={placeholder} style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 13 }} />
         </div>
-        {cats.map((c) => <button key={c} onClick={() => { setCat(c); setShown(40); }} style={chip(cat === c)}>{c}</button>)}
+        {(chips || []).map((c) => <button key={c} onClick={() => { setChip(c); setShown(40); }} style={bkS.chip(chip === c)}>{c}</button>)}
+        <button onClick={() => { setInstalledOnly((v) => !v); setShown(40); }} style={bkS.chip(installedOnly)}>installed</button>
       </div>
       <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', margin: '0 2px 8px' }}>{filtered.length.toLocaleString()} result{filtered.length !== 1 ? 's' : ''}{filtered.length > shown ? ` · showing ${shown}` : ''}</div>
       <div style={bkS.grid}>
-        {visible.map((w) => <WizardStoreCard key={w.id} w={w} onInstall={install} onRate={rate} onUninstall={uninstall} />)}
+        {visible.map((w) => <StoreCard key={w.id} w={w} onInstall={onInstall} onRate={onRate} onUninstall={onUninstall} onOpen={onOpen} />)}
       </div>
       {filtered.length > shown && (
         <button onClick={() => setShown((s) => s + 60)} style={{ marginTop: 14, width: '100%', padding: '10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12 }}>
@@ -176,65 +152,35 @@ function WizardStore({ onChanged }) {
   );
 }
 
-// --- Personal Wizards: an APPLIED Section promoted to a scoped RAG assistant ---
-// (via the sidebar's "Promote" button on an applied section — see shell.jsx).
-// Nothing here moves files; this just lists + asks the already-promoted wizards.
+// --- Personal Wizards: your own knowledge bases (promoted Sections or the chat
+// builder). Nothing here moves files; a wizard is a view over its notes.
 const { AskMessage: BkAskMessage, CitationChip: BkCitationChip } = bkNS;
 
-function PersonalWizardCard({ w, onAsk }) {
+function PersonalWizardCard({ w, onAsk, onOpen }) {
   return (
     <BkCard style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ width: 32, height: 32, borderRadius: 'var(--radius-md)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
-          <BkIcon name="wand-2" size={16} style={{ color: 'var(--brand-fg)' }} />
-        </span>
+        <span style={bkS.cardIcon}><BkIcon name="wand-2" size={16} style={{ color: 'var(--brand-fg)' }} /></span>
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)' }}>{w.name}</div>
+          <div style={bkS.titleLink} onClick={() => onOpen(w)} title="Open details"
+            onMouseEnter={(e) => { e.target.style.textDecoration = 'underline'; }} onMouseLeave={(e) => { e.target.style.textDecoration = 'none'; }}>{w.name}</div>
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{w.note_count} note{w.note_count === 1 ? '' : 's'}{w.folder ? ` · ${w.folder.split('/').pop()}` : ''}</div>
         </div>
+        {w.share_scope && w.share_scope !== 'private' && <BkBadge tone="info">{w.share_scope}</BkBadge>}
       </div>
       {w.topic && w.topic !== w.name && <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}><BkBadge tone="info">#{w.topic}</BkBadge></div>}
       <div style={{ display: 'flex', alignItems: 'center', marginTop: 2 }}>
         <div style={{ flex: 1 }} />
-        <BkButton variant="primary" size="sm" icon="sparkles" onClick={() => onAsk(w)}>Ask</BkButton>
+        <BkButton variant="primary" size="sm" icon="sparkles" onClick={() => onAsk(w)}>Chat</BkButton>
       </div>
     </BkCard>
   );
 }
 
-function PersonalWizardsSection({ onAsk }) {
-  const [wizards, setWizards] = React.useState(null);
-  const load = React.useCallback(async () => {
-    if (!window.lore || !window.lore.wizards || !window.lore.wizards.personal || !window.lore.wizards.personal.list) { setWizards([]); return; }
-    try {
-      const r = await window.lore.wizards.personal.list();
-      setWizards((r && r.wizards) || []);
-    } catch { setWizards([]); }
-  }, []);
-  React.useEffect(() => { load(); }, [load]);
-  if (wizards === null) return null;
-  if (!wizards.length) {
-    return (
-      <div style={{ marginTop: 28 }}>
-        <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' }}>Personal</h2>
-        <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: 0 }}>Promote an applied Section (sidebar → Proposed sections → Promote) to turn it into a wizard you can ask directly.</p>
-      </div>
-    );
-  }
-  return (
-    <div style={{ marginTop: 28 }}>
-      <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' }}>Personal</h2>
-      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 10px' }}>Wizards built from your own knowledge base — promoted Sections, scoped to only their own notes.</p>
-      <div style={bkS.grid}>
-        {wizards.map((w) => <PersonalWizardCard key={w.id} w={w} onAsk={onAsk} />)}
-      </div>
-    </div>
-  );
-}
-
-// --- MCP servers + AI-tool hooks: informational status only (install flows live
-// in Settings/Hooks views already) — just visibility of what's currently connected.
-function McpSkillsRow({ name, connected }) {
+// --- Connected tools: MCP servers + AI-tool hooks already wired into Lore.
+// Status only here (install flows live in Settings/Hooks) — the catalog below
+// covers everything not yet connected.
+function ConnectedToolRow({ name, connected }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', borderBottom: '1px solid var(--divider)' }}>
       <BkIcon name={connected ? 'plug-zap' : 'plug'} size={14} style={{ color: connected ? 'var(--jade-400)' : 'var(--text-faint)' }} />
@@ -244,7 +190,7 @@ function McpSkillsRow({ name, connected }) {
   );
 }
 
-function McpSkillsList() {
+function ConnectedTools() {
   const [mcp, setMcp] = React.useState(null);
   const [hooks, setHooks] = React.useState(null);
   React.useEffect(() => {
@@ -254,22 +200,124 @@ function McpSkillsList() {
     })();
   }, []);
   if (mcp === null || hooks === null) return null;
-  const mcpRows = [
+  const rows = [
     { name: 'Claude Code MCP', connected: !!(mcp.claude && mcp.claude.installed) },
     { name: 'Codex MCP', connected: !!(mcp.codex && mcp.codex.installed) },
+    ...(hooks || []).map((h) => ({ name: h.name || h.id, connected: !!h.installed })),
   ];
-  const hookRows = (hooks || []).map((h) => ({ name: h.name || h.id, connected: !!h.installed }));
   return (
-    <div style={{ marginTop: 28 }}>
-      <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 3px' }}>MCP & skills</h2>
-      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 10px' }}>What's currently connected — manage installs from Settings / Hooks.</p>
+    <div style={{ marginBottom: 22 }}>
+      <h2 style={bkS.h2}>Connected</h2>
+      <p style={bkS.sub}>What's wired into Lore right now — manage these from Settings / Hooks.</p>
       <BkCard style={{ padding: 0, overflow: 'hidden' }}>
-        {[...mcpRows, ...hookRows].map((r, i, arr) => (
-          <div key={r.name} style={i === arr.length - 1 ? { borderBottom: 'none' } : undefined}>
-            <McpSkillsRow name={r.name} connected={r.connected} />
+        {rows.map((r, i) => (
+          <div key={r.name} style={i === rows.length - 1 ? { borderBottom: 'none' } : undefined}>
+            <ConnectedToolRow name={r.name} connected={r.connected} />
           </div>
         ))}
       </BkCard>
+    </div>
+  );
+}
+
+// --- Detail view: opened by clicking a card's title. Inline panel (no router):
+// long description, what's inside, rating/installs, tags, Chat + Install.
+function StoreDetail({ item, onBack, onChat, onInstall, onUninstall, onRate }) {
+  const { kind, w } = item;                       // kind: 'catalog' | 'personal'
+  const isTool = kind === 'catalog' && w.kind === 'tool';
+  const [notes, setNotes] = React.useState(null); // personal wizards: real member notes
+  React.useEffect(() => {
+    if (kind !== 'personal') { setNotes(null); return; }
+    let live = true;
+    (async () => {
+      try {
+        const r = window.lore && window.lore.wizards && window.lore.wizards.personal && window.lore.wizards.personal.notes
+          ? await window.lore.wizards.personal.notes(w.id) : { notes: [] };
+        if (live) setNotes((r && r.notes) || []);
+      } catch { if (live) setNotes([]); }
+    })();
+    return () => { live = false; };
+  }, [kind, w.id]);
+
+  const inside = kind === 'personal'
+    ? (notes || []).map((n) => ({ key: n.id, label: n.title || n.id, sub: n.path }))
+    : (w.noteTitles || []).map((t, i) => ({ key: i, label: t }));
+
+  return (
+    <div>
+      <button onClick={onBack} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, border: 'none', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 12, padding: '2px 0', marginBottom: 14 }}>
+        <BkIcon name="arrow-left" size={14} /> Back to store
+      </button>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+        <span style={{ ...bkS.cardIcon, width: 44, height: 44 }}><BkIcon name={isTool ? 'plug-zap' : 'wand-2'} size={22} style={{ color: 'var(--brand-fg)' }} /></span>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>{w.name}</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 5, flexWrap: 'wrap' }}>
+            {kind === 'catalog' && <>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' }}>{w.author}</span>
+              <BkStars value={w.myRating || Math.round(w.rating || 0)} onRate={(s) => onRate(w.id, s)} />
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{w.rating} · {(w.installs || 0).toLocaleString()} installs</span>
+            </>}
+            {kind === 'personal' && <>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' }}>{w.note_count} note{w.note_count === 1 ? '' : 's'}{w.folder ? ` · ${w.folder}` : ''}</span>
+              <BkBadge tone={w.share_scope === 'private' ? 'neutral' : 'info'}>{w.share_scope || 'private'}</BkBadge>
+            </>}
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {!isTool && <BkButton variant="primary" icon="sparkles" onClick={() => onChat(item)}>Chat</BkButton>}
+          {kind === 'catalog' && <InstallActions w={w} onInstall={onInstall} onUninstall={onUninstall} />}
+        </div>
+      </div>
+
+      {kind === 'catalog' && !isTool && !w.installed && (
+        <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '10px 0 0' }}>
+          Chat works before installing — the preview answers from the catalog listing only. Install to add the notes to your library and chat over the full contents.
+        </p>
+      )}
+      {kind === 'personal' && w.share_scope && w.share_scope !== 'private' && (
+        <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '10px 0 0' }}>
+          Marked {w.share_scope} — stored on the wizard now; it shares when team sync{w.share_scope === 'public' ? ' / the public store' : ''} lands.
+        </p>
+      )}
+
+      <p style={{ fontSize: 13.5, lineHeight: 1.65, color: 'var(--text-body)', margin: '16px 0 0', maxWidth: 720 }}>
+        {kind === 'catalog' ? (w.desc || 'No description in the catalog.') : `Your own knowledge base — answers are drawn only from this wizard's notes. Notes stay where they are on disk; the wizard is a view over them.`}
+      </p>
+
+      {((kind === 'catalog' && (w.topics || []).length > 0) || (kind === 'personal' && w.topic && w.topic !== w.name)) && (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 12 }}>
+          {kind === 'catalog'
+            ? (w.topics || []).map((t) => <BkBadge key={t} tone="info">#{t}</BkBadge>)
+            : <BkBadge tone="info">#{w.topic}</BkBadge>}
+        </div>
+      )}
+
+      <div style={{ marginTop: 22 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 8px' }}>What's inside</h3>
+        {kind === 'personal' && notes === null && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)' }}>Loading notes…</div>}
+        {inside.length > 0 && (
+          <BkCard style={{ padding: 0, overflow: 'hidden', maxWidth: 720 }}>
+            {inside.map((n, i) => (
+              <div key={n.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderBottom: i === inside.length - 1 ? 'none' : '1px solid var(--divider)' }}>
+                <BkIcon name="file-text" size={13} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />
+                <span style={{ fontSize: 13, color: 'var(--text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.label}</span>
+                {n.sub && <span style={{ marginLeft: 'auto', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '45%' }}>{n.sub}</span>}
+              </div>
+            ))}
+          </BkCard>
+        )}
+        {kind === 'personal' && notes !== null && !inside.length && <p style={bkS.sub}>No notes resolved yet — is the backend running?</p>}
+        {kind === 'catalog' && !inside.length && <p style={bkS.sub}>The catalog listing doesn't include a note list for this entry.</p>}
+        {kind === 'catalog' && (w.sources || []).length > 0 && (
+          <div style={{ marginTop: 12, maxWidth: 720 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 6px' }}>Sources</h3>
+            {(w.sources || []).map((s) => (
+              <div key={s} style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '2px 0' }}>{s}</div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -380,21 +428,60 @@ function PersonalWizardChat({ wizard, onClose }) {
   );
 }
 
-function BucketsView({ buckets, onAsk, onOpen, onChanged }) {
-  const [tab, setTab] = React.useState('all');
-  const [chatWizard, setChatWizard] = React.useState(null);   // personal wizard whose dedicated chat is open
-  const scopes = React.useMemo(() => {
-    const out = [], seen = new Set();
-    for (const b of buckets || []) {
-      const s = b.scope ? String(b.scope).trim() : '';
-      if (!s) continue;
-      const key = s.toLowerCase();
-      if (!seen.has(key)) { seen.add(key); out.push(s); }
-    }
-    return out;
-  }, [buckets]);
-  const shown = tab === 'all' ? buckets : buckets.filter((b) => b.scope === tab);
-  const tabs = [{ value: 'all', label: 'All', count: buckets.length }, ...scopes.map((s) => ({ value: s, label: s }))];
+function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
+  const WizardBuilder = window.LoreWizardBuilder, CatalogPreviewChat = window.LoreCatalogPreviewChat;
+  const [topTab, setTopTab] = React.useState('bases');   // 'bases' | 'tools'
+  const [catalog, setCatalog] = React.useState(null);
+  const [personal, setPersonal] = React.useState(null);
+  const [detail, setDetail] = React.useState(null);       // {kind:'catalog'|'personal', id}
+  const [chatWizard, setChatWizard] = React.useState(null); // personal wizard chat overlay
+  const [preview, setPreview] = React.useState(null);     // catalog KB preview-chat overlay
+  const [builderOpen, setBuilderOpen] = React.useState(false);
+
+  const loadCatalog = React.useCallback(async () => {
+    if (!window.lore || !window.lore.wizards || !window.lore.wizards.catalog) { setCatalog([]); return; }
+    try { setCatalog(await window.lore.wizards.catalog()); } catch { setCatalog([]); }
+  }, []);
+  const loadPersonal = React.useCallback(async () => {
+    if (!window.lore || !window.lore.wizards || !window.lore.wizards.personal || !window.lore.wizards.personal.list) { setPersonal([]); return; }
+    try {
+      const r = await window.lore.wizards.personal.list();
+      setPersonal((r && r.wizards) || []);
+    } catch { setPersonal([]); }
+  }, []);
+  React.useEffect(() => { loadCatalog(); loadPersonal(); }, [loadCatalog, loadPersonal]);
+
+  const install = async (id) => { try { await window.lore.wizards.install(id); } catch { /* */ } await loadCatalog(); if (onChanged) onChanged(); };
+  const rate = async (id, s) => { try { await window.lore.wizards.rate(id, s); } catch { /* */ } loadCatalog(); };
+  const uninstall = async (id) => { try { await window.lore.wizards.uninstall(id); } catch { /* */ } await loadCatalog(); if (onChanged) onChanged(); };
+
+  const kbCatalog = (catalog || []).filter((w) => w.kind === 'wizard');
+  const toolCatalog = (catalog || []).filter((w) => w.kind === 'tool');
+  // Resolve the detail item from live state so install/rate updates show through.
+  const detailItem = detail && (detail.kind === 'catalog'
+    ? (() => { const w = (catalog || []).find((x) => x.id === detail.id); return w && { kind: 'catalog', w }; })()
+    : (() => { const w = (personal || []).find((x) => x.id === detail.id); return w && { kind: 'personal', w }; })());
+
+  const openDetail = (kind) => (w) => setDetail({ kind, id: w.id });
+  // Chat from the detail view: personal → the wizard's own persisted RAG chat;
+  // installed catalog KB → its notes are in the library, so the real Ask panel;
+  // uninstalled catalog KB → honest metadata-only preview chat.
+  const chatFor = (item) => {
+    if (item.kind === 'personal') setChatWizard(item.w);
+    else if (item.w.installed) onAsk();
+    else setPreview(item.w);
+  };
+  const onCreated = (wizard) => {
+    setBuilderOpen(false);
+    loadPersonal();
+    if (wizard && wizard.id) setChatWizard(wizard);   // working chat, immediately
+  };
+
+  const topTabs = [
+    { value: 'bases', label: 'Knowledge bases', count: kbCatalog.length + (personal || []).length + (buckets || []).length },
+    { value: 'tools', label: 'Tools', count: toolCatalog.length },
+  ];
+
   return (
     <div style={bkS.wrap}>
       <div style={bkS.head}>
@@ -402,26 +489,83 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged }) {
           <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
             <img src="design/assets/sprites/codex-tome.png" alt="" style={{ width: 28, height: 28, objectFit: 'contain', verticalAlign: 'middle' }} onError={(e) => { e.target.style.display = 'none'; }} />
             Wizards
-            {window.LoreHelpHint && <window.LoreHelpHint size={16} tip="A Wizard is a knowledge base — a curated collection of notes pooled together that you can ask across (e.g. a Security playbook or Trading strategies). A note can live in many Wizards at once, unlike a folder, which it only sits in one of." />}
+            {window.LoreHelpHint && <window.LoreHelpHint size={16} tip="A Wizard is a knowledge base — a curated bundle of notes you can chat with (e.g. a Security playbook or Trading strategies). A note can live in many Wizards at once, unlike a folder, which it only sits in one of. Tools are different: plugins that connect outside data into Lore." />}
           </h1>
-          <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' }}>Knowledge bases — curated collections you pool notes into and ask across.</p>
+          <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' }}>Knowledge bases you can chat with, and tools that connect outside data into Lore.</p>
         </div>
         <div style={{ flex: 1 }} />
         <BkButton variant="secondary" icon="sparkles" onClick={onAsk}>Ask all wizards</BkButton>
-        <BkButton variant="primary" icon="plus">New wizard</BkButton>
+        <BkButton variant="primary" icon="wand-2" onClick={() => setBuilderOpen(true)}>Create a wizard</BkButton>
       </div>
       <div style={bkS.body}>
-        <div style={{ marginBottom: 18 }}>
-          <BkTabs value={tab} onChange={setTab} tabs={tabs} />
-        </div>
-        <div style={bkS.grid}>
-          {shown.map((b) => <BucketCard key={b.id} b={b} onOpen={() => onOpen && onOpen(b)} />)}
-        </div>
-        <WizardStore onChanged={onChanged} />
-        <PersonalWizardsSection onAsk={setChatWizard} />
-        <McpSkillsList />
+        {detailItem
+          ? <StoreDetail item={detailItem} onBack={() => setDetail(null)} onChat={chatFor} onInstall={install} onUninstall={uninstall} onRate={rate} />
+          : <>
+            <div style={{ marginBottom: 18 }}>
+              <BkTabs value={topTab} onChange={setTopTab} tabs={topTabs} />
+            </div>
+
+            {topTab === 'bases' && <>
+              <BkCard style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 22 }}>
+                <span style={{ ...bkS.cardIcon, width: 40, height: 40 }}><BkIcon name="wand-2" size={20} style={{ color: 'var(--brand-fg)' }} /></span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)' }}>Create a wizard from your notes</div>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-subtle)', marginTop: 2 }}>Describe what you want — “everything about my trading bots” — Lore finds the notes, you confirm, and it's ready to chat. Notes stay where they are.</div>
+                </div>
+                <BkButton variant="primary" icon="wand-2" onClick={() => setBuilderOpen(true)}>Create a wizard</BkButton>
+              </BkCard>
+
+              <div style={{ marginBottom: 22 }}>
+                <h2 style={bkS.h2}>Personal</h2>
+                {personal !== null && personal.length === 0
+                  ? <p style={bkS.sub}>No wizards of your own yet — create one above, or promote an applied Section (sidebar → Sections → Promote).</p>
+                  : <>
+                    <p style={bkS.sub}>Wizards built from your own notes — each chat is scoped to only its own notes.</p>
+                    <div style={bkS.grid}>
+                      {(personal || []).map((w) => <PersonalWizardCard key={w.id} w={w} onAsk={setChatWizard} onOpen={openDetail('personal')} />)}
+                    </div>
+                  </>}
+              </div>
+
+              {(buckets || []).length > 0 && (
+                <div style={{ marginBottom: 22 }}>
+                  <h2 style={bkS.h2}>Shared collections</h2>
+                  <p style={bkS.sub}>Knowledge bases pooled with your team — a note can live in many at once.</p>
+                  <div style={bkS.grid}>
+                    {buckets.map((b) => <BucketCard key={b.id} b={b} onOpen={() => onOpen && onOpen(b)} />)}
+                  </div>
+                </div>
+              )}
+
+              {catalog === null
+                ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', padding: '12px 0' }}>Loading catalog…</div>
+                : kbCatalog.length > 0 && (
+                  <div>
+                    <h2 style={bkS.h2}>Discover knowledge bases</h2>
+                    <p style={bkS.sub}>Published note bundles, curated from the web. Click a title for details; chat previews work before installing.</p>
+                    <CatalogBrowser items={kbCatalog} placeholder="Search knowledge bases…" onInstall={install} onRate={rate} onUninstall={uninstall} onOpen={openDetail('catalog')} />
+                  </div>
+                )}
+            </>}
+
+            {topTab === 'tools' && <>
+              <p style={{ ...bkS.sub, margin: '0 0 18px' }}>Plugins that connect external data and capabilities INTO Lore — MCP servers, agent skills, and marketplace integrations. Knowledge bases (note bundles) live in the other tab.</p>
+              <ConnectedTools />
+              {catalog === null
+                ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', padding: '12px 0' }}>Loading catalog…</div>
+                : <div>
+                    <h2 style={bkS.h2}>Discover tools</h2>
+                    <p style={bkS.sub}>{toolCatalog.length.toLocaleString()} available from the cloud marketplace. Install to wire one into your library.</p>
+                    <CatalogBrowser items={toolCatalog} placeholder="Search tools…"
+                      chips={['all', 'skill', 'mcp', 'marketplace']} chipOf={(w) => (w.topics && w.topics[0]) || 'tool'}
+                      onInstall={install} onRate={rate} onUninstall={uninstall} onOpen={openDetail('catalog')} />
+                  </div>}
+            </>}
+          </>}
       </div>
       {chatWizard && <PersonalWizardChat wizard={chatWizard} onClose={() => setChatWizard(null)} />}
+      {preview && CatalogPreviewChat && <CatalogPreviewChat w={preview} onClose={() => setPreview(null)} onInstall={async () => { const id = preview.id; setPreview(null); await install(id); }} />}
+      {builderOpen && WizardBuilder && <WizardBuilder scopes={scopes} onClose={() => setBuilderOpen(false)} onCreated={onCreated} />}
     </div>
   );
 }
