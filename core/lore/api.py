@@ -365,6 +365,51 @@ def stats(tenant: Optional[str] = None):
     ).fetchone()[0]
     return {"notes": notes, "chunks": chunks, "edges": edges}
 
+@app.get("/config/retrieval")
+def config_retrieval(tenant: Optional[str] = None):
+    """Truthful snapshot of the retrieval stack for the desktop Settings UI.
+
+    Reports what get_embedder()/get_reranker() would actually resolve to right now
+    (Voyage when VOYAGE_API_KEY is set, else local fastembed models, or fake under
+    VAULT_FAKE=1) — never a hardcoded "not configured".
+
+    Query params:
+        tenant: accepted for parity with the other desktop-facing endpoints; the
+                retrieval stack is process-wide today, so it does not vary the result.
+
+    Response:
+        {
+          "embeddingModel":      {"provider", "model"},
+          "reranker":            {"provider", "model"},
+          "contextualRetrieval": {"enabled", "mode"},   # always-on metadata contextualizer
+          "localFallback":       {"available", "active"}
+        }
+    """
+    import importlib.util
+    voyage = bool(settings.voyage_api_key)
+    local_available = importlib.util.find_spec("fastembed") is not None
+    if _FAKE:
+        embedding = {"provider": "fake", "model": "fake-embedder (VAULT_FAKE=1)"}
+        rerank_m = {"provider": "fake", "model": "fake-reranker (VAULT_FAKE=1)"}
+    elif voyage:
+        embedding = {"provider": "voyage", "model": VoyageEmbedder.DEFAULT_MODEL}
+        rerank_m = {"provider": "voyage", "model": VoyageReranker.DEFAULT_MODEL}
+    else:
+        embedding = {"provider": "local", "model": LocalEmbedder.DEFAULT_MODEL}
+        rerank_m = {"provider": "local", "model": LocalReranker.DEFAULT_MODEL}
+    return {
+        "embeddingModel": embedding,
+        "reranker": rerank_m,
+        # apply_context() runs on every indexed chunk (see index.py); the blurb is the
+        # deterministic metadata sentence — enabled by design, not user-toggleable.
+        "contextualRetrieval": {"enabled": True, "mode": "metadata"},
+        # Local fastembed models: the primary path when no Voyage key is set, and ALWAYS
+        # used for /ingest + /capture (data-leak guard) even when Voyage is configured.
+        "localFallback": {"available": local_available,
+                          "active": (not _FAKE) and (not voyage) and local_available},
+    }
+
+
 class CaptureReq(BaseModel):
     session_id: str
     title: str
