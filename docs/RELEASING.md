@@ -3,7 +3,7 @@
 ## Cutting a release
 
 ```bash
-git checkout master && git pull
+git checkout main && git pull
 git tag v0.1.0-beta.2          # any tag containing '-' is auto-marked prerelease
 git push origin v0.1.0-beta.2
 ```

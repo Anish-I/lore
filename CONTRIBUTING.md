@@ -31,7 +31,7 @@ JSX parse). All jobs must be green.
 
 ## Branches
 
-- `master` — releases are tagged from here (`v*` tags trigger the 3-platform
+- `main` — releases are tagged from here (`v*` tags trigger the 3-platform
   release build; see `docs/RELEASING.md`).
 - `dev` — integration branch; PRs target `dev`.
 
