@@ -251,15 +251,28 @@ async function ensureBackend() {
       windowsHide: true,
     });
   } else {
-    // Dev: system Python + uvicorn from the source CORE_DIR (Docker PG / Qdrant).
+    // Dev: this repo's own .venv (never the system/PATH python3 — it has none of
+    // core's dependencies installed, and would silently die post-spawn since
+    // stdio is 'ignore'). Falls back to PATH python3 only if the venv is missing
+    // (e.g. a contributor who hasn't run the setup script yet).
     if (!fs.existsSync(CORE_DIR)) return 'no-core'; // dev source tree missing
-    const py = process.platform === 'win32' ? 'python' : 'python3';
+    const venvPy = path.join(CORE_DIR, '..', '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+    const py = fs.existsSync(venvPy) ? venvPy : (process.platform === 'win32' ? 'python' : 'python3');
     backendProc = spawn(py, ['-m', 'uvicorn', 'lore.api:app', '--port', String(BACKEND_PORT())], {
       cwd: CORE_DIR,
       env: childEnv,
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
+    // Dev-only crash visibility — stdio was fully 'ignore'd before, so a spawn
+    // that launched but immediately crashed (e.g. missing deps) was completely
+    // silent. Surface it to a log file instead of losing it.
+    try {
+      const logPath = path.join(app.getPath('userData'), 'lore-backend.log');
+      const stream = fs.createWriteStream(logPath, { flags: 'a' });
+      backendProc.stdout.pipe(stream);
+      backendProc.stderr.pipe(stream);
+    } catch { /* non-fatal */ }
   }
   backendProc.on('error', (e) => console.error('backend spawn error', e));
   // poll for readiness (models load on first boot — allow ~40s)
@@ -977,6 +990,57 @@ ipcMain.handle('wizards:rate', (_e, { id, stars }) => {
   const cfg = loadConfig() || {};
   saveConfig({ ...cfg, wizardRatings: { ...(cfg.wizardRatings || {}), [id]: stars } });
   return { ok: true };
+});
+
+// ---------- IPC: personal wizards (an APPLIED Section promoted to a scoped RAG chat) ----------
+// Pure backend state — no fs writes happen here (no pathGuard needed): the section's
+// files already moved (path-guarded) when the user clicked Enable; promote just
+// creates the wizard record the backend scopes retrieval + chat history to.
+
+ipcMain.handle('wizards:promote-section', async (_e, sectionId) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { ok: false, error: 'tenant is not configured' };
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(sectionId)}/promote`, { tenant: cfg.tenant });
+    const body = await r.json();
+    return r.ok ? body : { ok: false, error: body.detail || `backend ${r.status}` };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
+ipcMain.handle('wizards:personal-list', async () => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { wizards: [] };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal?tenant=${encodeURIComponent(cfg.tenant)}`);
+    return await r.json();
+  } catch (e) {
+    return { wizards: [], error: String(e) };
+  }
+});
+
+ipcMain.handle('wizards:personal-ask', async (_e, { id, question }) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { error: 'tenant is not configured' };
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/ask`, { question, tenant: cfg.tenant });
+    const body = await r.json();
+    return r.ok ? body : { error: body.detail || `backend ${r.status}` };
+  } catch (e) {
+    return { error: String(e) };
+  }
+});
+
+ipcMain.handle('wizards:personal-chat-history', async (_e, id) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant) return { messages: [] };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/chat?tenant=${encodeURIComponent(cfg.tenant)}`);
+    return await r.json();
+  } catch (e) {
+    return { messages: [], error: String(e) };
+  }
 });
 
 // ---------- IPC: hooks ----------

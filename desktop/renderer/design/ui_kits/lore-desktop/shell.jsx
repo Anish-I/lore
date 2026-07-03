@@ -305,7 +305,7 @@ function SH_baseName(p) {
   return String(p || '').split(/[\\/]/).filter(Boolean).pop() || String(p || '');
 }
 
-function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, discoveredLibraries, onOpenDiscovered, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo, theme }) {
+function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, discoveredLibraries, onOpenDiscovered, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo, onSectionPromote, theme }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
   // Library up/down switcher — only shown with more than one configured library (root folder).
   const showLibrarySwitcher = Array.isArray(roots) && roots.length > 1 && typeof onSwitchRoot === 'function';
@@ -328,6 +328,11 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
   const [libsOpen, setLibsOpen] = React.useState(false);
   // Section proposal currently being applied/undone (disables its buttons).
   const [secBusy, setSecBusy] = React.useState(null);
+  // Sections successfully promoted to a Personal Wizard this session — promote is
+  // idempotent server-side, but once it succeeds swap the button for a badge so
+  // the user isn't tempted to keep clicking. (Backend doesn't flag "is a wizard"
+  // on the section row itself, so this is a lightweight, session-local record.)
+  const [promoted, setPromoted] = React.useState(() => new Set());
 
   const handleAddGroup = async () => {
     const name = grpName.trim();
@@ -484,6 +489,14 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
           setSecBusy(id);
           try { await fn(id); } finally { setSecBusy(null); }
         };
+        const runPromote = async (id) => {
+          if (!onSectionPromote || secBusy) return;
+          setSecBusy(id);
+          try {
+            const r = await onSectionPromote(id);
+            if (r && r.ok !== false) setPromoted((p) => new Set(p).add(id));
+          } finally { setSecBusy(null); }
+        };
         return (
           <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -503,7 +516,14 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
                       <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 }}> · {(s.notes || []).length}</span>
                     </span>
                     {applied ? (
-                      <button disabled={busy} onClick={() => run(s.id, onSectionUndo)} title="Move these notes back to their original locations" style={secBtn()}>{busy ? '…' : 'Undo'}</button>
+                      <React.Fragment>
+                        {promoted.has(s.id) ? (
+                          <Badge tone="success" dot>wizard</Badge>
+                        ) : (
+                          <button disabled={busy} onClick={() => runPromote(s.id)} title={`Turn "${s.name}" into a Personal Wizard you can ask directly`} style={secBtn('primary')}>{busy ? '…' : 'Promote'}</button>
+                        )}
+                        <button disabled={busy} onClick={() => run(s.id, onSectionUndo)} title="Move these notes back to their original locations" style={secBtn()}>{busy ? '…' : 'Undo'}</button>
+                      </React.Fragment>
                     ) : (
                       <React.Fragment>
                         <button disabled={busy} onClick={() => run(s.id, onSectionApply)} title={`Create a "${s.name}" folder and move these notes into it`} style={secBtn('primary')}>{busy ? '…' : 'Enable'}</button>

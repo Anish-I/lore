@@ -63,11 +63,23 @@ contextBridge.exposeInMainWorld('lore', {
   importPick:  ()      => ipcRenderer.invoke('import:pick'),
 
   // --- wizards (installable knowledge bases) ---
+  // promoteSection(id) → promotes an APPLIED Section to a Personal Wizard (backend
+  //                      state only — no files move; the folder already exists).
+  // personal.list()    → { wizards: [{id, name, topic, note_count, folder, ...}] }
+  // personal.ask(id,q) → wizard-scoped RAG answer {answer, engine, citations} —
+  //                      retrieval sees ONLY that wizard's notes; persists the chat.
+  // personal.history(id) → { messages: [{id, role, text, sources, created_at}] }
   wizards: {
     catalog:   ()           => ipcRenderer.invoke('wizards:catalog'),
     install:   (id)         => ipcRenderer.invoke('wizards:install', id),
     uninstall: (id)         => ipcRenderer.invoke('wizards:uninstall', id),
     rate:      (id, stars)  => ipcRenderer.invoke('wizards:rate', { id, stars }),
+    promoteSection: (sectionId) => ipcRenderer.invoke('wizards:promote-section', sectionId),
+    personal: {
+      list:    ()             => ipcRenderer.invoke('wizards:personal-list'),
+      ask:     (id, question) => ipcRenderer.invoke('wizards:personal-ask', { id, question }),
+      history: (id)           => ipcRenderer.invoke('wizards:personal-chat-history', id),
+    },
   },
 
   // --- hooks ---

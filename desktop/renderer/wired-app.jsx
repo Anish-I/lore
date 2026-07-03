@@ -404,6 +404,15 @@ function App() {
     try { await window.lore.sections.undo(id); } finally { loadSections(); }
   }, [loadSections]);
 
+  // Promote: turns an APPLIED section into a Personal Wizard (backend state only —
+  // the section is already a real folder, so no files move). Fires ONLY from the
+  // sidebar's "Promote" button; the Wizards view picks the new wizard up on its
+  // own next load.
+  const onSectionPromote = React.useCallback(async (id) => {
+    if (!window.lore?.wizards?.promoteSection) return { ok: false };
+    return window.lore.wizards.promoteSection(id);
+  }, []);
+
   const updateProgress = React.useCallback((payload) => {
     const next = normalizeProgress(payload);
     if (progressDoneTimerRef.current) {
@@ -1048,7 +1057,7 @@ function App() {
               renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
               roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary}
               discoveredLibraries={otherLibraries} onOpenDiscovered={openDiscoveredLibrary}
-              sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} theme={theme} />
+              sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} onSectionPromote={onSectionPromote} theme={theme} />
             <PaneResizer side="sidebar" />
             {activeBucket
               ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onOpen={() => setAskOpen(true)} />
