@@ -1,114 +1,92 @@
-# Lore "Ask-first" redesign — design spec (2026-07-03)
+# Lore "Memory-first" simplification — FINAL design spec (2026-07-03, v3)
 
-Business feedback round 2: the app still reads like a developer's box; wizards + teams
-navigation is confusing; the chat underperforms; the word "scope" must die; and the app
-should feel personalized — it should already know what you're about to ask. Decisions
-below were locked with the user in brainstorming.
+Converged after three mockup rounds with the user. Positioning: **Lore is a memory
+company** — "it remembers stuff." The current app's layout/tabs/icons/theme are GOOD and
+stay. The change is: one new Home tab, a de-janked sidebar, the demo's calm editor, chat
+with per-source transparency, a visible pushing system, jargon renamed in place, and
+developer surfaces behind an Advanced toggle. Mockup of record (v3):
+scratchpad lore-ask-first-mockup.html / artifact 9fc64c50.
 
-## The one idea
+## 1. Home tab (new, default view)
+- Rail gains **Home** at top; app boots into it. Content, centered column:
+  - Greeting ("Good evening, <name from owner/config>") + memory line:
+    **"Lore remembers 220 things for you · 3 new since yesterday · backed up ✓"**
+    (counts from /stats; delta vs yesterday from note created_at; backup from backup:status).
+  - Ask input (reuses the Ask machinery; answers open the existing ask side panel).
+  - **Personalized prompt chips** (3-4): learned repeats from new ask_history (normalized
+    text, min 2 occurrences, recency tiebreak) + activity-derived ("What's new in <most
+    recently active section>?") + cold-start defaults. Deterministic helper
+    `suggestPrompts(history, stats)`, vitest'd. Sub-caption: "these learn from what you ask".
+  - **This-week digest** (the executive view): new backend `GET /digest?tenant&days=7` —
+    notes grouped by day × section: {day, section, count, topTitles[3]}. Rendered as quiet
+    rows "Tue — Kalshi: pair-sizing config changed…" (title-based summary line = top note
+    titles joined; NO LLM required). Footnote: "when teams join, this shows who worked on
+    what, per team".
 
-**Ask is the app.** Lore opens into a chat that answers from your knowledge, with one
-plain-English source picker — Private / Team / Wizards — and personalized quick prompts.
-Everything developer-flavored moves behind an Advanced toggle. The retrieval/ACL engine
-is untouched; this is a resurfacing, not a re-architecture.
+## 2. Top bar: one context switch
+- The Show filter (All/Private/Team/Wizards) is REPLACED by **Private / Team / Company**
+  (Private default/active; Team+Company greyed with tooltip "activates with team sync").
+  It filters tree+graph (existing passesScopeFilter semantics, 'all'→'private' mapping:
+  private shows the user's own everything) AND sets the ask source. Wizards are no longer
+  a top-bar filter — they live in the Wizards view and the ask panel's wizard picker.
 
-## 1. Home = Ask (new view, default on launch)
+## 3. Chat (the placement + transparency the user called out)
+- Ask stays a side panel over whatever you're doing (existing panel), openable from Home
+  input, titlebar ask button, and editor "Chat about this note".
+- **History**: ask_history table (SQLite+PG mirror of personal_wizard_chats shape +
+  source column); one active thread, History drawer (list, resume, delete).
+- **Follow-ups**: /trace + llm.answer accept optional history:[{role,text}] (last 6 turns).
+- **Per-citation source labels**: every citation chip shows where it came from —
+  "PairStrategy · Private" / "roadmap · Team" (scope comes back in /search results
+  already; /trace citations gain scope). THE feature: when the bot answers, it tells you
+  what's team knowledge vs yours.
+- Answered-from line stays. No-LLM fallback: top passages verbatim, never a fake answer.
+- Personalized chips also show in the empty ask panel.
 
-- New `home` view in `wired-app.jsx`, default `view` state on boot (replaces `workspace`
-  as the landing surface). Calm layout: greeting, source picker, ask input, quick-prompt
-  chips, recent-conversation resume link.
-- Rail becomes **Home · Files · Wizards · Settings** (+ Advanced group, see §5).
-- The existing floating Ask panel remains as the quick overlay (Cmd-K style) but shares
-  ALL machinery (history, picker state, rendering) with the home view — one chat
-  implementation, two mounts.
+## 4. Pushing system (make confidentiality movement first-class)
+- Editor visibility control stays (Private/Team/Company, redaction gate — shipped).
+- ADD: tree right-click → "Push to Team" / "Make Private"; citation chip context action
+  "Push to Team". All routes through the existing note:set-scope IPC (redaction gate
+  included). Pushed state visible: small scope glyph on tree rows for team/company notes.
 
-## 2. Source picker (kills "scope" in the UI)
+## 5. Sidebar de-jank (the "janky sections" fix)
+- Sections chip cloud: hidden by default; appears only when a section filter is active.
+- Proposed-sections block → ONE quiet line: "✨ Lore tidied 3 things — Review" opening a
+  popover with the existing promote/undo/dismiss actions (renamed: Promote→"Turn into
+  folder"). No buttons on the default surface.
+- Library up/down chevrons render only with 2+ libraries.
+- Workspace header: "220 things remembered" replaces "220 notes indexed".
 
-- One control: `Talking to: [Private] [Team ▾] [Wizards ▾]`. Pick ONE source at a time.
-  - **Private** (default): the user's own notes — maps internally to their full personal
-    scope list (the purpose scope + private), exactly what today's persona provides.
-  - **Team**: dropdown of teams. Until team sync exists, renders the locally-saved team
-    names (from the teams-create fallback) greyed with "activates with team sync".
-  - **Wizards**: dropdown of the user's wizards; picking one routes the chat through the
-    wizard's membership (existing `/wizards/personal/{id}/ask` machinery).
-- The word "scope" disappears from every user-facing string. Grep-sweep of renderer copy:
-  the editor visibility control already says Private/Team/Company (keep); Ask trace
-  labels say "answered from Private", never scope IDs like `engineering`.
-- Internal mapping lives in ONE renderer helper (`sourceToRequest(source)` →
-  `{scopes:[...]} | {wizardId}`), so the backend API is unchanged.
+## 6. Editor: keep the demo's calm
+- Remove the Read/Edit toggle: read view by default; CLICK the body → edit mode
+  (autofocus); blur or Cmd-S → back to read. Toolbar keeps path · tags · visibility.
+- Doc header styled like the mockup: serif title, quiet meta line (path · updated Xd ago).
 
-## 3. Chat that does the job
+## 7. Renames in place (no "scope", no dev jargon)
+Hooks→Connections (rail label under Advanced + Settings card) · Re-index note→Refresh ·
+indexed→remembered · Upkeep→Tidy up · "Backend offline"→"Memory engine is starting…" ·
+Backlinks→Mentioned in · Promote→Turn into folder · scope→(never user-visible).
 
-Rebuild the Ask conversation into a real chat (shared component, both mounts):
-- **History**: conversations persist (new `ask_history` SQLite table via existing chat
-  persistence patterns — mirror `personal_wizard_chats` shape with a `source` column).
-  One active thread + a history drawer to resume/delete past threads.
-- **Follow-up context**: the last N (6) turns are sent with each question so follow-ups
-  work ("what about the second one?"). Backend `/trace` + `llm.answer` gain an optional
-  `history` param (list of {role, text}); prompt assembly puts history before chunks.
-- **Citations that open**: each answer keeps its citation chips; clicking opens the note
-  in Files view (existing openNote path).
-- **Answered-from line**: keep `scopes_used` trace, rendered as "answered from Private ·
-  6 notes".
-- **No-LLM fallback**: if no provider is configured, return the top passages verbatim
-  under "Here's what your notes say" — never a fake generated answer.
+## 8. Advanced mode (developer stuff in the back)
+- cfg.advancedMode (default OFF) replaces simpleMode (migration: drop simpleMode key;
+  default experience IS the simple one now).
+- OFF rail: Home, Files, Graph, Teams, Wizards, Settings. ON adds: Connections (hooks).
+- Settings: MCP/skills catalog, CLI install, copy-snippets, model rows (embedding/
+  reranker/contextual retrieval), retrieval-config import → grouped under an "Advanced"
+  section, visible only when advancedMode. Wizard store/catalog tabs → Advanced too;
+  default Wizards view = your wizards list + New wizard.
 
-## 4. Wizards = collections you chat with
-
-- Kill the store from the main UI: catalog browse/install/ratings/MCP-tools tabs leave
-  `buckets.jsx`. MCP/skills status moves to Settings → Advanced. (Code for the store is
-  kept but unrouted — `buckets.jsx` store components stop being reachable; delete-dead
-  cleanup happens in a later pass once the new shape settles.)
-- Wizards view = simple list of the user's collections: name, note count, last-used,
-  [Chat] [Rename] [Delete]. One "New wizard" flow: name it, then either "from a search"
-  (the existing chat-driven builder, restyled minimal) or "pick notes" (checkbox list).
-- A wizard IS the third tab of the source picker; the standalone wizard-chat screens go
-  away in favor of the unified chat with the wizard selected.
-
-## 5. Advanced gating + calm restyle
-
-- `cfg.advancedMode` (default OFF) replaces `simpleMode` (inverted semantics; migration:
-  existing `simpleMode:true` users map to `advancedMode:false`, which is the default).
-  OFF: rail shows Home/Files/Wizards/Settings. ON: adds Graph, Teams, Hooks.
-- Settings row: "Advanced mode — show the knowledge graph, teams, and developer tools".
-- Restyle pass on Home + rail + titlebar only: sans-serif body (mono reserved for data),
-  larger type on home, fewer borders, calmer spacing. Design tokens untouched; both
-  themes keep working.
-
-## 6. Personalized quick prompts
-
-- 3–4 chips under the home ask box:
-  - **Frequency-learned**: normalized repeat questions from `ask_history` (case/punct
-    folded, top by count with recency tiebreak, min 2 occurrences).
-  - **Activity-derived**: from `/stats` + recent notes: "What's new in <most-active
-    topic>?", "Summarize <newest note title>".
-  - **Cold-start defaults** until history exists ("What did I work on this week?").
-- Deterministic v1 (no LLM): a `suggestPrompts(history, stats)` renderer helper, unit
-  tested. All signal stays local; the hashed audit log is NOT used for this (it can't
-  be — by design it has no raw text).
-- Tap → runs the question in the current source immediately.
-
-## 7. Server: deferred, prepared
-
-- Modernize root `docker-compose.yml`: rename vault→lore creds/db, add the backend
-  service (build from core/, `LORE_SERVER_MODE=1`, depends_on pg+qdrant), named volumes.
-  Compose is infra-ready for the future team server; the desktop does NOT wire to it in
-  this round. The picker's Team tab is the slot it later plugs into.
-
-## Explicitly out of scope
-
-Team sync/server wiring, Okta/OIDC, store/marketplace revival, graph changes beyond
-moving it behind Advanced, design-token/theme rework, deleting store code.
+## Out of scope
+Team sync/server, Okta, layout re-architecture, theme changes, graph changes.
 
 ## Verification
-
-1. `pytest` (incl. new history-param + ask-history tests), `eslint`, `vitest` (incl.
-   `suggestPrompts` unit tests), renderer rebuild, clean boot (0 renderer errors).
-2. Live: app opens on Home; ask from Private answers with citations + answered-from
-   line; follow-up question uses context; history survives restart; wizard picked from
-   the source picker answers only from its notes.
-3. Quick prompts: seed 3 repeats of a question in history → chip appears; tap runs it.
-4. Grep gate: no user-visible "scope" string in renderer output surfaces.
-5. Advanced OFF hides Graph/Teams/Hooks; ON restores; simpleMode migration honored.
-6. `docker compose config` validates; compose brings up pg+qdrant+backend locally once
-   (smoke), then torn down — desktop untouched.
+1. Suites green (pytest incl. digest+history+suggest tests; vitest incl. suggestPrompts;
+   eslint; ruff); renderer rebuilt; clean boot (0 errors).
+2. Live: boots to Home with real counts + digest rows from the actual library; chip tap
+   answers in the panel with per-citation Private badges; follow-up uses context; history
+   survives restart.
+3. Tree right-click Push to Team → scope changes (store verified), glyph appears.
+4. Sections line: "Lore tidied N" appears only when proposals exist; popover actions work.
+5. Editor: click body edits, blur returns to read; no toggle rendered.
+6. Grep gates: no user-visible "scope"/"re-index"/"backlinks"/"upkeep" strings in
+   renderer surfaces; advancedMode OFF hides Connections/store/model rows.
