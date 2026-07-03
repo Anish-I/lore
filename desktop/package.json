@@ -2,13 +2,13 @@
   "name": "lore-desktop",
   "productName": "Lore",
   "version": "0.1.0-beta.2",
-  "description": "Lore — Knowledge OS desktop app (file explorer + cited recall)",
+  "description": "Lore \u2014 Knowledge OS desktop app (file explorer + cited recall)",
   "main": "main.js",
   "author": "Anish Ivaturi",
   "license": "UNLICENSED",
   "scripts": {
     "build:renderer": "node scripts/build-renderer.cjs",
-    "prestart": "npm run build:renderer",
+    "prestart": "npm run build:renderer && node scripts/patch-dev-appname.cjs",
     "predist": "npm run build:renderer",
     "predist:mac": "npm run build:renderer",
     "predist:linux": "npm run build:renderer",
@@ -17,7 +17,8 @@
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
     "test": "vitest run",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "postinstall": "node scripts/patch-dev-appname.cjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
