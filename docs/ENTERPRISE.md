@@ -93,8 +93,9 @@ the no-leak property is re-proven on every change.
 | ACL-inside-the-query, deny-by-default | **shipping** |
 | Cryptographically verified identity (no client-trusted scopes) | **shipping** |
 | Redaction gate on confidentiality broadening | **shipping** |
-| Local API token (lock the on-device backend port) | planned, near-term |
-| Per-answer scope trace + audit log | planned, near-term |
+| Local API token (lock the on-device backend port) | **shipping** |
+| Per-answer scope trace | **shipping** |
+| Query audit log | planned, near-term |
 | Okta / Entra OIDC + group→scope mapping | planned |
 | SCIM auto-provisioning | planned |
 | Encryption at rest, retention policies, DLP hooks | roadmap |
