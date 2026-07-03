@@ -175,9 +175,17 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
       <div style={edS.toolbar}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{note.path || (note.title + '.md')}</span>
         <div style={{ flex: 1 }} />
-        {scopeOptions && scopeOptions.length > 0
-          ? <ScopePicker value={scope} onChange={onScope} options={scopeOptions} />
-          : <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>No scope configured</span>}
+        {note.tags && note.tags.length > 0 && (
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '46%' }}>
+            {note.tags.slice(0, 6).map((t) => <EdBadge key={t} tone="info">#{t}</EdBadge>)}
+            {note.tags.length > 6 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>+{note.tags.length - 6}</span>}
+          </div>
+        )}
+        {/* Scope picker only when there is an actual choice — a solo library's
+            single purpose scope ("engineering") is identity, not a control. */}
+        {scopeOptions && scopeOptions.length > 1 && (
+          <ScopePicker value={scope} onChange={onScope} options={scopeOptions} />
+        )}
         <div style={{ display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 2, gap: 2 }}>
           {['read', 'edit'].map((m) => (
             <button key={m} onClick={() => onMode(m)} style={{
@@ -197,11 +205,6 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
                 style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 180px)', resize: 'none', border: 'none', borderRadius: 0, background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--brand-fg)' }} />
             </div>
           : <div style={edS.col}>
-              {note.tags && note.tags.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16 }}>
-                  {note.tags.map((t) => <EdBadge key={t} tone="info">#{t}</EdBadge>)}
-                </div>
-              )}
               {note.body.map((b, i) => <Block key={i} b={b} note={note} onOpen={onOpen} />)}
             </div>}
       </div>
