@@ -13,6 +13,68 @@ permissions:
   contents: write   # needed to create the GitHub Release
 
 jobs:
+  build-macos:
+    name: Build macOS dmg
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Freeze the Python backend (PyInstaller)
+        working-directory: core
+        run: |
+          pip install -e ".[local]" pyinstaller
+          bash build_backend_mac.sh
+
+      - name: Smoke-boot the frozen backend
+        working-directory: core
+        run: |
+          DATABASE_URL="sqlite:///$RUNNER_TEMP/t.db" QDRANT_PATH="$RUNNER_TEMP/q" LORE_PORT=8210 \
+            ./pyi-dist/lore-backend/lore-backend &
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:8210/presets && exit 0
+            sleep 2
+          done
+          echo "frozen backend did not boot" && exit 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci || npm install
+
+      - name: Build dmg (electron-builder)
+        working-directory: desktop
+        run: npm run dist:mac
+        env:
+          # Unsigned for now — no Developer ID cert in CI.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lore-macos
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*-mac.zip
+          if-no-files-found: warn
+
+      - name: Attach to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/dist/*.dmg
+            desktop/dist/*-mac.zip
+          draft: true
+          generate_release_notes: true
+
   build-windows:
     name: Build Windows installer
     runs-on: windows-latest
