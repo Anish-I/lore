@@ -25,6 +25,16 @@ $ lore ask "what did I decide about the kalshi bot?"
 
 ---
 
+## 📦 Download (beta)
+
+| Platform | |
+|---|---|
+| 🍎 **macOS** (Apple Silicon) | [Download the dmg](https://github.com/Anish-I/lore/releases/latest) — first launch: right-click → Open (unsigned beta) |
+| 🪟 **Windows** | [Download the installer](https://github.com/Anish-I/lore/releases/latest) — SmartScreen: More info → Run anyway |
+| 🐧 **Linux** | AppImage/deb via the [release workflow artifacts](https://github.com/Anish-I/lore/actions/workflows/release.yml) |
+
+Everything ships self-contained — no Python, no database, no API keys required.
+
 ## ✨ What makes Lore different
 
 - **🔒 Local-first & private** — local models (fastembed BGE + cross-encoder, Ollama for answers) run
@@ -53,26 +63,31 @@ $ lore ask "what did I decide about the kalshi bot?"
 |-------|------|
 | **Desktop** (`desktop/`) | Electron app — file explorer, editor, Ask, graph, Hooks, Wizards, Settings. |
 | **Python core** (`core/lore/`) | FastAPI on `:8099` — ingestion, indexing, recall, upkeep, capture. |
-| **Qdrant** | Vector + BM25 retrieval with the ACL filter applied *in-query*. |
-| **Postgres** | Source of truth — notes, original bodies, scopes, and graph edges. |
+| **Embedded Qdrant** | Vector + BM25 retrieval with the ACL filter applied *in-query* — runs in-process, no server. |
+| **SQLite** | Source of truth — notes, original bodies, scopes, graph edges. (The same code runs Postgres for a deployed team server.) |
 
 **Pipeline:** hybrid dense + BM25 → RRF → 1-hop graph expand → cross-encoder rerank → cited answer.
 **Models:** BGE-small-en-v1.5 (dense) · Qdrant/bm25 (sparse) · ms-marco-MiniLM-L-6-v2 (rerank) · Ollama (answers).
 
 ## 🚀 Quick start
 
-**Desktop app (recommended)**
+**Desktop app (recommended)** — no services needed; the local store is SQLite + embedded Qdrant:
 ```bash
-docker compose up -d            # Qdrant :6333 + Postgres :5433
+python3.11 -m venv .venv && .venv/bin/pip install -e "./core[dev,local]"
 cd desktop && npm install
 npm start                       # spawns the Python backend + opens the app
 ```
 
 **Backend only (dev)**
 ```bash
-docker compose up -d
 cd core && pip install -e ".[dev,local]"   # local = offline models
 python -m uvicorn lore.api:app --port 8099 # http://localhost:8099/
+```
+
+**Server-parity lane (optional, for the deployed/team configuration):**
+```bash
+docker compose up -d            # Qdrant :6333 + Postgres :5433
+LORE_TEST_PG=1 pytest -q        # run the suite against real servers
 ```
 
 ## 💻 CLI & MCP

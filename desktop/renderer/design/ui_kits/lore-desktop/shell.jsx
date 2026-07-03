@@ -307,13 +307,25 @@ function SH_baseName(p) {
 
 function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseScopes, kbFilter, onToggleBase, onClearBases, wizard, onCreateNote, renamingId, onTreeContextMenu, onRenameCommit, onRenameCancel, roots, activeRoot, onSwitchRoot, discoveredLibraries, onOpenDiscovered, sectionProposals, onSectionApply, onSectionDismiss, onSectionUndo, onSectionPromote, theme }) {
   const legendScopes = SH_uniqScopes([workspace.scope, ...Object.values(baseScopes || {}), ...SH_collectScopes(tree)]);
-  // Library up/down switcher — only shown with more than one configured library (root folder).
-  const showLibrarySwitcher = Array.isArray(roots) && roots.length > 1 && typeof onSwitchRoot === 'function';
-  let prevLibraryName = '', nextLibraryName = '';
+  // Library up/down switcher — cycles across EVERY known library: configured
+  // roots plus .lore-discovered ones, so a single-root user with other Lore
+  // projects on disk can still arrow between them.
+  const discRoots = (Array.isArray(discoveredLibraries) ? discoveredLibraries : [])
+    .map((d) => (typeof d === 'string' ? d : d && d.root)).filter(Boolean);
+  const allLibs = [...new Set([...(Array.isArray(roots) ? roots : []), ...discRoots])];
+  const openLib = (root) => {
+    if (!root) return;
+    if (typeof onOpenDiscovered === 'function') onOpenDiscovered(root); // loadTree(any root)
+    else if (typeof onSwitchRoot === 'function' && roots.includes(root)) onSwitchRoot(roots.indexOf(root) <= roots.indexOf(activeRoot) ? -1 : 1);
+  };
+  const showLibrarySwitcher = allLibs.length > 1 && (typeof onOpenDiscovered === 'function' || typeof onSwitchRoot === 'function');
+  let prevLibraryName = '', nextLibraryName = '', prevLib = null, nextLib = null;
   if (showLibrarySwitcher) {
-    const idx = Math.max(0, roots.indexOf(activeRoot));
-    prevLibraryName = SH_baseName(roots[(idx - 1 + roots.length) % roots.length]);
-    nextLibraryName = SH_baseName(roots[(idx + 1) % roots.length]);
+    const idx = Math.max(0, allLibs.indexOf(activeRoot));
+    prevLib = allLibs[(idx - 1 + allLibs.length) % allLibs.length];
+    nextLib = allLibs[(idx + 1) % allLibs.length];
+    prevLibraryName = SH_baseName(prevLib);
+    nextLibraryName = SH_baseName(nextLib);
   }
 
   // Libraries discovered via `.lore` manifests but not currently configured/open —
@@ -326,6 +338,9 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
   const [grpName, setGrpName] = React.useState('');
   const [grpStatus, setGrpStatus] = React.useState('');
   const [libsOpen, setLibsOpen] = React.useState(false);
+  // Sections chip cloud collapses past this many — active selections + the
+  // first few show inline; the rest expand on demand.
+  const [chipsExpanded, setChipsExpanded] = React.useState(false);
   // Section proposal currently being applied/undone (disables its buttons).
   const [secBusy, setSecBusy] = React.useState(null);
   // Sections successfully promoted to a Personal Wizard this session — promote is
@@ -403,8 +418,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         {workspace.scope && <ScopeTag scope={workspace.scope} size="sm" showLabel={false} />}
         {showLibrarySwitcher && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <IconButton icon="chevron-up" label={`Previous library — ${prevLibraryName}`} size="sm" onClick={() => onSwitchRoot(-1)} />
-            <IconButton icon="chevron-down" label={`Next library — ${nextLibraryName}`} size="sm" onClick={() => onSwitchRoot(1)} />
+            <IconButton icon="chevron-up" label={`Previous library — ${prevLibraryName}`} size="sm" onClick={() => openLib(prevLib)} />
+            <IconButton icon="chevron-down" label={`Next library — ${nextLibraryName}`} size="sm" onClick={() => openLib(nextLib)} />
           </div>
         )}
         {showOtherLibs && (
@@ -455,19 +470,36 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             </div>
           )}
           {grpStatus && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--clay-400)', marginBottom: 4 }}>{grpStatus}</div>}
-          {bases && bases.length > 0 && (
-            <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
-              <button onClick={onClearBases} style={{ ...kbChip(allActive), borderColor: allActive ? 'var(--jade-500)' : 'var(--border)', background: allActive ? 'var(--surface-raised)' : 'var(--surface-inset)', color: allActive ? 'var(--jade-400)' : 'var(--text-muted)', fontWeight: 600 }}>All</button>
-              {bases.map((b) => {
-                const sc = baseScopes && baseScopes[b];
-                return (
-                  <button key={b} onClick={() => onToggleBase(b)} style={kbChip(kbFilter && kbFilter.includes(b), sc)}>
-                    <span style={{ width: 7, height: 7, borderRadius: '50%', background: sc ? SH_scopeColor(sc) : 'var(--text-faint)', flexShrink: 0 }} />{b}
+          {bases && bases.length > 0 && (() => {
+            // Crowded libraries (15+ top-level folders) turned this into a
+            // chip WALL eating half the sidebar. Collapse: actively-filtered
+            // chips always show (a filter must never hide itself), then fill
+            // to the cap; the rest sit behind "+N more".
+            const CAP = 8;
+            const active = kbFilter && kbFilter.length ? bases.filter((b) => kbFilter.includes(b)) : [];
+            const rest = bases.filter((b) => !active.includes(b));
+            const shown = chipsExpanded ? bases : [...active, ...rest].slice(0, CAP);
+            const hidden = bases.length - shown.length;
+            const chip = (b) => {
+              const sc = baseScopes && baseScopes[b];
+              return (
+                <button key={b} onClick={() => onToggleBase(b)} style={kbChip(kbFilter && kbFilter.includes(b), sc)}>
+                  <span style={{ width: 7, height: 7, borderRadius: '50%', background: sc ? SH_scopeColor(sc) : 'var(--text-faint)', flexShrink: 0 }} />{b}
+                </button>
+              );
+            };
+            return (
+              <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
+                <button onClick={onClearBases} style={{ ...kbChip(allActive), borderColor: allActive ? 'var(--jade-500)' : 'var(--border)', background: allActive ? 'var(--surface-raised)' : 'var(--surface-inset)', color: allActive ? 'var(--jade-400)' : 'var(--text-muted)', fontWeight: 600 }}>All</button>
+                {shown.map(chip)}
+                {(hidden > 0 || chipsExpanded) && (
+                  <button onClick={() => setChipsExpanded((v) => !v)} style={{ ...kbChip(false), color: 'var(--text-faint)' }}>
+                    {chipsExpanded ? 'less' : `+${hidden} more`}
                   </button>
-                );
-              })}
-            </div>
-          )}
+                )}
+              </div>
+            );
+          })()}
           {(!bases || bases.length === 0) && !grpInput && (
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', padding: '2px 0' }}>No groups yet — click + to add one.</div>
           )}

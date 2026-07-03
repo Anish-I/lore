@@ -61,7 +61,20 @@ function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, in
     setBusy('create');setError('');
     try {
       const user = await ensureSignedIn();
-      if (!user) {setBusy('');return;}
+      if (!user) {
+        // Sign-in unavailable/failed (e.g. no Google OAuth client in this
+        // build): don't dead-end — save the team locally as an INTENT. The
+        // server-side team + invites activate when sign-in works; the name
+        // and choice survive restarts either way.
+        const teamCfg = { intent: 'create', name, pending: 'sign-in' };
+        if (window.lore.config?.set) {
+          try {const next = await window.lore.config.set({ team: teamCfg });if (onConfig) onConfig(next);} catch {/* non-fatal */}
+        }
+        setCreateInput(false);setTeamDraft('');
+        setError(`Team "${name}" saved locally — team sync and invites activate once sign-in is available.`);
+        setBusy('');
+        return;
+      }
       const res = await window.lore.teams.create(name);
       if (!res || !res.ok) {setError(res && res.body && res.body.detail || 'Could not create the team.');setBusy('');return;}
       const teamCfg = { intent: 'create', name, team_id: res.body.team_id, scope: res.body.scope, ...(user.email ? { email: user.email } : {}) };
