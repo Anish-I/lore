@@ -551,6 +551,54 @@ ipcMain.handle('note:write', (_e, { path: p, text }) => {
   }
 });
 
+// ---------- IPC: change a note's scope (the confidentiality control) ----------
+// The ONE operation that changes a note's confidentiality: rewrite its
+// frontmatter `scope:` on disk, then re-index under the new scope_id so
+// retrieval ACL follows immediately. Broadening (private -> team/company) runs
+// the secret scrubber first and REFUSES if it finds keys/tokens unless force:
+// true — you can't accidentally share a note that has a credential in it.
+const SCOPE_BREADTH = { private: 0, engineering: 0, team: 1, company: 2, enterprise: 2 };
+ipcMain.handle('note:set-scope', async (_e, { path: p, scope, force }) => {
+  try {
+    pathGuard(p);
+    const cfg = loadConfig() || {};
+    let raw = fs.readFileSync(p, 'utf8');
+
+    const fm = raw.match(/^---\s*\r?\n([\s\S]*?)\r?\n---/);
+    const curScope = fm && (fm[1].match(/^scope:\s*(.+)$/m) || [])[1];
+    const cur = String(curScope || cfg.scope || 'private').trim().replace(/^['"]|['"]$/g, '');
+    const broadening = (SCOPE_BREADTH[scope] || 0) > (SCOPE_BREADTH[cur] || 0);
+
+    if (broadening && !force) {
+      try {
+        const { redactSecrets } = require('./lib/redact');
+        const [, hadSecret] = redactSecrets(raw);
+        if (hadSecret) {
+          return { ok: false, reason: 'secret', detail: 'This note looks like it contains an API key or token. Remove it before sharing, or confirm to share anyway.' };
+        }
+      } catch { /* redact unavailable — proceed */ }
+    }
+
+    if (fm) {
+      const body = fm[1];
+      const newBody = /^scope:\s*.+$/m.test(body)
+        ? body.replace(/^scope:\s*.+$/m, `scope: ${scope}`)
+        : `scope: ${scope}\n${body}`;
+      raw = raw.replace(fm[0], `---\n${newBody}\n---`);
+    } else {
+      raw = `---\nscope: ${scope}\n---\n\n${raw}`;
+    }
+    fs.writeFileSync(p, raw, 'utf8');
+
+    try {
+      await postJSON(`${BACKEND_URL()}/reindex`, { path: p, owner_id: cfg.owner, scope_id: scope, tenant_id: cfg.tenant });
+    } catch { /* reconcile catches up */ }
+    return { ok: true, scope, broadened: broadening };
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+});
+
 // ---------- IPC: tree context menu (VS Code-style right-click on sidebar) ----------
 // Pure-fs actions (create/duplicate/copy/trash) run here; actions needing renderer
 // state (open a tab, start an inline rename) go out over 'tree:action'.

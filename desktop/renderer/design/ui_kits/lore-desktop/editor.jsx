@@ -161,7 +161,59 @@ function BucketBody({ bucket: b, onOpen }) {
   );
 }
 
-function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
+// Confidentiality picker: the note's real "who can see this" control. Maps the
+// internal scope value to plain business words (Private / Team / Company) and
+// persists the change via onSetScope (rewrites frontmatter + reindex). Any scope
+// that isn't team/company reads as Private (a solo library's purpose scope like
+// "engineering" is just "your private notes").
+const VIS_LEVELS = [
+  { id: 'private', label: 'Private', icon: 'lock', hint: 'Only you' },
+  { id: 'team', label: 'Team', icon: 'users', hint: 'Your team can see it' },
+  { id: 'company', label: 'Company', icon: 'building-2', hint: 'Everyone in your org' },
+];
+function visOf(scope) {
+  const s = String(scope || '').toLowerCase();
+  return (s === 'team' || s === 'company' || s === 'enterprise') ? (s === 'enterprise' ? 'company' : s) : 'private';
+}
+function VisibilityControl({ note, onSetScope }) {
+  const [open, setOpen] = React.useState(false);
+  const cur = visOf(note && note.scope);
+  const active = VIS_LEVELS.find((v) => v.id === cur) || VIS_LEVELS[0];
+  if (!onSetScope) return null;
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setOpen((o) => !o)} title="Change who can see this note"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 12, cursor: 'pointer' }}>
+        <EdIcon name={active.icon} size={13} style={{ color: cur === 'private' ? 'var(--text-faint)' : 'var(--brand-fg)' }} />{active.label}
+        <EdIcon name="chevron-down" size={12} style={{ color: 'var(--text-faint)' }} />
+      </button>
+      {open && (
+        <React.Fragment>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 41, minWidth: 190, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)', padding: 4 }}>
+            {VIS_LEVELS.map((v) => (
+              <div key={v.id} onClick={async () => {
+                setOpen(false);
+                if (v.id === cur) return;
+                await onSetScope(v.id);
+              }} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', background: v.id === cur ? 'var(--surface-hover)' : 'transparent' }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = v.id === cur ? 'var(--surface-hover)' : 'transparent'}>
+                <EdIcon name={v.icon} size={14} style={{ color: v.id === 'private' ? 'var(--text-faint)' : 'var(--brand-fg)', flexShrink: 0 }} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12.5, color: 'var(--text-strong)', fontWeight: v.id === cur ? 600 : 400 }}>{v.label}</div>
+                  <div style={{ fontSize: 10.5, color: 'var(--text-faint)' }}>{v.hint}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions, onSetScope }) {
   if (bucket) {
     return (
       <div style={edS.center}>
@@ -182,11 +234,10 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
             {note.tags.length > 6 && <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>+{note.tags.length - 6}</span>}
           </div>
         )}
-        {/* Scope picker only when there is an actual choice — a solo library's
-            single purpose scope ("engineering") is identity, not a control. */}
-        {scopeOptions && scopeOptions.length > 1 && (
-          <ScopePicker value={scope} onChange={onScope} options={scopeOptions} />
-        )}
+        {/* Confidentiality control — changing this actually re-writes the note's
+            scope on disk and re-indexes it (see wired-app onSetNoteScope), so it
+            is the real "who can see this" switch, not a cosmetic picker. */}
+        <VisibilityControl note={note} onSetScope={onSetScope} />
         <div style={{ display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 2, gap: 2 }}>
           {['read', 'edit'].map((m) => (
             <button key={m} onClick={() => onMode(m)} style={{

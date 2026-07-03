@@ -95,7 +95,11 @@ const SCOPE_FILTERS = [
 function ScopeFilterBar({ value, onChange }) {
   const active = value || 'all';
   return (/*#__PURE__*/
-    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 2, padding: 2, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', WebkitAppRegion: 'no-drag' } },
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6, WebkitAppRegion: 'no-drag' } }, /*#__PURE__*/
+
+
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.08em' } }, "Show"), /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 2, padding: 2, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)' } },
     SCOPE_FILTERS.map((f) => {
       const isActive = active === f.id;
       return (/*#__PURE__*/
@@ -107,6 +111,7 @@ function ScopeFilterBar({ value, onChange }) {
           } }, f.label));
 
     })
+    )
     ));
 
 }

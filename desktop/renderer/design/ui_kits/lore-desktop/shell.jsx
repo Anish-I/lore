@@ -95,7 +95,11 @@ const SCOPE_FILTERS = [
 function ScopeFilterBar({ value, onChange }) {
   const active = value || 'all';
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: 2, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', WebkitAppRegion: 'no-drag' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, WebkitAppRegion: 'no-drag' }}>
+      {/* "Show" makes it unambiguous this is a VIEW filter — it changes what you
+          see, never what a note's scope IS (that's the editor's scope control). */}
+      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Show</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: 2, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)' }}>
       {SCOPE_FILTERS.map((f) => {
         const isActive = active === f.id;
         return (
@@ -107,6 +111,7 @@ function ScopeFilterBar({ value, onChange }) {
           }}>{f.label}</button>
         );
       })}
+      </div>
     </div>
   );
 }

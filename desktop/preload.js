@@ -11,6 +11,9 @@ contextBridge.exposeInMainWorld('lore', {
   readTree:       (root)       => ipcRenderer.invoke('vault:tree', root),
   readNote:       (path)       => ipcRenderer.invoke('note:read', path),
   writeNote:      (path, text) => ipcRenderer.invoke('note:write', { path, text }),
+  // Change a note's scope (confidentiality). Broadening is blocked if the note
+  // has secrets unless force:true. Resolves {ok, scope, broadened} or {ok:false, reason}.
+  setNoteScope:   (path, scope, force) => ipcRenderer.invoke('note:set-scope', { path, scope, force }),
   onVaultChanged: (cb)         => ipcRenderer.on('vault:changed', (_e, payload) => cb(payload)),
 
   // --- sidebar context menu (native, main-process) ---

@@ -161,7 +161,59 @@ function BucketBody({ bucket: b, onOpen }) {
 
 }
 
-function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions }) {
+// Confidentiality picker: the note's real "who can see this" control. Maps the
+// internal scope value to plain business words (Private / Team / Company) and
+// persists the change via onSetScope (rewrites frontmatter + reindex). Any scope
+// that isn't team/company reads as Private (a solo library's purpose scope like
+// "engineering" is just "your private notes").
+const VIS_LEVELS = [
+{ id: 'private', label: 'Private', icon: 'lock', hint: 'Only you' },
+{ id: 'team', label: 'Team', icon: 'users', hint: 'Your team can see it' },
+{ id: 'company', label: 'Company', icon: 'building-2', hint: 'Everyone in your org' }];
+
+function visOf(scope) {
+  const s = String(scope || '').toLowerCase();
+  return s === 'team' || s === 'company' || s === 'enterprise' ? s === 'enterprise' ? 'company' : s : 'private';
+}
+function VisibilityControl({ note, onSetScope }) {
+  const [open, setOpen] = React.useState(false);
+  const cur = visOf(note && note.scope);
+  const active = VIS_LEVELS.find((v) => v.id === cur) || VIS_LEVELS[0];
+  if (!onSetScope) return null;
+  return (/*#__PURE__*/
+    React.createElement("div", { style: { position: 'relative' } }, /*#__PURE__*/
+    React.createElement("button", { onClick: () => setOpen((o) => !o), title: "Change who can see this note",
+      style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 10px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 12, cursor: 'pointer' } }, /*#__PURE__*/
+    React.createElement(EdIcon, { name: active.icon, size: 13, style: { color: cur === 'private' ? 'var(--text-faint)' : 'var(--brand-fg)' } }), active.label, /*#__PURE__*/
+    React.createElement(EdIcon, { name: "chevron-down", size: 12, style: { color: 'var(--text-faint)' } })
+    ),
+    open && /*#__PURE__*/
+    React.createElement(React.Fragment, null, /*#__PURE__*/
+    React.createElement("div", { onClick: () => setOpen(false), style: { position: 'fixed', inset: 0, zIndex: 40 } }), /*#__PURE__*/
+    React.createElement("div", { style: { position: 'absolute', top: '100%', right: 0, marginTop: 4, zIndex: 41, minWidth: 190, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)', padding: 4 } },
+    VIS_LEVELS.map((v) => /*#__PURE__*/
+    React.createElement("div", { key: v.id, onClick: async () => {
+        setOpen(false);
+        if (v.id === cur) return;
+        await onSetScope(v.id);
+      }, style: { display: 'flex', alignItems: 'center', gap: 9, padding: '7px 9px', borderRadius: 'var(--radius-sm)', cursor: 'pointer', background: v.id === cur ? 'var(--surface-hover)' : 'transparent' },
+      onMouseEnter: (e) => e.currentTarget.style.background = 'var(--surface-hover)',
+      onMouseLeave: (e) => e.currentTarget.style.background = v.id === cur ? 'var(--surface-hover)' : 'transparent' }, /*#__PURE__*/
+    React.createElement(EdIcon, { name: v.icon, size: 14, style: { color: v.id === 'private' ? 'var(--text-faint)' : 'var(--brand-fg)', flexShrink: 0 } }), /*#__PURE__*/
+    React.createElement("div", { style: { minWidth: 0 } }, /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 12.5, color: 'var(--text-strong)', fontWeight: v.id === cur ? 600 : 400 } }, v.label), /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 10.5, color: 'var(--text-faint)' } }, v.hint)
+    )
+    )
+    )
+    )
+    )
+
+    ));
+
+}
+
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions, onSetScope }) {
   if (bucket) {
     return (/*#__PURE__*/
       React.createElement("div", { style: edS.center }, /*#__PURE__*/
@@ -180,13 +232,12 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
     React.createElement("div", { style: { display: 'flex', gap: 5, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '46%' } },
     note.tags.slice(0, 6).map((t) => /*#__PURE__*/React.createElement(EdBadge, { key: t, tone: "info" }, "#", t)),
     note.tags.length > 6 && /*#__PURE__*/React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' } }, "+", note.tags.length - 6)
-    ),
+    ), /*#__PURE__*/
 
 
 
-    scopeOptions && scopeOptions.length > 1 && /*#__PURE__*/
-    React.createElement(ScopePicker, { value: scope, onChange: onScope, options: scopeOptions }), /*#__PURE__*/
 
+    React.createElement(VisibilityControl, { note: note, onSetScope: onSetScope }), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 2, gap: 2 } },
     ['read', 'edit'].map((m) => /*#__PURE__*/
     React.createElement("button", { key: m, onClick: () => onMode(m), style: {

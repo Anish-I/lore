@@ -614,6 +614,26 @@ function App() {
     if (f) openNote(f.id);
     return true;
   }, [openNote]);
+  // Change the OPEN note's confidentiality. Persists on disk + reindexes via the
+  // main process; on a redaction block (broadening a note that has secrets),
+  // confirm and retry with force. Refreshes the note + graph so the new scope
+  // shows immediately (node recolors, view filters update).
+  const onSetNoteScope = React.useCallback(async (visId, force = false) => {
+    if (!activeId || !window.lore?.setNoteScope) return;
+    const r = await window.lore.setNoteScope(activeId, visId, force);
+    if (r && r.reason === 'secret' && !force) {
+      const ok = window.confirm(`${r.detail}\n\nShare it anyway?`);
+      if (ok) return onSetNoteScope(visId, true);
+      return;
+    }
+    if (r && r.ok) {
+      const parsed = await loadNote(activeId);
+      setScope(parsed.scope);
+      setGraphNonce((n) => n + 1);
+      if (treeData) loadTree(treeData.root);
+    }
+  }, [activeId, loadNote, treeData, loadTree]);
+
 
   // Mid-session refresh: re-reads the tree WITHOUT touching the active tab.
   // loadTree's openNote(firstNote) is for initial load only.
@@ -1095,7 +1115,7 @@ function App() {
     React.createElement(Editor, { bucket: activeBucket, tabs: tabs, activeId: activeId, onTab: onTab, onCloseTab: closeTab, onCloseOthers: closeOtherTabs, onTogglePane: () => setContextOpen((o) => !o), onOpen: () => setAskOpen(true) }) :
     editorNote ? /*#__PURE__*/
     React.createElement("div", { style: { position: 'relative', flex: 1, minWidth: 0, display: 'flex' } }, /*#__PURE__*/
-    React.createElement(Editor, { note: editorNote, tabs: tabs, activeId: activeId, onTab: onTab, onCloseTab: closeTab, onCloseOthers: closeOtherTabs, onTogglePane: () => setContextOpen((o) => !o), mode: mode, onMode: onMode, onOpen: () => {}, scope: scope, onScope: setScope, scopeOptions: scopeOptions }),
+    React.createElement(Editor, { note: editorNote, tabs: tabs, activeId: activeId, onTab: onTab, onCloseTab: closeTab, onCloseOthers: closeOtherTabs, onTogglePane: () => setContextOpen((o) => !o), mode: mode, onMode: onMode, onOpen: () => {}, scope: scope, onScope: setScope, scopeOptions: scopeOptions, onSetScope: onSetNoteScope }),
     FloatingGraph && /*#__PURE__*/React.createElement(FloatingGraph, { note: editorNote, connections: connections, onOpenNote: openNoteFromBacklink, cameFromId: cameFromId })
     ) : /*#__PURE__*/
     React.createElement(EmptyEditor, null),
