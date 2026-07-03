@@ -15,6 +15,7 @@ python -m PyInstaller \
   --add-data "$(pwd -W)/lore/static;lore/static" \
   --collect-submodules uvicorn \
   --collect-submodules lore \
+  --collect-submodules qdrant_client \
   --collect-all fastembed \
   --collect-all onnxruntime \
   --collect-all tokenizers \
@@ -22,6 +23,7 @@ python -m PyInstaller \
   --hidden-import tiktoken_ext \
   --hidden-import tiktoken_ext.openai_public \
   --hidden-import lore.api \
+  --hidden-import portalocker \
   --hidden-import uvicorn.logging \
   --hidden-import uvicorn.loops.auto \
   --hidden-import uvicorn.protocols.http.auto \

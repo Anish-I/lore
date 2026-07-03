@@ -12,8 +12,42 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  core-tests:
-    name: Python core (pytest)
+  python-lint:
+    name: Python lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install ruff
+      - run: ruff check core/
+
+  python-tests:
+    name: Python tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    env:
+      # FakeEmbedder + offline LLM + SQLite + embedded Qdrant: the conftest's
+      # default lane needs NO services, which is what makes the OS matrix cheap.
+      VAULT_FAKE: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - name: Install core (with dev extras)
+        run: pip install -e "./core[dev]"
+      - name: Run test suite
+        working-directory: core
+        run: python -m pytest -q
+
+  python-tests-server-parity:
+    name: Python tests (Postgres + Qdrant server)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -32,19 +66,17 @@ jobs:
         image: qdrant/qdrant:latest
         ports: ['6333:6333']
     env:
-      # FakeEmbedder + offline LLM: no model downloads, no API keys needed in CI.
       VAULT_FAKE: '1'
+      LORE_TEST_PG: '1'
       DATABASE_URL: postgresql://vault:vault@localhost:5433/vault
       QDRANT_URL: http://localhost:6333
       QDRANT_COLLECTION: vault_test
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
-
       - name: Wait for Qdrant to be ready
         run: |
           for i in $(seq 1 30); do
@@ -52,35 +84,59 @@ jobs:
             sleep 2
           done
           echo "Qdrant did not become ready" && exit 1
-
       - name: Install core (with dev extras)
         run: pip install -e "./core[dev]"
-
-      - name: Run test suite
+      - name: Run test suite (server lane)
         working-directory: core
         run: python -m pytest -q
 
-  desktop-check:
-    name: Electron desktop (syntax + JSX)
+  js-lint:
+    name: JS lint (eslint)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-
       - name: Install desktop deps
         working-directory: desktop
         run: npm ci || npm install
+      - name: eslint
+        working-directory: desktop
+        run: npm run lint
 
+  js-tests:
+    name: JS tests (vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci || npm install
+      - name: vitest
+        working-directory: desktop
+        run: npm test
+
+  desktop-parse:
+    name: Renderer JSX parse (Babel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install desktop deps
+        working-directory: desktop
+        run: npm ci || npm install
       - name: Syntax-check main-process modules
         working-directory: desktop
         run: |
-          for f in main.js preload.js mcp-installer.js hooks-installer.js scraper.js; do
+          for f in main.js preload.js mcp-installer.js hooks-installer.js scraper.js cli-installer.js; do
             [ -f "$f" ] && node --check "$f" && echo "ok: $f"
           done
-
       - name: Validate renderer JSX (Babel parse)
         working-directory: desktop
         run: |

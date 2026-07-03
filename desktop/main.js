@@ -1542,6 +1542,19 @@ app.whenReady().then(async () => {
   // only an explicit false (the user toggled it off in Settings) disables it.
   if (cfg && cfg.upkeepAuto !== false && cfg.tenant) startUpkeepInterval(cfg.tenant);
 
+  // Auto-update via GitHub Releases (electron-updater reads latest*.yml attached
+  // by the release workflow). Packaged builds only; kill-switch cfg.autoUpdate=false.
+  // Fail-open: an update-check failure must never affect the app. NOTE: on macOS
+  // electron-updater requires SIGNED builds — until signing secrets are configured
+  // this is inert on mac (logs and moves on); Windows/Linux work unsigned.
+  if (app.isPackaged && (!cfg || cfg.autoUpdate !== false)) {
+    try {
+      const { autoUpdater } = require('electron-updater');
+      autoUpdater.on('error', (e) => console.warn('[updater]', e && e.message));
+      autoUpdater.checkForUpdatesAndNotify().catch((e) => console.warn('[updater]', e && e.message));
+    } catch (e) { console.warn('[updater] unavailable:', e && e.message); }
+  }
+
   // ---------- embedded Postgres ----------
   // Embedded Postgres is ONLY for an explicit server-mode build/config — the
   // light local default (SQLite + embedded Qdrant, set in ensureBackend) never

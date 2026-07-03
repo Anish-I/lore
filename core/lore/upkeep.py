@@ -38,10 +38,10 @@ _EVENT_LINE_RE = re.compile(r'\b(post-tool|pre-tool|session-(start|end)|user-pro
 def _is_event_log(text: str) -> bool:
     """True if a note is mostly captured session telemetry (event-trace lines) rather than
     knowledge — these date-titled captures are noise and are purged, not folded."""
-    lines = [l for l in (text or '').splitlines() if l.strip()]
+    lines = [ln for ln in (text or '').splitlines() if ln.strip()]
     if not lines:
         return False
-    ev = sum(1 for l in lines if _EVENT_LINE_RE.search(l))
+    ev = sum(1 for ln in lines if _EVENT_LINE_RE.search(ln))
     return ev / len(lines) > 0.5
 
 
