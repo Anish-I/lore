@@ -25,6 +25,7 @@ PYTHON="${PYTHON:-../.venv/bin/python}"
   --collect-submodules uvicorn \
   --collect-submodules lore \
   --collect-submodules qdrant_client \
+  --collect-all mcp \
   --collect-all fastembed \
   --collect-all onnxruntime \
   --collect-all tokenizers \
