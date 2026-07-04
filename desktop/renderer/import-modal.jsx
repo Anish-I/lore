@@ -101,7 +101,7 @@ function IM_ImportModal({ onClose, onDone }) {
             <IM_Icon name="loader" size={14} style={{ color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite' }} />
           )}
           <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: status ? 'var(--text-muted)' : 'var(--text-faint)' }}>
-            {status || 'Files are copied into your library and indexed.'}
+            {status || 'Files are copied into your library and remembered.'}
           </span>
           <IM_Button variant="ghost" onClick={onClose} disabled={busy}>Close</IM_Button>
         </div>

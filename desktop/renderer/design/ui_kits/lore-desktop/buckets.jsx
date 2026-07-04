@@ -208,7 +208,7 @@ function ConnectedTools() {
   return (
     <div style={{ marginBottom: 22 }}>
       <h2 style={bkS.h2}>Connected</h2>
-      <p style={bkS.sub}>What's wired into Lore right now — manage these from Settings / Hooks.</p>
+      <p style={bkS.sub}>What's wired into Lore right now — manage these from Settings / Connections.</p>
       <BkCard style={{ padding: 0, overflow: 'hidden' }}>
         {rows.map((r, i) => (
           <div key={r.name} style={i === rows.length - 1 ? { borderBottom: 'none' } : undefined}>
@@ -428,7 +428,10 @@ function PersonalWizardChat({ wizard, onClose }) {
   );
 }
 
-function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
+// advancedMode gates the store surfaces: the Knowledge-bases/Tools tabs, the
+// catalog browsers and shared collections are developer/store territory. The
+// default Wizards view is just YOUR wizards + the create flow.
+function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes, advancedMode }) {
   const WizardBuilder = window.LoreWizardBuilder, CatalogPreviewChat = window.LoreCatalogPreviewChat;
   const [topTab, setTopTab] = React.useState('bases');   // 'bases' | 'tools'
   const [catalog, setCatalog] = React.useState(null);
@@ -501,11 +504,13 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
         {detailItem
           ? <StoreDetail item={detailItem} onBack={() => setDetail(null)} onChat={chatFor} onInstall={install} onUninstall={uninstall} onRate={rate} />
           : <>
-            <div style={{ marginBottom: 18 }}>
-              <BkTabs value={topTab} onChange={setTopTab} tabs={topTabs} />
-            </div>
+            {advancedMode && (
+              <div style={{ marginBottom: 18 }}>
+                <BkTabs value={topTab} onChange={setTopTab} tabs={topTabs} />
+              </div>
+            )}
 
-            {topTab === 'bases' && <>
+            {(!advancedMode || topTab === 'bases') && <>
               <BkCard style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 22 }}>
                 <span style={{ ...bkS.cardIcon, width: 40, height: 40 }}><BkIcon name="wand-2" size={20} style={{ color: 'var(--brand-fg)' }} /></span>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -518,16 +523,16 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
               <div style={{ marginBottom: 22 }}>
                 <h2 style={bkS.h2}>Personal</h2>
                 {personal !== null && personal.length === 0
-                  ? <p style={bkS.sub}>No wizards of your own yet — create one above, or promote an applied Section (sidebar → Sections → Promote).</p>
+                  ? <p style={bkS.sub}>No wizards of your own yet — create one above, or review what Lore tidied (sidebar → ✨) and turn a group into a folder.</p>
                   : <>
-                    <p style={bkS.sub}>Wizards built from your own notes — each chat is scoped to only its own notes.</p>
+                    <p style={bkS.sub}>Wizards built from your own notes — each chat answers only from its own notes.</p>
                     <div style={bkS.grid}>
                       {(personal || []).map((w) => <PersonalWizardCard key={w.id} w={w} onAsk={setChatWizard} onOpen={openDetail('personal')} />)}
                     </div>
                   </>}
               </div>
 
-              {(buckets || []).length > 0 && (
+              {advancedMode && (buckets || []).length > 0 && (
                 <div style={{ marginBottom: 22 }}>
                   <h2 style={bkS.h2}>Shared collections</h2>
                   <p style={bkS.sub}>Knowledge bases pooled with your team — a note can live in many at once.</p>
@@ -537,7 +542,7 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
                 </div>
               )}
 
-              {catalog === null
+              {advancedMode && (catalog === null
                 ? <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', padding: '12px 0' }}>Loading catalog…</div>
                 : kbCatalog.length > 0 && (
                   <div>
@@ -545,10 +550,10 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
                     <p style={bkS.sub}>Published note bundles, curated from the web. Click a title for details; chat previews work before installing.</p>
                     <CatalogBrowser items={kbCatalog} placeholder="Search knowledge bases…" onInstall={install} onRate={rate} onUninstall={uninstall} onOpen={openDetail('catalog')} />
                   </div>
-                )}
+                ))}
             </>}
 
-            {topTab === 'tools' && <>
+            {advancedMode && topTab === 'tools' && <>
               <p style={{ ...bkS.sub, margin: '0 0 18px' }}>Plugins that connect external data and capabilities INTO Lore — MCP servers, agent skills, and marketplace integrations. Knowledge bases (note bundles) live in the other tab.</p>
               <ConnectedTools />
               {catalog === null
