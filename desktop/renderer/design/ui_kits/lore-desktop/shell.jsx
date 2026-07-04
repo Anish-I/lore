@@ -81,32 +81,30 @@ function SH_uniqScopes(values) {
   return out;
 }
 
-// Top-bar scope filter — "All / Private / Team / Wizards". Applied by the caller (wired-app)
-// to BOTH the file tree and the graph; this component only renders the pill control.
-// 'plugins' id kept for wired-app's predicate; the label says Wizards because the filter
-// matches installed note bundles (knowledge bases) — "plugins" is reserved for Tools.
+// Top-bar CONTEXT switch — "Private / Team / Company". One switch: it filters the
+// tree + graph (wired-app's passesScopeFilter) AND sets which knowledge the chat
+// answers from. Private = everything you own (including notes you pushed to a
+// team — you still own them); Team/Company = only what's been pushed there.
+// Until team sync lands, Team/Company are quiet (secondary styling + tooltip) but
+// stay clickable — they filter to your pushed notes.
 const SCOPE_FILTERS = [
-  { id: 'all', label: 'All' },
-  { id: 'private', label: 'Private' },
-  { id: 'team', label: 'Team' },
-  { id: 'plugins', label: 'Wizards' },
+  { id: 'private', label: 'Private', title: 'Your own knowledge — everything in this library' },
+  { id: 'team', label: 'Team', title: 'Notes pushed to your team — activates fully with team sync', quiet: true },
+  { id: 'company', label: 'Company', title: 'Notes pushed company-wide — activates fully with team sync', quiet: true },
 ];
 
 function ScopeFilterBar({ value, onChange }) {
-  const active = value || 'all';
+  const active = value || 'private';
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, WebkitAppRegion: 'no-drag' }}>
-      {/* "Show" makes it unambiguous this is a VIEW filter — it changes what you
-          see, never what a note's scope IS (that's the editor's scope control). */}
-      <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.08em' }}>Show</span>
       <div style={{ display: 'flex', alignItems: 'center', gap: 2, padding: 2, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)' }}>
       {SCOPE_FILTERS.map((f) => {
         const isActive = active === f.id;
         return (
-          <button key={f.id} onClick={() => onChange(f.id)} title={`Show ${f.label.toLowerCase()} notes`} style={{
+          <button key={f.id} onClick={() => onChange(f.id)} title={f.title} style={{
             border: 'none', padding: '4px 10px', borderRadius: 'var(--radius-full)', cursor: 'pointer',
             background: isActive ? 'var(--surface-raised)' : 'transparent',
-            color: isActive ? 'var(--brand-fg)' : 'var(--text-muted)',
+            color: isActive ? 'var(--brand-fg)' : (f.quiet ? 'var(--text-faint)' : 'var(--text-muted)'),
             fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: isActive ? 600 : 400, whiteSpace: 'nowrap',
           }}>{f.label}</button>
         );
@@ -151,20 +149,17 @@ function Titlebar({ theme, onToggleTheme, onSearch, onAsk, onSettings, onProfile
   );
 }
 
-function ActivityRail({ view, askOpen, onView, onAsk, simpleMode }) {
-  // Simple mode (business face): only Files / Search — the graph, wizards,
-  // teams and hooks surfaces are the "developer daydream" that overwhelms a
-  // SharePoint user. Everything keeps working underneath; toggle in Settings.
-  const items = simpleMode ? [
+function ActivityRail({ view, askOpen, onView, onAsk, advancedMode }) {
+  // Default rail: Home / Files / Graph / Teams / Wizards (+ Settings at the
+  // bottom). Advanced mode adds the developer surface — Connections (AI-tool
+  // capture hooks). Everything keeps working underneath; toggle in Settings.
+  const items = [
+    { id: 'home', icon: 'home', label: 'Home' },
     { id: 'workspace', icon: 'files', label: 'Files' },
-    { id: 'search', icon: 'search', label: 'Search' },
-  ] : [
-    { id: 'workspace', icon: 'files', label: 'Files' },
-    { id: 'search', icon: 'search', label: 'Search' },
     { id: 'graph', icon: 'network', label: 'Graph' },
     { id: 'projects', icon: 'users', label: 'Teams' },
     { id: 'buckets', icon: 'library', label: 'Wizards' },
-    { id: 'hooks', icon: 'plug', label: 'Hooks' },
+    ...(advancedMode ? [{ id: 'hooks', icon: 'plug', label: 'Connections' }] : []),
   ];
   return (
     <div style={shellS.rail}>
@@ -354,6 +349,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
   // Sections chip cloud collapses past this many — active selections + the
   // first few show inline; the rest expand on demand.
   const [chipsExpanded, setChipsExpanded] = React.useState(false);
+  // "Lore tidied N things" review popover (the de-janked proposals surface).
+  const [tidyOpen, setTidyOpen] = React.useState(false);
   // Section proposal currently being applied/undone (disables its buttons).
   const [secBusy, setSecBusy] = React.useState(null);
   // Sections successfully promoted to a Personal Wizard this session — promote is
@@ -464,6 +461,10 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         )}
         <IconButton icon="plus" label="New note" size="sm" onClick={onCreateNote} />
       </div>
+      {/* Sections chip cloud — hidden by default (the "janky sections" fix); it
+          appears only while a section filter is active (chips clicked in the
+          graph view, or a filter already set) so the default sidebar stays calm. */}
+      {kbFilter && kbFilter.length > 0 && (
       <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
             <Icon name="layers" size={11} style={{ color: 'var(--text-faint)' }} />
@@ -517,6 +518,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', padding: '2px 0' }}>No groups yet — click + to add one.</div>
           )}
         </div>
+      )}
       {/* Proposed sections — Lore's background upkeep noticed topic clusters. Nothing
           moves unless the user clicks Enable; Undo restores the recorded original paths. */}
       {(() => {
@@ -549,44 +551,64 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             if (r && r.ok !== false) setPromoted((p) => new Set(p).add(id));
           } finally { setSecBusy(null); }
         };
+        // De-janked surface: ONE quiet line by default; all the actions live in a
+        // popover the user opens on purpose. Same handlers as before — only the
+        // default footprint changed.
         return (
-          <div style={{ borderBottom: '1px solid var(--divider)', padding: '7px 10px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <Icon name="folder-plus" size={11} style={{ color: 'var(--text-faint)' }} />
-              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Proposed sections</span>
-              <HelpHint size={13} tip="Lore noticed groups of notes on the same topic and proposes a folder for each. Nothing is moved until you click Enable — and Undo puts every note back where it was." />
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-              {visible.map((s) => {
-                const busy = secBusy === s.id;
-                const applied = s.status === 'applied';
-                return (
-                  <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <Icon name={applied ? 'folder-check' : 'folder'} size={12} style={{ color: applied ? 'var(--jade-400)' : 'var(--text-subtle)', flexShrink: 0 }} />
-                    <span title={(s.notes || []).map((n) => n.title || n.id).join('\n')} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--text-body)' }}>
-                      {s.name}
-                      <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 }}> · {(s.notes || []).length}</span>
-                    </span>
-                    {applied ? (
-                      <React.Fragment>
-                        <button disabled={busy} onClick={() => run(s.id, onSectionDismiss)} title="Remove this section record (notes and folder stay untouched)" style={secBtn()}>✕</button>
-                        {promoted.has(s.id) ? (
-                          <Badge tone="success" dot>wizard</Badge>
-                        ) : (
-                          <button disabled={busy} onClick={() => runPromote(s.id)} title={`Turn "${s.name}" into a Personal Wizard you can ask directly`} style={secBtn('primary')}>{busy ? '…' : 'Promote'}</button>
-                        )}
-                        <button disabled={busy} onClick={() => run(s.id, onSectionUndo)} title="Move these notes back to their original locations" style={secBtn()}>{busy ? '…' : 'Undo'}</button>
-                      </React.Fragment>
-                    ) : (
-                      <React.Fragment>
-                        <button disabled={busy} onClick={() => run(s.id, onSectionApply)} title={`Create a "${s.name}" folder and move these notes into it`} style={secBtn('primary')}>{busy ? '…' : 'Enable'}</button>
-                        <button disabled={busy} onClick={() => run(s.id, onSectionDismiss)} title="Dismiss this proposal (it won't be suggested again)" style={secBtn()}>✕</button>
-                      </React.Fragment>
-                    )}
+          <div style={{ borderBottom: '1px solid var(--divider)', padding: '6px 10px', position: 'relative' }}>
+            <button onClick={() => setTidyOpen((o) => !o)} style={{
+              width: '100%', display: 'flex', alignItems: 'center', gap: 6, border: 'none',
+              background: 'transparent', cursor: 'pointer', padding: '2px 0', textAlign: 'left',
+            }}>
+              <span style={{ fontSize: 11 }}>✨</span>
+              <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--text-subtle)' }}>
+                Lore tidied {visible.length} thing{visible.length === 1 ? '' : 's'}
+              </span>
+              <span style={{ fontSize: 11, color: 'var(--brand-fg)', fontWeight: 600, flexShrink: 0 }}>Review</span>
+            </button>
+            {tidyOpen && (
+              <React.Fragment>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setTidyOpen(false)} />
+                <div style={{ position: 'absolute', top: 'calc(100% + 2px)', left: 8, right: 8, zIndex: 41, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)', padding: '9px 10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 }}>
+                    <Icon name="folder-plus" size={11} style={{ color: 'var(--text-faint)' }} />
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Lore tidied these</span>
+                    <HelpHint size={13} tip="Lore noticed groups of notes on the same topic and proposes a folder for each. Nothing is moved until you click Enable — and Undo puts every note back where it was." />
                   </div>
-                );
-              })}
-            </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {visible.map((s) => {
+                      const busy = secBusy === s.id;
+                      const applied = s.status === 'applied';
+                      return (
+                        <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Icon name={applied ? 'folder-check' : 'folder'} size={12} style={{ color: applied ? 'var(--jade-400)' : 'var(--text-subtle)', flexShrink: 0 }} />
+                          <span title={(s.notes || []).map((n) => n.title || n.id).join('\n')} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--text-body)' }}>
+                            {s.name}
+                            <span style={{ color: 'var(--text-faint)', fontFamily: 'var(--font-mono)', fontSize: 10 }}> · {(s.notes || []).length}</span>
+                          </span>
+                          {applied ? (
+                            <React.Fragment>
+                              <button disabled={busy} onClick={() => run(s.id, onSectionDismiss)} title="Remove this record (notes and folder stay untouched)" style={secBtn()}>✕</button>
+                              {promoted.has(s.id) ? (
+                                <Badge tone="success" dot>wizard</Badge>
+                              ) : (
+                                <button disabled={busy} onClick={() => runPromote(s.id)} title={`Turn "${s.name}" into a folder you can chat with as a Personal Wizard`} style={secBtn('primary')}>{busy ? '…' : 'Turn into folder'}</button>
+                              )}
+                              <button disabled={busy} onClick={() => run(s.id, onSectionUndo)} title="Move these notes back to their original locations" style={secBtn()}>{busy ? '…' : 'Undo'}</button>
+                            </React.Fragment>
+                          ) : (
+                            <React.Fragment>
+                              <button disabled={busy} onClick={() => run(s.id, onSectionApply)} title={`Create a "${s.name}" folder and move these notes into it`} style={secBtn('primary')}>{busy ? '…' : 'Enable'}</button>
+                              <button disabled={busy} onClick={() => run(s.id, onSectionDismiss)} title="Dismiss this suggestion (it won't come back)" style={secBtn()}>✕</button>
+                            </React.Fragment>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </React.Fragment>
+            )}
           </div>
         );
       })()}
@@ -602,19 +624,19 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         ))}
       </div>
       <div style={{ padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', flexDirection: 'column', gap: 7 }}>
-        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Scope legend</div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>Who can see what</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px 12px' }}>
           {legendScopes.length ? legendScopes.map((sc) => (
             <span key={sc} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' }}>
               <Icon name={SH_scopeIcon(sc)} size={11} style={{ color: SH_scopeColor(sc) }} />{SH_scopeLabel(sc)}
             </span>
           )) : (
-            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>No scope configured</span>
+            <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>All yours — nothing shared yet</span>
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid var(--divider)', paddingTop: 6 }}>
           <Icon name="file-text" size={11} style={{ color: 'var(--text-faint)' }} />
-          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{workspace.indexedLabel ? `${workspace.indexedLabel} on disk` : 'no library'}</span>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>{workspace.indexedLabel || 'no library'}</span>
         </div>
       </div>
     </div>

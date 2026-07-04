@@ -58,7 +58,7 @@ function stText(value, fallback = 'None') {
 // "provider · model" label for the /config/retrieval snapshot ({error}/null aware).
 function stRetrievalModel(retrieval, key) {
   if (retrieval === null) return 'checking…';
-  if (retrieval.error) return 'backend offline';
+  if (retrieval.error) return 'memory engine is starting…';
   const m = retrieval[key];
   if (!m || !m.model) return 'unknown';
   return m.provider ? `${m.provider} · ${m.model}` : String(m.model);
@@ -101,7 +101,10 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
 
   // Indexing & recall state (real wiring: config flag + backend /config/retrieval)
   const [autoIndexOnSave, setAutoIndexOnSave] = React.useState(true); // default ON; explicit false disables
-  const [simpleMode, setSimpleMode] = React.useState(false);
+  // Advanced mode (default OFF) — the developer surfaces live behind it. Replaces
+  // the old simpleMode flag entirely (cfg.simpleMode is ignored; the default
+  // experience IS the simple one now).
+  const [advancedMode, setAdvancedMode] = React.useState(false);
   const [backupEnabled, setBackupEnabled] = React.useState(false);
   const [backupDir, setBackupDir] = React.useState('');
   const [backupStatus, setBackupStatus] = React.useState(null);
@@ -151,7 +154,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           setCfg(c || null);
           setDefScope((c && c.scope) || '');
           setAutoIndexOnSave(!(c && c.autoIndexOnSave === false));
-      setSimpleMode(!!(c && c.simpleMode));
+          setAdvancedMode(!!(c && c.advancedMode === true));
           setBackupEnabled(!!(c && c.backupEnabled));
           setBackupDir((c && c.backupDir) || '');
           setAutoFileObvious(!!(c && c.autoFileObvious === true));
@@ -196,7 +199,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     setDefScope((config && config.scope) || '');
     if (config) {
       setAutoIndexOnSave(config.autoIndexOnSave !== false);
-      setSimpleMode(!!config.simpleMode);
+      setAdvancedMode(config.advancedMode === true);
       setAutoFileObvious(config.autoFileObvious === true);
       setUpkeepAuto(config.upkeepAuto !== false);
     }
@@ -268,11 +271,11 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     }
   };
 
-  const stSetSimpleMode = (v) => {
-    setSimpleMode(v);
+  const stSetAdvancedMode = (v) => {
+    setAdvancedMode(v);
     if (window.lore && window.lore.config && window.lore.config.set) {
       // onConfig re-renders the app with the new config so the rail updates live.
-      window.lore.config.set({ simpleMode: !!v }).then((next) => { if (onConfig) onConfig(next); }).catch(() => {});
+      window.lore.config.set({ advancedMode: !!v }).then((next) => { if (onConfig) onConfig(next); }).catch(() => {});
     }
   };
 
@@ -412,7 +415,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
             <StBadge tone={identityReady ? 'success' : 'neutral'}>{identityReady ? 'configured' : 'not configured'}</StBadge>
             <StButton variant="secondary" size="sm" onClick={onOpenSetup}>Configure</StButton>
           </div>
-          <Row label="Google sign-in" hint={authUser ? `Signed in — ${(authUser.scopes && authUser.scopes.length) || 0} team scope(s)` : 'Sign in to sync team/enterprise notes and ask across your team.'}>
+          <Row label="Google sign-in" hint={authUser ? `Signed in — ${(authUser.scopes && authUser.scopes.length) || 0} team space(s)` : 'Sign in to sync team/enterprise notes and ask across your team.'}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {authUser
                 ? <>
@@ -438,8 +441,8 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
               })}
             </div>
           </Row>
-          <Row label="Simple mode" hint="Hide the graph, wizards, teams and automation surfaces — leaving just your files, search and ask. Everything keeps working underneath; flip back anytime. Best for non-technical use.">
-            <StSwitch checked={simpleMode} onChange={stSetSimpleMode} />
+          <Row label="Advanced mode" hint="Show the developer surfaces — Connections (AI-tool capture), MCP, CLI, retrieval model internals, and the wizard store. Off by default; everything keeps working underneath.">
+            <StSwitch checked={advancedMode} onChange={stSetAdvancedMode} />
           </Row>
         </Section>
 
@@ -500,43 +503,13 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           )}
         </Section>
 
-        <Section icon="cpu" title="Indexing & recall">
-          <Row label="Auto-index on save" hint="Re-index a note automatically when its file changes on disk. Off: re-index manually (right-click a note → Re-index Note).">
+        <Section icon="cpu" title="Remembering">
+          <Row label="Remember changes automatically" hint="Refresh a note's memory automatically when its file changes on disk. Off: refresh manually (right-click a note → Refresh).">
             <StSwitch checked={autoIndexOnSave} onChange={stSetAutoIndex} />
           </Row>
-          <Row label="Auto-file obvious notes" hint="During upkeep, a note that unambiguously belongs to one of your existing sections is moved into that section folder automatically — undoable via the section's Undo, logged to the library worklog. Off (default): every move stays a proposal you approve.">
+          <Row label="Auto-file obvious notes" hint="While tidying, a note that unambiguously belongs to one of your existing sections is moved into that folder automatically — undoable, logged to the library worklog. Off (default): every move stays a suggestion you approve." last>
             <StSwitch checked={autoFileObvious} onChange={stSetAutoFile} />
           </Row>
-          <Row label="Contextual retrieval" hint="Every chunk is stored with a situating context sentence for better recall. Built into the indexing pipeline.">
-            <StBadge tone={retrieval === null ? 'neutral' : retrieval.error ? 'neutral' : 'success'} dot={!!(retrieval && !retrieval.error)}>
-              {retrieval === null ? 'checking…' : retrieval.error ? 'backend offline' : 'enabled'}
-            </StBadge>
-          </Row>
-          <Row label="Embedding model">
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stRetrievalModel(retrieval, 'embeddingModel')}</span>
-          </Row>
-          <Row label="Reranker">
-            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stRetrievalModel(retrieval, 'reranker')}</span>
-          </Row>
-          <Row label="Local fallback" hint="On-device fastembed models. Always used for hook captures and imports; primary for search when no cloud key is set.">
-            {(() => {
-              const lf = retrieval && !retrieval.error ? retrieval.localFallback : null;
-              const tone = !lf ? 'neutral' : lf.active ? 'success' : lf.available ? 'info' : 'neutral';
-              const label = retrieval === null ? 'checking…' : retrieval.error ? 'backend offline'
-                : lf && lf.active ? 'active' : lf && lf.available ? 'available' : 'not available';
-              return <StBadge tone={tone} dot={!!(lf && lf.active)}>{label}</StBadge>;
-            })()}
-          </Row>
-          <Row label="Import config" hint="Apply retrieval and upkeep settings from a JSON file — another Lore install or a shared team config." last>
-            <StButton variant="secondary" size="sm" icon="folder-open" onClick={stImportConfig}>Import…</StButton>
-          </Row>
-          {importResult && (
-            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6, color: importResult.ok ? 'var(--text-muted)' : 'var(--clay-400)' }}>
-              {importResult.ok
-                ? `Applied: ${Object.keys(importResult.applied || {}).join(', ')}${(importResult.ignored || []).length ? ` · ignored: ${importResult.ignored.join(', ')}` : ''}`
-                : `Import failed: ${stText(importResult.reason, 'unknown error')}`}
-            </div>
-          )}
         </Section>
 
         <Section icon="refresh-cw" title="Sync & storage">
@@ -564,6 +537,48 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
                 : <StButton variant="secondary" size="sm" icon="plus">Connect</StButton>}
             </Row>
           ))}
+        </Section>
+
+        {/* ── Advanced (developer surfaces) — visible only with Advanced mode ON ── */}
+        {advancedMode && (
+        <React.Fragment>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '26px 0 12px' }}>
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Advanced</span>
+          <div style={{ flex: 1, height: 1, background: 'var(--divider)' }} />
+        </div>
+
+        {/* ── Retrieval models ── */}
+        <Section icon="cpu" title="Retrieval models">
+          <Row label="Contextual retrieval" hint="Every chunk is stored with a situating context sentence for better recall. Built into the pipeline.">
+            <StBadge tone={retrieval === null ? 'neutral' : retrieval.error ? 'neutral' : 'success'} dot={!!(retrieval && !retrieval.error)}>
+              {retrieval === null ? 'checking…' : retrieval.error ? 'memory engine is starting…' : 'enabled'}
+            </StBadge>
+          </Row>
+          <Row label="Embedding model">
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stRetrievalModel(retrieval, 'embeddingModel')}</span>
+          </Row>
+          <Row label="Reranker">
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stRetrievalModel(retrieval, 'reranker')}</span>
+          </Row>
+          <Row label="Local fallback" hint="On-device fastembed models. Always used for captures and imports; primary for search when no cloud key is set.">
+            {(() => {
+              const lf = retrieval && !retrieval.error ? retrieval.localFallback : null;
+              const tone = !lf ? 'neutral' : lf.active ? 'success' : lf.available ? 'info' : 'neutral';
+              const label = retrieval === null ? 'checking…' : retrieval.error ? 'memory engine is starting…'
+                : lf && lf.active ? 'active' : lf && lf.available ? 'available' : 'not available';
+              return <StBadge tone={tone} dot={!!(lf && lf.active)}>{label}</StBadge>;
+            })()}
+          </Row>
+          <Row label="Import config" hint="Apply retrieval and tidying settings from a JSON file — another Lore install or a shared team config." last>
+            <StButton variant="secondary" size="sm" icon="folder-open" onClick={stImportConfig}>Import…</StButton>
+          </Row>
+          {importResult && (
+            <div style={{ padding: '10px 16px', borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6, color: importResult.ok ? 'var(--text-muted)' : 'var(--clay-400)' }}>
+              {importResult.ok
+                ? `Applied: ${Object.keys(importResult.applied || {}).join(', ')}${(importResult.ignored || []).length ? ` · ignored: ${importResult.ignored.join(', ')}` : ''}`
+                : `Import failed: ${stText(importResult.reason, 'unknown error')}`}
+            </div>
+          )}
         </Section>
 
         {/* ── CLI ── */}
@@ -683,13 +698,15 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
             );
           })()}
         </Section>
+        </React.Fragment>
+        )}
 
-        {/* ── Data upkeep ── */}
-        <Section icon="refresh-ccw" title="Data upkeep">
-          <Row label="Auto-upkeep" hint={identityReady ? 'Lore folds date/session notes into topic nodes automatically after each ingest.' : 'Configure tenant and scope before enabling upkeep.'}>
+        {/* ── Tidy up (was "Data upkeep") ── */}
+        <Section icon="refresh-ccw" title="Tidy up">
+          <Row label="Tidy automatically" hint={identityReady ? 'Lore folds date/session notes into durable topic notes automatically after each capture.' : 'Finish setup before enabling automatic tidying.'}>
             <StSwitch checked={upkeepAuto && identityReady} onChange={stSetUpkeepAuto} disabled={!identityReady} />
           </Row>
-          <Row label="Rebuild now" hint="Detect ephemeral notes (daily, session, sync) and consolidate them into durable topic nodes." last>
+          <Row label="Tidy up now" hint="Detect ephemeral notes (daily, session, sync) and consolidate them into durable topic notes." last>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {upkeepRunning && (
                 <StIcon name="loader" size={14} style={{ color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite' }} />
@@ -701,7 +718,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
                 onClick={stRunUpkeep}
                 disabled={upkeepRunning || !identityReady}
               >
-                {upkeepRunning ? 'Running…' : 'Rebuild now'}
+                {upkeepRunning ? 'Tidying…' : 'Tidy up now'}
               </StButton>
             </div>
           </Row>

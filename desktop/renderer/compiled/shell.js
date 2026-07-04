@@ -81,32 +81,30 @@ function SH_uniqScopes(values) {
   return out;
 }
 
-// Top-bar scope filter — "All / Private / Team / Wizards". Applied by the caller (wired-app)
-// to BOTH the file tree and the graph; this component only renders the pill control.
-// 'plugins' id kept for wired-app's predicate; the label says Wizards because the filter
-// matches installed note bundles (knowledge bases) — "plugins" is reserved for Tools.
+// Top-bar CONTEXT switch — "Private / Team / Company". One switch: it filters the
+// tree + graph (wired-app's passesScopeFilter) AND sets which knowledge the chat
+// answers from. Private = everything you own (including notes you pushed to a
+// team — you still own them); Team/Company = only what's been pushed there.
+// Until team sync lands, Team/Company are quiet (secondary styling + tooltip) but
+// stay clickable — they filter to your pushed notes.
 const SCOPE_FILTERS = [
-{ id: 'all', label: 'All' },
-{ id: 'private', label: 'Private' },
-{ id: 'team', label: 'Team' },
-{ id: 'plugins', label: 'Wizards' }];
+{ id: 'private', label: 'Private', title: 'Your own knowledge — everything in this library' },
+{ id: 'team', label: 'Team', title: 'Notes pushed to your team — activates fully with team sync', quiet: true },
+{ id: 'company', label: 'Company', title: 'Notes pushed company-wide — activates fully with team sync', quiet: true }];
 
 
 function ScopeFilterBar({ value, onChange }) {
-  const active = value || 'all';
+  const active = value || 'private';
   return (/*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6, WebkitAppRegion: 'no-drag' } }, /*#__PURE__*/
-
-
-    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '.08em' } }, "Show"), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 2, padding: 2, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)' } },
     SCOPE_FILTERS.map((f) => {
       const isActive = active === f.id;
       return (/*#__PURE__*/
-        React.createElement("button", { key: f.id, onClick: () => onChange(f.id), title: `Show ${f.label.toLowerCase()} notes`, style: {
+        React.createElement("button", { key: f.id, onClick: () => onChange(f.id), title: f.title, style: {
             border: 'none', padding: '4px 10px', borderRadius: 'var(--radius-full)', cursor: 'pointer',
             background: isActive ? 'var(--surface-raised)' : 'transparent',
-            color: isActive ? 'var(--brand-fg)' : 'var(--text-muted)',
+            color: isActive ? 'var(--brand-fg)' : f.quiet ? 'var(--text-faint)' : 'var(--text-muted)',
             fontFamily: 'var(--font-mono)', fontSize: 10.5, fontWeight: isActive ? 600 : 400, whiteSpace: 'nowrap'
           } }, f.label));
 
@@ -151,20 +149,17 @@ function Titlebar({ theme, onToggleTheme, onSearch, onAsk, onSettings, onProfile
 
 }
 
-function ActivityRail({ view, askOpen, onView, onAsk, simpleMode }) {
-  // Simple mode (business face): only Files / Search — the graph, wizards,
-  // teams and hooks surfaces are the "developer daydream" that overwhelms a
-  // SharePoint user. Everything keeps working underneath; toggle in Settings.
-  const items = simpleMode ? [
+function ActivityRail({ view, askOpen, onView, onAsk, advancedMode }) {
+  // Default rail: Home / Files / Graph / Teams / Wizards (+ Settings at the
+  // bottom). Advanced mode adds the developer surface — Connections (AI-tool
+  // capture hooks). Everything keeps working underneath; toggle in Settings.
+  const items = [
+  { id: 'home', icon: 'home', label: 'Home' },
   { id: 'workspace', icon: 'files', label: 'Files' },
-  { id: 'search', icon: 'search', label: 'Search' }] :
-  [
-  { id: 'workspace', icon: 'files', label: 'Files' },
-  { id: 'search', icon: 'search', label: 'Search' },
   { id: 'graph', icon: 'network', label: 'Graph' },
   { id: 'projects', icon: 'users', label: 'Teams' },
   { id: 'buckets', icon: 'library', label: 'Wizards' },
-  { id: 'hooks', icon: 'plug', label: 'Hooks' }];
+  ...(advancedMode ? [{ id: 'hooks', icon: 'plug', label: 'Connections' }] : [])];
 
   return (/*#__PURE__*/
     React.createElement("div", { style: shellS.rail },
@@ -354,6 +349,8 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
   // Sections chip cloud collapses past this many — active selections + the
   // first few show inline; the rest expand on demand.
   const [chipsExpanded, setChipsExpanded] = React.useState(false);
+  // "Lore tidied N things" review popover (the de-janked proposals surface).
+  const [tidyOpen, setTidyOpen] = React.useState(false);
   // Section proposal currently being applied/undone (disables its buttons).
   const [secBusy, setSecBusy] = React.useState(null);
   // Sections successfully promoted to a Personal Wizard this session — promote is
@@ -463,7 +460,11 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
     ), /*#__PURE__*/
 
     React.createElement(IconButton, { icon: "plus", label: "New note", size: "sm", onClick: onCreateNote })
-    ), /*#__PURE__*/
+    ),
+
+
+
+    kbFilter && kbFilter.length > 0 && /*#__PURE__*/
     React.createElement("div", { style: { borderBottom: '1px solid var(--divider)', padding: '7px 10px' } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } }, /*#__PURE__*/
     React.createElement(Icon, { name: "layers", size: 11, style: { color: 'var(--text-faint)' } }), /*#__PURE__*/
@@ -519,6 +520,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
     ),
 
 
+
     (() => {
       // Dismissed rows never show. Applied sections whose name matches an
       // existing top-level folder are hidden too — they already appear as a
@@ -549,11 +551,28 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
           if (r && r.ok !== false) setPromoted((p) => new Set(p).add(id));
         } finally {setSecBusy(null);}
       };
+      // De-janked surface: ONE quiet line by default; all the actions live in a
+      // popover the user opens on purpose. Same handlers as before — only the
+      // default footprint changed.
       return (/*#__PURE__*/
-        React.createElement("div", { style: { borderBottom: '1px solid var(--divider)', padding: '7px 10px' } }, /*#__PURE__*/
-        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 } }, /*#__PURE__*/
+        React.createElement("div", { style: { borderBottom: '1px solid var(--divider)', padding: '6px 10px', position: 'relative' } }, /*#__PURE__*/
+        React.createElement("button", { onClick: () => setTidyOpen((o) => !o), style: {
+            width: '100%', display: 'flex', alignItems: 'center', gap: 6, border: 'none',
+            background: 'transparent', cursor: 'pointer', padding: '2px 0', textAlign: 'left'
+          } }, /*#__PURE__*/
+        React.createElement("span", { style: { fontSize: 11 } }, "\u2728"), /*#__PURE__*/
+        React.createElement("span", { style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 11.5, color: 'var(--text-subtle)' } }, "Lore tidied ",
+        visible.length, " thing", visible.length === 1 ? '' : 's'
+        ), /*#__PURE__*/
+        React.createElement("span", { style: { fontSize: 11, color: 'var(--brand-fg)', fontWeight: 600, flexShrink: 0 } }, "Review")
+        ),
+        tidyOpen && /*#__PURE__*/
+        React.createElement(React.Fragment, null, /*#__PURE__*/
+        React.createElement("div", { style: { position: 'fixed', inset: 0, zIndex: 40 }, onClick: () => setTidyOpen(false) }), /*#__PURE__*/
+        React.createElement("div", { style: { position: 'absolute', top: 'calc(100% + 2px)', left: 8, right: 8, zIndex: 41, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)', padding: '9px 10px' } }, /*#__PURE__*/
+        React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6, marginBottom: 7 } }, /*#__PURE__*/
         React.createElement(Icon, { name: "folder-plus", size: 11, style: { color: 'var(--text-faint)' } }), /*#__PURE__*/
-        React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' } }, "Proposed sections"), /*#__PURE__*/
+        React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' } }, "Lore tidied these"), /*#__PURE__*/
         React.createElement(HelpHint, { size: 13, tip: "Lore noticed groups of notes on the same topic and proposes a folder for each. Nothing is moved until you click Enable \u2014 and Undo puts every note back where it was." })
         ), /*#__PURE__*/
         React.createElement("div", { style: { display: 'flex', flexDirection: 'column', gap: 4 } },
@@ -569,24 +588,27 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
             ),
             applied ? /*#__PURE__*/
             React.createElement(React.Fragment, null, /*#__PURE__*/
-            React.createElement("button", { disabled: busy, onClick: () => run(s.id, onSectionDismiss), title: "Remove this section record (notes and folder stay untouched)", style: secBtn() }, "\u2715"),
+            React.createElement("button", { disabled: busy, onClick: () => run(s.id, onSectionDismiss), title: "Remove this record (notes and folder stay untouched)", style: secBtn() }, "\u2715"),
             promoted.has(s.id) ? /*#__PURE__*/
             React.createElement(Badge, { tone: "success", dot: true }, "wizard") : /*#__PURE__*/
 
-            React.createElement("button", { disabled: busy, onClick: () => runPromote(s.id), title: `Turn "${s.name}" into a Personal Wizard you can ask directly`, style: secBtn('primary') }, busy ? '…' : 'Promote'), /*#__PURE__*/
+            React.createElement("button", { disabled: busy, onClick: () => runPromote(s.id), title: `Turn "${s.name}" into a folder you can chat with as a Personal Wizard`, style: secBtn('primary') }, busy ? '…' : 'Turn into folder'), /*#__PURE__*/
 
             React.createElement("button", { disabled: busy, onClick: () => run(s.id, onSectionUndo), title: "Move these notes back to their original locations", style: secBtn() }, busy ? '…' : 'Undo')
             ) : /*#__PURE__*/
 
             React.createElement(React.Fragment, null, /*#__PURE__*/
             React.createElement("button", { disabled: busy, onClick: () => run(s.id, onSectionApply), title: `Create a "${s.name}" folder and move these notes into it`, style: secBtn('primary') }, busy ? '…' : 'Enable'), /*#__PURE__*/
-            React.createElement("button", { disabled: busy, onClick: () => run(s.id, onSectionDismiss), title: "Dismiss this proposal (it won't be suggested again)", style: secBtn() }, "\u2715")
+            React.createElement("button", { disabled: busy, onClick: () => run(s.id, onSectionDismiss), title: "Dismiss this suggestion (it won't come back)", style: secBtn() }, "\u2715")
             )
 
             ));
 
         })
         )
+        )
+        )
+
         ));
 
     })(), /*#__PURE__*/
@@ -602,19 +624,19 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
     )
     ), /*#__PURE__*/
     React.createElement("div", { style: { padding: '9px 12px', borderTop: '1px solid var(--divider)', display: 'flex', flexDirection: 'column', gap: 7 } }, /*#__PURE__*/
-    React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' } }, "Scope legend"), /*#__PURE__*/
+    React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' } }, "Who can see what"), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: '5px 12px' } },
     legendScopes.length ? legendScopes.map((sc) => /*#__PURE__*/
     React.createElement("span", { key: sc, style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, color: 'var(--text-muted)' } }, /*#__PURE__*/
     React.createElement(Icon, { name: SH_scopeIcon(sc), size: 11, style: { color: SH_scopeColor(sc) } }), SH_scopeLabel(sc)
     )
     ) : /*#__PURE__*/
-    React.createElement("span", { style: { fontSize: 11, color: 'var(--text-faint)' } }, "No scope configured")
+    React.createElement("span", { style: { fontSize: 11, color: 'var(--text-faint)' } }, "All yours \u2014 nothing shared yet")
 
     ), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 6, borderTop: '1px solid var(--divider)', paddingTop: 6 } }, /*#__PURE__*/
     React.createElement(Icon, { name: "file-text", size: 11, style: { color: 'var(--text-faint)' } }), /*#__PURE__*/
-    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' } }, workspace.indexedLabel ? `${workspace.indexedLabel} on disk` : 'no library')
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' } }, workspace.indexedLabel || 'no library')
     )
     )
     ));

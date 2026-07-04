@@ -50,6 +50,52 @@ function Evidence({ rows }) {
 
 }
 
+// Per-citation source label — THE transparency feature: when the bot answers,
+// each citation chip says which note it came from AND whose knowledge it is
+// ("PairStrategy · Private" / "roadmap · Team"). Right-click a private chip to
+// push that note to the team (routes through the same redaction-gated flow).
+function AkCiteScopeLabel(scope) {
+  const s = String(scope || '').toLowerCase();
+  if (s === 'team') return 'Team';
+  if (s === 'company' || s === 'enterprise') return 'Company';
+  return 'Private';
+}
+function AkCiteDot(scope) {
+  const s = String(scope || '').toLowerCase();
+  if (s === 'team') return 'var(--azure-500)'; // azure = team
+  if (s === 'company' || s === 'enterprise') return 'var(--amber-400)';
+  return 'var(--jade-500)'; // jade = private
+}
+function CitationSources({ citations, onCiteScope }) {
+  const list = citations || [];
+  if (!list.length) return null;
+  const seen = new Set();
+  const unique = list.filter((c) => {
+    if (!c || !c.note_id || seen.has(c.note_id)) return false;
+    seen.add(c.note_id);
+    return true;
+  });
+  return (/*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 5, margin: '4px 0 4px 36px' } },
+    unique.map((c) => /*#__PURE__*/
+    React.createElement("span", { key: c.note_id,
+      title: `${c.heading_path || c.title}${onCiteScope && AkCiteScopeLabel(c.scope) === 'Private' ? ' — right-click to push to your team' : ''}`,
+      onContextMenu: (e) => {
+        e.preventDefault();
+        if (!onCiteScope) return;
+        if (AkCiteScopeLabel(c.scope) !== 'Private') return;
+        if (window.confirm(`Push “${c.title}” to your team?`)) onCiteScope(c, 'team');
+      },
+      style: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '2px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: 'var(--surface-inset)', fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)', maxWidth: 220 } }, /*#__PURE__*/
+    React.createElement("span", { style: { width: 6, height: 6, borderRadius: '50%', background: AkCiteDot(c.scope), flexShrink: 0 } }), /*#__PURE__*/
+    React.createElement("span", { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, c.title || c.note_id), /*#__PURE__*/
+    React.createElement("span", { style: { color: 'var(--text-faint)', flexShrink: 0 } }, "\xB7 ", AkCiteScopeLabel(c.scope))
+    )
+    )
+    ));
+
+}
+
 function SourceToggle({ value, onChange, options }) {
   const opts = (options && options.length ? options : [{ value: 'all', label: 'All', icon: 'layers' }]).map((o) => ({
     id: o.value || o.id,
@@ -72,19 +118,69 @@ function SourceToggle({ value, onChange, options }) {
 
 }
 
-function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource, sourceOptions, identityReady, onSetup }) {
+function AskHistoryDrawer({ threads, onResume, onDelete, onClose }) {
+  const ago = (iso) => {
+    const d = Date.parse(iso);
+    if (Number.isNaN(d)) return '';
+    const s = Math.max(0, Math.round((Date.now() - d) / 1000));
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    return `${Math.round(s / 86400)}d ago`;
+  };
+  return (/*#__PURE__*/
+    React.createElement(React.Fragment, null, /*#__PURE__*/
+    React.createElement("div", { style: { position: 'fixed', inset: 0, zIndex: 40 }, onClick: onClose }), /*#__PURE__*/
+    React.createElement("div", { style: { position: 'absolute', top: 'calc(100% + 4px)', right: 8, zIndex: 41, width: 280, maxHeight: 340, overflowY: 'auto', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-xl)' } }, /*#__PURE__*/
+    React.createElement("div", { style: { padding: '7px 10px', borderBottom: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' } }, "Past conversations"),
+    threads === null && /*#__PURE__*/React.createElement("div", { style: { padding: '10px 12px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' } }, "Loading\u2026"),
+    Array.isArray(threads) && threads.length === 0 && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '12px 12px', fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 } }, "No saved conversations yet \u2014 ask something and it lands here."),
+
+    (threads || []).map((t) => /*#__PURE__*/
+    React.createElement("div", { key: t.thread_id, onClick: () => {onClose();onResume(t.thread_id);},
+      style: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', cursor: 'pointer' },
+      onMouseEnter: (e) => e.currentTarget.style.background = 'var(--surface-hover)',
+      onMouseLeave: (e) => e.currentTarget.style.background = 'transparent' }, /*#__PURE__*/
+    React.createElement(AkIcon, { name: "message-circle", size: 13, style: { color: 'var(--brand-fg)', flexShrink: 0 } }), /*#__PURE__*/
+    React.createElement("div", { style: { minWidth: 0, flex: 1 } }, /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 12.5, color: 'var(--text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, t.title), /*#__PURE__*/
+    React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', marginTop: 1 } }, t.count, " turn", t.count === 1 ? '' : 's', t.updated_at ? ` · ${ago(t.updated_at)}` : '')
+    ), /*#__PURE__*/
+    React.createElement("span", { onClick: (e) => {e.stopPropagation();onDelete(t.thread_id);}, title: "Delete this conversation",
+      style: { display: 'inline-flex', padding: 3, borderRadius: 3, color: 'var(--text-faint)', cursor: 'pointer' },
+      onMouseEnter: (e) => {e.currentTarget.style.color = 'var(--clay-400)';},
+      onMouseLeave: (e) => {e.currentTarget.style.color = 'var(--text-faint)';} }, /*#__PURE__*/
+    React.createElement(AkIcon, { name: "trash-2", size: 12 })
+    )
+    )
+    )
+    )
+    ));
+
+}
+
+function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource, sourceOptions, identityReady, onSetup,
+  threads, onLoadThreads, onResumeThread, onDeleteThread, onNewChat, onCiteScope }) {
   const [draft, setDraft] = React.useState('');
   const [model, setModel] = React.useState('gemma4:e4b (local)');
   const [showCites, setShowCites] = React.useState(true);
   const [cog, setCog] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
   const akSel = { width: '100%', marginTop: 4, padding: '5px 7px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-strong)', fontFamily: 'var(--font-mono)', fontSize: 11.5, outline: 'none' };
   const scrollRef = React.useRef(null);
   React.useEffect(() => {if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;}, [messages, asking]);
   const send = (q) => {const v = (q ?? draft).trim();if (!v || asking || !identityReady) return;setDraft('');onSend(v, model.split(' ')[0]);};
+  const openHistory = () => {
+    setHistoryOpen((o) => {
+      const next = !o;
+      if (next && onLoadThreads) onLoadThreads();
+      return next;
+    });
+  };
 
   return (/*#__PURE__*/
     React.createElement("div", { style: akS.panel }, /*#__PURE__*/
-    React.createElement("div", { style: akS.header }, /*#__PURE__*/
+    React.createElement("div", { style: { ...akS.header, position: 'relative' } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 24, height: 24, borderRadius: 'var(--radius-sm)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
     React.createElement(AkIcon, { name: "sparkles", size: 14, style: { color: 'var(--brand-fg)' } })
     ), /*#__PURE__*/
@@ -92,9 +188,15 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
 
 
     sourceOptions && sourceOptions.length > 2 && /*#__PURE__*/
-    React.createElement(SourceToggle, { value: source || 'all', onChange: onSource || (() => {}), options: sourceOptions }), /*#__PURE__*/
+    React.createElement(SourceToggle, { value: source || 'all', onChange: onSource || (() => {}), options: sourceOptions }),
 
-    React.createElement(AkIconBtn, { icon: "x", label: "Close Ask", size: "sm", onClick: onClose })
+    onNewChat && messages.length > 0 && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "plus", label: "New conversation", size: "sm", onClick: onNewChat }),
+    onResumeThread && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "history", label: "Past conversations", size: "sm", onClick: openHistory }), /*#__PURE__*/
+    React.createElement(AkIconBtn, { icon: "x", label: "Close Ask", size: "sm", onClick: onClose }),
+    historyOpen && /*#__PURE__*/
+    React.createElement(AskHistoryDrawer, { threads: threads, onClose: () => setHistoryOpen(false),
+      onResume: onResumeThread, onDelete: (id) => {if (onDeleteThread) onDeleteThread(id);} })
+
     ), /*#__PURE__*/
 
     React.createElement("div", { style: akS.scroll, ref: scrollRef },
@@ -103,11 +205,11 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     React.createElement("img", { src: "design/assets/sprites/lore-familiar.png", alt: "", "aria-hidden": "true",
       style: { display: 'block', width: 132, height: 132, margin: '0 auto 10px', objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))', pointerEvents: 'none', userSelect: 'none' } }), /*#__PURE__*/
     React.createElement("p", { style: { fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)', margin: '0 0 4px', textAlign: 'center' } }, "Ask across your libraries."), /*#__PURE__*/
-    React.createElement("p", { style: { fontSize: 13, color: 'var(--text-subtle)', margin: '0 0 16px', lineHeight: 1.5, textAlign: 'center' } }, "Answers are drawn only from notes in your scope, and every claim is cited."),
+    React.createElement("p", { style: { fontSize: 13, color: 'var(--text-subtle)', margin: '0 0 16px', lineHeight: 1.5, textAlign: 'center' } }, "Answers are drawn only from notes you can see, and every claim is cited."),
     !identityReady && /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, padding: 12, marginBottom: 12, border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', background: 'var(--surface-inset)', textAlign: 'left' } }, /*#__PURE__*/
     React.createElement(AkIcon, { name: "alert-circle", size: 15, style: { color: 'var(--brand-fg)', flexShrink: 0 } }), /*#__PURE__*/
-    React.createElement("span", { style: { flex: 1, fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.45 } }, "Set a tenant and scope before asking Lore."), /*#__PURE__*/
+    React.createElement("span", { style: { flex: 1, fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.45 } }, "Finish setup before asking Lore."), /*#__PURE__*/
     React.createElement("button", { onClick: onSetup, style: { border: '1px solid var(--border)', background: 'var(--surface-raised)', color: 'var(--text-body)', borderRadius: 'var(--radius-sm)', padding: '5px 9px', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 11 } }, "Configure")
     ), /*#__PURE__*/
 
@@ -120,7 +222,10 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
       } }, /*#__PURE__*/
     React.createElement(AkIcon, { name: "corner-down-right", size: 14, style: { color: 'var(--text-faint)' } }), s
     )
-    )
+    ),
+    suggestions.length > 0 && /*#__PURE__*/
+    React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', textAlign: 'center', marginTop: 2 } }, "these learn from what you ask")
+
     )
     ),
 
@@ -135,6 +240,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     React.createElement(AnswerRuns, { runs: m.shown || m.runs }) : /*#__PURE__*/
     React.createElement(AkMarkdown, { text: m.text || (m.shown || m.runs || []).map((r) => r.x).join('') })
     ),
+    showCites && !m.streaming && /*#__PURE__*/React.createElement(CitationSources, { citations: m.citations, onCiteScope: onCiteScope }),
     showCites && !m.streaming && m.evidence && /*#__PURE__*/React.createElement(Evidence, { rows: m.evidence })
     )
 
@@ -148,11 +254,11 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
       value: draft, onChange: (e) => setDraft(e.target.value), rows: 2,
       onKeyDown: (e) => {if (e.key === 'Enter' && !e.shiftKey) {e.preventDefault();send();}},
       "aria-label": "Ask Lore question",
-      placeholder: identityReady ? 'Ask anything about your knowledge…' : 'Configure tenant and scope to ask Lore…',
+      placeholder: identityReady ? 'Ask anything about your knowledge…' : 'Finish setup to ask Lore…',
       style: { width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-sans)', fontSize: 14, lineHeight: 1.5, color: 'var(--text-strong)' } }
     ), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, position: 'relative' } }, /*#__PURE__*/
-    React.createElement("button", { onClick: () => setCog((c) => !c), title: "Model, scope & citations", style: { display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5 } }, /*#__PURE__*/
+    React.createElement("button", { onClick: () => setCog((c) => !c), title: "Model, source & citations", style: { display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5 } }, /*#__PURE__*/
     React.createElement(AkIcon, { name: "sliders-horizontal", size: 12 }), model.split(' ')[0], " \xB7 ", source || 'all', showCites ? ' · cites' : ''
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
@@ -170,7 +276,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     ['gemma4:e4b (local)', 'llama4-maverick (local)', 'qwen2.5 (local)'].map((m) => /*#__PURE__*/React.createElement("option", { key: m, value: m }, m))
     )
     ), /*#__PURE__*/
-    React.createElement("label", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' } }, "Scope", /*#__PURE__*/
+    React.createElement("label", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' } }, "Source", /*#__PURE__*/
     React.createElement("select", { value: source || 'all', onChange: (e) => onSource && onSource(e.target.value), style: akSel },
     (sourceOptions && sourceOptions.length ? sourceOptions : [{ value: 'all', label: 'All configured' }]).map((o) => /*#__PURE__*/React.createElement("option", { key: o.value, value: o.value }, o.label))
     )

@@ -93,7 +93,7 @@ function HK_scopeOption(s) {
   if (HK_PURPOSE_SCOPES.has(s)) return { value: s, label: `${s} (your role)` };
   return { value: s, label: s };
 }
-const HK_SCOPE_TIP = 'Which scope captured sessions are filed under. "none" leaves them unscoped; "private" keeps them local-only, visible just to you; a role scope like "engineering" (your purpose from setup) tells the connected AI who is using Lore so answers match your work.';
+const HK_SCOPE_TIP = 'Where captured sessions are filed. "none" leaves them unfiled; "private" keeps them local-only, visible just to you; a role like "engineering" (your purpose from setup) tells the connected AI who is using Lore so answers match your work.';
 
 function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg, onToggle, onMode, onScope, scopeOptions, identityReady, last }) {
   const known       = HK_KNOWN[id] || {};
@@ -239,7 +239,7 @@ function HooksView({ scopeOptions = [], identityReady = false, tenant = null, sc
     const cfg = toolCfg[id] || { mode: 'session-end', scope: '' };
     if (val) {
       if (!identityReady) {
-        patchCfg(id, { enabled: false, installing: false, error: 'Configure tenant and scope before installing hooks.' });
+        patchCfg(id, { enabled: false, installing: false, error: 'Finish setup before connecting a tool.' });
         if (onOpenSetup) onOpenSetup();
         return;
       }
@@ -332,9 +332,9 @@ function HooksView({ scopeOptions = [], identityReady = false, tenant = null, sc
             onError={(e) => { e.target.style.display = 'none'; }}
           />
           <div>
-            <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 4px' }}>Hooks</h1>
+            <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 4px' }}>Connections</h1>
             <p style={{ fontSize: 13, color: 'var(--text-subtle)', margin: 0, lineHeight: 1.6, maxWidth: 560 }}>
-              Lore learns as you work — hook into your AI tools so every session feeds your graph.
+              Lore learns as you work — connect your AI tools so every session feeds your memory.
               All local, secrets redacted before indexing.
             </p>
           </div>
@@ -344,9 +344,9 @@ function HooksView({ scopeOptions = [], identityReady = false, tenant = null, sc
         {ready === false && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 24px', background: 'var(--surface-panel)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', textAlign: 'center' }}>
             <HK_Icon name="plug" size={28} style={{ color: 'var(--text-faint)' }} />
-            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 16, color: 'var(--text-body)' }}>Hooks backend not ready</div>
+            <div style={{ fontFamily: 'var(--font-serif)', fontSize: 16, color: 'var(--text-body)' }}>Connections aren't ready yet</div>
             <div style={{ fontSize: 13, color: 'var(--text-subtle)', maxWidth: 380, lineHeight: 1.6 }}>
-              The hooks IPC bridge is not available yet. Make sure the Lore backend is running on :8099 and try re-opening this view.
+              The connections bridge is not available yet. The memory engine may still be starting (:8099) — try re-opening this view.
             </div>
           </div>
         )}
@@ -365,11 +365,11 @@ function HooksView({ scopeOptions = [], identityReady = false, tenant = null, sc
             {!identityReady && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', marginBottom: 14, background: 'var(--surface-panel)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)' }}>
                 <HK_Icon name="alert-circle" size={15} style={{ color: 'var(--brand-fg)' }} />
-                <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.45 }}>Hooks need a tenant and scope so captured sessions land in the right index.</div>
+                <div style={{ flex: 1, fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.45 }}>Connections need setup finished so captured sessions land in the right library.</div>
                 <HK_Button variant="secondary" size="sm" onClick={onOpenSetup}>Configure</HK_Button>
               </div>
             )}
-            <HK_Section icon="plug" title="AI tool hooks" action={
+            <HK_Section icon="plug" title="AI tools" action={
               <HK_Button variant="ghost" size="sm" icon="refresh-cw" disabled={rechecking} onClick={recheck}>
                 {rechecking ? 'Checking…' : 'Recheck'}
               </HK_Button>
@@ -409,10 +409,10 @@ function HooksView({ scopeOptions = [], identityReady = false, tenant = null, sc
               <div style={{ margin: '0 16px 14px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
                 <pre style={{ margin: 0, padding: '10px 14px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{genericPrompt}</pre>
               </div>
-              <HK_Row label="HTTP endpoint" hint="POST JSON to capture any session into Lore. Scoped and indexed like a normal note.">
+              <HK_Row label="HTTP endpoint" hint="POST JSON to capture any session into Lore. Filed and remembered like a normal note.">
                 <HK_Badge tone="neutral">localhost:8099</HK_Badge>
               </HK_Row>
-              <HK_Row label="CLI" hint="lore capture requires session, title, scope, owner, and tenant." last>
+              <HK_Row label="CLI" hint="The full capture command — copy and fill in the placeholders." last>
                 <HK_Button variant="secondary" size="sm" icon={copied ? 'check' : 'copy'} onClick={copySnippet}>
                   {copied ? 'Copied' : 'Copy snippet'}
                 </HK_Button>

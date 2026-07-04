@@ -58,7 +58,7 @@ function stText(value, fallback = 'None') {
 // "provider · model" label for the /config/retrieval snapshot ({error}/null aware).
 function stRetrievalModel(retrieval, key) {
   if (retrieval === null) return 'checking…';
-  if (retrieval.error) return 'backend offline';
+  if (retrieval.error) return 'memory engine is starting…';
   const m = retrieval[key];
   if (!m || !m.model) return 'unknown';
   return m.provider ? `${m.provider} · ${m.model}` : String(m.model);
@@ -101,7 +101,10 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
 
   // Indexing & recall state (real wiring: config flag + backend /config/retrieval)
   const [autoIndexOnSave, setAutoIndexOnSave] = React.useState(true); // default ON; explicit false disables
-  const [simpleMode, setSimpleMode] = React.useState(false);
+  // Advanced mode (default OFF) — the developer surfaces live behind it. Replaces
+  // the old simpleMode flag entirely (cfg.simpleMode is ignored; the default
+  // experience IS the simple one now).
+  const [advancedMode, setAdvancedMode] = React.useState(false);
   const [backupEnabled, setBackupEnabled] = React.useState(false);
   const [backupDir, setBackupDir] = React.useState('');
   const [backupStatus, setBackupStatus] = React.useState(null);
@@ -151,7 +154,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
         setCfg(c || null);
         setDefScope(c && c.scope || '');
         setAutoIndexOnSave(!(c && c.autoIndexOnSave === false));
-        setSimpleMode(!!(c && c.simpleMode));
+        setAdvancedMode(!!(c && c.advancedMode === true));
         setBackupEnabled(!!(c && c.backupEnabled));
         setBackupDir(c && c.backupDir || '');
         setAutoFileObvious(!!(c && c.autoFileObvious === true));
@@ -196,7 +199,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     setDefScope(config && config.scope || '');
     if (config) {
       setAutoIndexOnSave(config.autoIndexOnSave !== false);
-      setSimpleMode(!!config.simpleMode);
+      setAdvancedMode(config.advancedMode === true);
       setAutoFileObvious(config.autoFileObvious === true);
       setUpkeepAuto(config.upkeepAuto !== false);
     }
@@ -268,11 +271,11 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     }
   };
 
-  const stSetSimpleMode = (v) => {
-    setSimpleMode(v);
+  const stSetAdvancedMode = (v) => {
+    setAdvancedMode(v);
     if (window.lore && window.lore.config && window.lore.config.set) {
       // onConfig re-renders the app with the new config so the rail updates live.
-      window.lore.config.set({ simpleMode: !!v }).then((next) => {if (onConfig) onConfig(next);}).catch(() => {});
+      window.lore.config.set({ advancedMode: !!v }).then((next) => {if (onConfig) onConfig(next);}).catch(() => {});
     }
   };
 
@@ -412,7 +415,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     React.createElement(StBadge, { tone: identityReady ? 'success' : 'neutral' }, identityReady ? 'configured' : 'not configured'), /*#__PURE__*/
     React.createElement(StButton, { variant: "secondary", size: "sm", onClick: onOpenSetup }, "Configure")
     ), /*#__PURE__*/
-    React.createElement(Row, { label: "Google sign-in", hint: authUser ? `Signed in — ${authUser.scopes && authUser.scopes.length || 0} team scope(s)` : 'Sign in to sync team/enterprise notes and ask across your team.' }, /*#__PURE__*/
+    React.createElement(Row, { label: "Google sign-in", hint: authUser ? `Signed in — ${authUser.scopes && authUser.scopes.length || 0} team space(s)` : 'Sign in to sync team/enterprise notes and ask across your team.' }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8 } },
     authUser ? /*#__PURE__*/
     React.createElement(React.Fragment, null, /*#__PURE__*/
@@ -438,8 +441,8 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     })
     )
     ), /*#__PURE__*/
-    React.createElement(Row, { label: "Simple mode", hint: "Hide the graph, wizards, teams and automation surfaces \u2014 leaving just your files, search and ask. Everything keeps working underneath; flip back anytime. Best for non-technical use." }, /*#__PURE__*/
-    React.createElement(StSwitch, { checked: simpleMode, onChange: stSetSimpleMode })
+    React.createElement(Row, { label: "Advanced mode", hint: "Show the developer surfaces \u2014 Connections (AI-tool capture), MCP, CLI, retrieval model internals, and the wizard store. Off by default; everything keeps working underneath." }, /*#__PURE__*/
+    React.createElement(StSwitch, { checked: advancedMode, onChange: stSetAdvancedMode })
     )
     ), /*#__PURE__*/
 
@@ -500,43 +503,13 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
 
     ), /*#__PURE__*/
 
-    React.createElement(Section, { icon: "cpu", title: "Indexing & recall" }, /*#__PURE__*/
-    React.createElement(Row, { label: "Auto-index on save", hint: "Re-index a note automatically when its file changes on disk. Off: re-index manually (right-click a note \u2192 Re-index Note)." }, /*#__PURE__*/
+    React.createElement(Section, { icon: "cpu", title: "Remembering" }, /*#__PURE__*/
+    React.createElement(Row, { label: "Remember changes automatically", hint: "Refresh a note's memory automatically when its file changes on disk. Off: refresh manually (right-click a note \u2192 Refresh)." }, /*#__PURE__*/
     React.createElement(StSwitch, { checked: autoIndexOnSave, onChange: stSetAutoIndex })
     ), /*#__PURE__*/
-    React.createElement(Row, { label: "Auto-file obvious notes", hint: "During upkeep, a note that unambiguously belongs to one of your existing sections is moved into that section folder automatically \u2014 undoable via the section's Undo, logged to the library worklog. Off (default): every move stays a proposal you approve." }, /*#__PURE__*/
+    React.createElement(Row, { label: "Auto-file obvious notes", hint: "While tidying, a note that unambiguously belongs to one of your existing sections is moved into that folder automatically \u2014 undoable, logged to the library worklog. Off (default): every move stays a suggestion you approve.", last: true }, /*#__PURE__*/
     React.createElement(StSwitch, { checked: autoFileObvious, onChange: stSetAutoFile })
-    ), /*#__PURE__*/
-    React.createElement(Row, { label: "Contextual retrieval", hint: "Every chunk is stored with a situating context sentence for better recall. Built into the indexing pipeline." }, /*#__PURE__*/
-    React.createElement(StBadge, { tone: retrieval === null ? 'neutral' : retrieval.error ? 'neutral' : 'success', dot: !!(retrieval && !retrieval.error) },
-    retrieval === null ? 'checking…' : retrieval.error ? 'backend offline' : 'enabled'
     )
-    ), /*#__PURE__*/
-    React.createElement(Row, { label: "Embedding model" }, /*#__PURE__*/
-    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' } }, stRetrievalModel(retrieval, 'embeddingModel'))
-    ), /*#__PURE__*/
-    React.createElement(Row, { label: "Reranker" }, /*#__PURE__*/
-    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' } }, stRetrievalModel(retrieval, 'reranker'))
-    ), /*#__PURE__*/
-    React.createElement(Row, { label: "Local fallback", hint: "On-device fastembed models. Always used for hook captures and imports; primary for search when no cloud key is set." },
-    (() => {
-      const lf = retrieval && !retrieval.error ? retrieval.localFallback : null;
-      const tone = !lf ? 'neutral' : lf.active ? 'success' : lf.available ? 'info' : 'neutral';
-      const label = retrieval === null ? 'checking…' : retrieval.error ? 'backend offline' :
-      lf && lf.active ? 'active' : lf && lf.available ? 'available' : 'not available';
-      return /*#__PURE__*/React.createElement(StBadge, { tone: tone, dot: !!(lf && lf.active) }, label);
-    })()
-    ), /*#__PURE__*/
-    React.createElement(Row, { label: "Import config", hint: "Apply retrieval and upkeep settings from a JSON file \u2014 another Lore install or a shared team config.", last: true }, /*#__PURE__*/
-    React.createElement(StButton, { variant: "secondary", size: "sm", icon: "folder-open", onClick: stImportConfig }, "Import\u2026")
-    ),
-    importResult && /*#__PURE__*/
-    React.createElement("div", { style: { padding: '10px 16px', borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6, color: importResult.ok ? 'var(--text-muted)' : 'var(--clay-400)' } },
-    importResult.ok ?
-    `Applied: ${Object.keys(importResult.applied || {}).join(', ')}${(importResult.ignored || []).length ? ` · ignored: ${importResult.ignored.join(', ')}` : ''}` :
-    `Import failed: ${stText(importResult.reason, 'unknown error')}`
-    )
-
     ), /*#__PURE__*/
 
     React.createElement(Section, { icon: "refresh-cw", title: "Sync & storage" }, /*#__PURE__*/
@@ -564,6 +537,48 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     React.createElement(StButton, { variant: "secondary", size: "sm", icon: "plus" }, "Connect")
     )
     )
+    ),
+
+
+    advancedMode && /*#__PURE__*/
+    React.createElement(React.Fragment, null, /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, margin: '26px 0 12px' } }, /*#__PURE__*/
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.08em' } }, "Advanced"), /*#__PURE__*/
+    React.createElement("div", { style: { flex: 1, height: 1, background: 'var(--divider)' } })
+    ), /*#__PURE__*/
+
+
+    React.createElement(Section, { icon: "cpu", title: "Retrieval models" }, /*#__PURE__*/
+    React.createElement(Row, { label: "Contextual retrieval", hint: "Every chunk is stored with a situating context sentence for better recall. Built into the pipeline." }, /*#__PURE__*/
+    React.createElement(StBadge, { tone: retrieval === null ? 'neutral' : retrieval.error ? 'neutral' : 'success', dot: !!(retrieval && !retrieval.error) },
+    retrieval === null ? 'checking…' : retrieval.error ? 'memory engine is starting…' : 'enabled'
+    )
+    ), /*#__PURE__*/
+    React.createElement(Row, { label: "Embedding model" }, /*#__PURE__*/
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' } }, stRetrievalModel(retrieval, 'embeddingModel'))
+    ), /*#__PURE__*/
+    React.createElement(Row, { label: "Reranker" }, /*#__PURE__*/
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' } }, stRetrievalModel(retrieval, 'reranker'))
+    ), /*#__PURE__*/
+    React.createElement(Row, { label: "Local fallback", hint: "On-device fastembed models. Always used for captures and imports; primary for search when no cloud key is set." },
+    (() => {
+      const lf = retrieval && !retrieval.error ? retrieval.localFallback : null;
+      const tone = !lf ? 'neutral' : lf.active ? 'success' : lf.available ? 'info' : 'neutral';
+      const label = retrieval === null ? 'checking…' : retrieval.error ? 'memory engine is starting…' :
+      lf && lf.active ? 'active' : lf && lf.available ? 'available' : 'not available';
+      return /*#__PURE__*/React.createElement(StBadge, { tone: tone, dot: !!(lf && lf.active) }, label);
+    })()
+    ), /*#__PURE__*/
+    React.createElement(Row, { label: "Import config", hint: "Apply retrieval and tidying settings from a JSON file \u2014 another Lore install or a shared team config.", last: true }, /*#__PURE__*/
+    React.createElement(StButton, { variant: "secondary", size: "sm", icon: "folder-open", onClick: stImportConfig }, "Import\u2026")
+    ),
+    importResult && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '10px 16px', borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6, color: importResult.ok ? 'var(--text-muted)' : 'var(--clay-400)' } },
+    importResult.ok ?
+    `Applied: ${Object.keys(importResult.applied || {}).join(', ')}${(importResult.ignored || []).length ? ` · ignored: ${importResult.ignored.join(', ')}` : ''}` :
+    `Import failed: ${stText(importResult.reason, 'unknown error')}`
+    )
+
     ), /*#__PURE__*/
 
 
@@ -682,14 +697,16 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
         ));
 
     })()
+    )
     ), /*#__PURE__*/
 
 
-    React.createElement(Section, { icon: "refresh-ccw", title: "Data upkeep" }, /*#__PURE__*/
-    React.createElement(Row, { label: "Auto-upkeep", hint: identityReady ? 'Lore folds date/session notes into topic nodes automatically after each ingest.' : 'Configure tenant and scope before enabling upkeep.' }, /*#__PURE__*/
+
+    React.createElement(Section, { icon: "refresh-ccw", title: "Tidy up" }, /*#__PURE__*/
+    React.createElement(Row, { label: "Tidy automatically", hint: identityReady ? 'Lore folds date/session notes into durable topic notes automatically after each capture.' : 'Finish setup before enabling automatic tidying.' }, /*#__PURE__*/
     React.createElement(StSwitch, { checked: upkeepAuto && identityReady, onChange: stSetUpkeepAuto, disabled: !identityReady })
     ), /*#__PURE__*/
-    React.createElement(Row, { label: "Rebuild now", hint: "Detect ephemeral notes (daily, session, sync) and consolidate them into durable topic nodes.", last: true }, /*#__PURE__*/
+    React.createElement(Row, { label: "Tidy up now", hint: "Detect ephemeral notes (daily, session, sync) and consolidate them into durable topic notes.", last: true }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8 } },
     upkeepRunning && /*#__PURE__*/
     React.createElement(StIcon, { name: "loader", size: 14, style: { color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite' } }), /*#__PURE__*/
@@ -701,7 +718,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
       onClick: stRunUpkeep,
       disabled: upkeepRunning || !identityReady },
 
-    upkeepRunning ? 'Running…' : 'Rebuild now'
+    upkeepRunning ? 'Tidying…' : 'Tidy up now'
     )
     )
     ),

@@ -208,7 +208,7 @@ function ConnectedTools() {
   return (/*#__PURE__*/
     React.createElement("div", { style: { marginBottom: 22 } }, /*#__PURE__*/
     React.createElement("h2", { style: bkS.h2 }, "Connected"), /*#__PURE__*/
-    React.createElement("p", { style: bkS.sub }, "What's wired into Lore right now \u2014 manage these from Settings / Hooks."), /*#__PURE__*/
+    React.createElement("p", { style: bkS.sub }, "What's wired into Lore right now \u2014 manage these from Settings / Connections."), /*#__PURE__*/
     React.createElement(BkCard, { style: { padding: 0, overflow: 'hidden' } },
     rows.map((r, i) => /*#__PURE__*/
     React.createElement("div", { key: r.name, style: i === rows.length - 1 ? { borderBottom: 'none' } : undefined }, /*#__PURE__*/
@@ -428,7 +428,10 @@ function PersonalWizardChat({ wizard, onClose }) {
 
 }
 
-function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
+// advancedMode gates the store surfaces: the Knowledge-bases/Tools tabs, the
+// catalog browsers and shared collections are developer/store territory. The
+// default Wizards view is just YOUR wizards + the create flow.
+function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes, advancedMode }) {
   const WizardBuilder = window.LoreWizardBuilder,CatalogPreviewChat = window.LoreCatalogPreviewChat;
   const [topTab, setTopTab] = React.useState('bases'); // 'bases' | 'tools'
   const [catalog, setCatalog] = React.useState(null);
@@ -500,12 +503,14 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
     React.createElement("div", { style: bkS.body },
     detailItem ? /*#__PURE__*/
     React.createElement(StoreDetail, { item: detailItem, onBack: () => setDetail(null), onChat: chatFor, onInstall: install, onUninstall: uninstall, onRate: rate }) : /*#__PURE__*/
-    React.createElement(React.Fragment, null, /*#__PURE__*/
+    React.createElement(React.Fragment, null,
+    advancedMode && /*#__PURE__*/
     React.createElement("div", { style: { marginBottom: 18 } }, /*#__PURE__*/
     React.createElement(BkTabs, { value: topTab, onChange: setTopTab, tabs: topTabs })
     ),
 
-    topTab === 'bases' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/
+
+    (!advancedMode || topTab === 'bases') && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/
     React.createElement(BkCard, { style: { display: 'flex', alignItems: 'center', gap: 14, marginBottom: 22 } }, /*#__PURE__*/
     React.createElement("span", { style: { ...bkS.cardIcon, width: 40, height: 40 } }, /*#__PURE__*/React.createElement(BkIcon, { name: "wand-2", size: 20, style: { color: 'var(--brand-fg)' } })), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /*#__PURE__*/
@@ -518,16 +523,16 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
     React.createElement("div", { style: { marginBottom: 22 } }, /*#__PURE__*/
     React.createElement("h2", { style: bkS.h2 }, "Personal"),
     personal !== null && personal.length === 0 ? /*#__PURE__*/
-    React.createElement("p", { style: bkS.sub }, "No wizards of your own yet \u2014 create one above, or promote an applied Section (sidebar \u2192 Sections \u2192 Promote).") : /*#__PURE__*/
+    React.createElement("p", { style: bkS.sub }, "No wizards of your own yet \u2014 create one above, or review what Lore tidied (sidebar \u2192 \u2728) and turn a group into a folder.") : /*#__PURE__*/
     React.createElement(React.Fragment, null, /*#__PURE__*/
-    React.createElement("p", { style: bkS.sub }, "Wizards built from your own notes \u2014 each chat is scoped to only its own notes."), /*#__PURE__*/
+    React.createElement("p", { style: bkS.sub }, "Wizards built from your own notes \u2014 each chat answers only from its own notes."), /*#__PURE__*/
     React.createElement("div", { style: bkS.grid },
     (personal || []).map((w) => /*#__PURE__*/React.createElement(PersonalWizardCard, { key: w.id, w: w, onAsk: setChatWizard, onOpen: openDetail('personal') }))
     )
     )
     ),
 
-    (buckets || []).length > 0 && /*#__PURE__*/
+    advancedMode && (buckets || []).length > 0 && /*#__PURE__*/
     React.createElement("div", { style: { marginBottom: 22 } }, /*#__PURE__*/
     React.createElement("h2", { style: bkS.h2 }, "Shared collections"), /*#__PURE__*/
     React.createElement("p", { style: bkS.sub }, "Knowledge bases pooled with your team \u2014 a note can live in many at once."), /*#__PURE__*/
@@ -537,18 +542,18 @@ function BucketsView({ buckets, onAsk, onOpen, onChanged, scopes }) {
     ),
 
 
-    catalog === null ? /*#__PURE__*/
+    advancedMode && (catalog === null ? /*#__PURE__*/
     React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', padding: '12px 0' } }, "Loading catalog\u2026") :
     kbCatalog.length > 0 && /*#__PURE__*/
     React.createElement("div", null, /*#__PURE__*/
     React.createElement("h2", { style: bkS.h2 }, "Discover knowledge bases"), /*#__PURE__*/
     React.createElement("p", { style: bkS.sub }, "Published note bundles, curated from the web. Click a title for details; chat previews work before installing."), /*#__PURE__*/
     React.createElement(CatalogBrowser, { items: kbCatalog, placeholder: "Search knowledge bases\u2026", onInstall: install, onRate: rate, onUninstall: uninstall, onOpen: openDetail('catalog') })
-    )
+    ))
 
     ),
 
-    topTab === 'tools' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/
+    advancedMode && topTab === 'tools' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/
     React.createElement("p", { style: { ...bkS.sub, margin: '0 0 18px' } }, "Plugins that connect external data and capabilities INTO Lore \u2014 MCP servers, agent skills, and marketplace integrations. Knowledge bases (note bundles) live in the other tab."), /*#__PURE__*/
     React.createElement(ConnectedTools, null),
     catalog === null ? /*#__PURE__*/

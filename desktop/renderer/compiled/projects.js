@@ -142,7 +142,7 @@ function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, in
     React.createElement("div", { style: prS.head }, /*#__PURE__*/
     React.createElement("div", null, /*#__PURE__*/
     React.createElement("h1", { style: { fontFamily: 'var(--font-serif)', fontSize: 'var(--text-3xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0, display: 'flex', alignItems: 'center', gap: 10 } }, "Teams",
-    window.LoreHelpHint && /*#__PURE__*/React.createElement(window.LoreHelpHint, { size: 16, tip: "A Team is a shared space. Sign in, create or join one, and Wizards saved with team scope become visible to everyone on the team." })
+    window.LoreHelpHint && /*#__PURE__*/React.createElement(window.LoreHelpHint, { size: 16, tip: "A Team is a shared space. Sign in, create or join one, and Wizards pushed to the team become visible to everyone on it." })
     ), /*#__PURE__*/
     React.createElement("p", { style: { fontSize: 13, color: 'var(--text-subtle)', margin: '4px 0 0' } }, "Create or join a team to share Wizards and ask across shared knowledge.")
     ), /*#__PURE__*/
@@ -199,14 +199,14 @@ function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, in
     React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' } }, teamLabel), /*#__PURE__*/
     React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginTop: 2 } },
     authUser && authUser.email || team && team.email || 'signed out',
-    teamScopes.length ? ` · ${teamScopes.length} team scope${teamScopes.length !== 1 ? 's' : ''}` : ''
+    teamScopes.length ? ` · ${teamScopes.length} shared space${teamScopes.length !== 1 ? 's' : ''}` : ''
     )
     ), /*#__PURE__*/
     React.createElement(PrScope, { scope: "team" })
     ),
     teamScopes.length > 0 && /*#__PURE__*/
     React.createElement(Card, { style: { display: 'flex', flexDirection: 'column', gap: 8 } }, /*#__PURE__*/
-    React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' } }, "Shared scopes"), /*#__PURE__*/
+    React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 9, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: '0.07em' } }, "Shared spaces"), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 6 } },
     teamScopes.map((s) => /*#__PURE__*/React.createElement(PrBadge, { key: s, tone: "info" }, s))
     )
@@ -246,7 +246,7 @@ function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, in
 
     React.createElement("div", { style: { padding: '40px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 } }, /*#__PURE__*/
     React.createElement(PrIcon, { name: "library", size: 28, style: { color: 'var(--text-faint)', opacity: 0.5 } }), /*#__PURE__*/
-    React.createElement("span", { style: { fontSize: 13, color: 'var(--text-subtle)', maxWidth: 420, textAlign: 'center', lineHeight: 1.5 } }, "No team Wizards yet. Wizards saved with team scope show up here for everyone in ", teamLabel, ".")
+    React.createElement("span", { style: { fontSize: 13, color: 'var(--text-subtle)', maxWidth: 420, textAlign: 'center', lineHeight: 1.5 } }, "No team Wizards yet. Wizards pushed to the team show up here for everyone in ", teamLabel, ".")
     ))
 
 
@@ -293,7 +293,7 @@ function GraphView({ graph, onOpen }) {
     React.createElement("div", { style: { flex: 1, minWidth: 0, position: 'relative', background: 'var(--surface-canvas)', overflow: 'hidden' } }, /*#__PURE__*/
     React.createElement("div", { style: { position: 'absolute', top: 18, left: 22, zIndex: 2 } }, /*#__PURE__*/
     React.createElement("h2", { style: { fontFamily: 'var(--font-serif)', fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0 } }, "Knowledge graph"), /*#__PURE__*/
-    React.createElement("p", { style: { fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' } }, graph.nodes.length, " notes \xB7 ", graph.edges.length, " links in your scope")
+    React.createElement("p", { style: { fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' } }, graph.nodes.length, " notes \xB7 ", graph.edges.length, " links you can see")
     ), /*#__PURE__*/
     React.createElement("div", { style: { position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8 } },
     scopes.map((k) => /*#__PURE__*/

@@ -80,7 +80,7 @@ function startUpkeepInterval(tenant) {
       if (r.ok) { try { await executeAutoFileMoves(await r.json()); } catch { /* moves retry next run */ } }
       refreshManifests('upkeep-auto', 'background upkeep run');
       if (win && !win.isDestroyed())
-        win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'upkeep complete', errors: 0 });
+        win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'tidy-up complete', errors: 0 });
     } catch { /* backend may not be up; silently skip */ }
   }, intervalMs);
 }
@@ -580,7 +580,10 @@ ipcMain.handle('vault:tree', (_e, root) => {
 ipcMain.handle('note:read', (_e, p) => {
   try {
     pathGuard(p);
-    return { path: p, raw: fs.readFileSync(p, 'utf8') };
+    // mtime feeds the editor's quiet "updated Xd ago" doc-header line.
+    let mtime = null;
+    try { mtime = fs.statSync(p).mtimeMs; } catch { /* header falls back */ }
+    return { path: p, raw: fs.readFileSync(p, 'utf8'), mtime };
   } catch (e) {
     return { path: p, raw: '', error: String(e) };
   }
@@ -627,7 +630,11 @@ ipcMain.handle('backup:status', () => {
 // the secret scrubber first and REFUSES if it finds keys/tokens unless force:
 // true — you can't accidentally share a note that has a credential in it.
 const SCOPE_BREADTH = { private: 0, engineering: 0, team: 1, company: 2, enterprise: 2 };
-ipcMain.handle('note:set-scope', async (_e, { path: p, scope, force }) => {
+
+// The shared implementation behind BOTH the editor's visibility control (IPC below)
+// and the sidebar context menu's "Push to Team" / "Make Private" — one redaction
+// gate, one frontmatter rewrite, one re-index.
+async function setNoteScope(p, scope, force) {
   try {
     pathGuard(p);
     const cfg = loadConfig() || {};
@@ -666,7 +673,30 @@ ipcMain.handle('note:set-scope', async (_e, { path: p, scope, force }) => {
   } catch (e) {
     return { ok: false, error: String(e) };
   }
-});
+}
+
+ipcMain.handle('note:set-scope', (_e, { path: p, scope, force }) => setNoteScope(p, scope, force));
+
+// Context-menu variant of the push: same redaction gate, but the "share anyway?"
+// confirm is a native dialog (there is no renderer surface mid-menu). Notifies the
+// renderer via tree:action so the tree/graph refresh and a scope glyph appears.
+async function ctxSetScope(notePath, scope) {
+  let r = await setNoteScope(notePath, scope, false);
+  if (r && r.reason === 'secret') {
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'warning',
+      buttons: ['Cancel', 'Share anyway'],
+      defaultId: 0,
+      cancelId: 0,
+      message: 'This note may contain a secret',
+      detail: r.detail || 'It looks like this note contains an API key or token.',
+    });
+    if (response !== 1) return;
+    r = await setNoteScope(notePath, scope, true);
+  }
+  if (r && r.ok) sendTreeAction({ action: 'scope-changed', id: notePath, kind: 'note', scope });
+  else if (r && r.error) sendTreeAction({ action: 'scope-change-failed', id: notePath, kind: 'note', reason: r.error });
+}
 
 // ---------- IPC: tree context menu (VS Code-style right-click on sidebar) ----------
 // Pure-fs actions (create/duplicate/copy/trash) run here; actions needing renderer
@@ -759,7 +789,13 @@ ipcMain.handle('tree:context-menu', (_e, args) => {
       { label: 'Copy Relative Path', click: () => clipboard.writeText(relPath) },
       { label: 'Copy Wiki Link', click: () => clipboard.writeText(`[[${noteName}]]`) },
       { type: 'separator' },
-      { label: 'Re-index Note', click: () => ctxReindex(id) },
+      // The pushing system: move a note between confidentiality levels right from
+      // the tree. Routes through setNoteScope (redaction gate included).
+      { label: 'Push to Team', click: () => { ctxSetScope(id, 'team'); } },
+      { label: 'Push to Company', click: () => { ctxSetScope(id, 'company'); } },
+      { label: 'Make Private', click: () => { ctxSetScope(id, 'private'); } },
+      { type: 'separator' },
+      { label: 'Refresh', click: () => ctxReindex(id) },
       { type: 'separator' },
       { label: 'Move to Trash', click: () => ctxTrash(id, 'note') },
     ] : [
@@ -1400,7 +1436,7 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
     refreshManifests('upkeep', `upkeep run — folded ${result.folded || 0}, topics ${result.topics || 0}`);
     // Notify the renderer so it can refresh the graph / status panel.
     if (win && !win.isDestroyed())
-      win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'upkeep complete', errors: 0, summary: result });
+      win.webContents.send('scrape:progress', { phase: 'done', done: 0, total: 0, current: 'tidy-up complete', errors: 0, summary: result });
     return result;
   } catch (e) {
     return { error: String(e) };
@@ -1630,6 +1666,23 @@ ipcMain.handle('stats:get', async (_e, tenant) => {
   const r = await fetch(`${BACKEND_URL()}/stats?tenant=${encodeURIComponent(t)}`, { headers: authHeaders() });
   if (!r.ok) throw new Error(`backend /stats returned ${r.status}`);
   return r.json();
+});
+
+// This-week digest for the Home tab: notes grouped by day × section, plus the
+// created-since-yesterday count. Backend does the grouping (no LLM).
+ipcMain.handle('digest:get', async (_e, opts) => {
+  const cfg = loadConfig() || {};
+  const { tenant, days } = opts || {};
+  const t = tenant || cfg.tenant || '';
+  if (!t) return { rows: [], sinceYesterday: 0, total: 0 };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/digest?tenant=${encodeURIComponent(t)}&days=${encodeURIComponent(days || 7)}`,
+      { headers: authHeaders() });
+    if (!r.ok) return { rows: [], sinceYesterday: 0, total: 0, error: `backend ${r.status}` };
+    return await r.json();
+  } catch (e) {
+    return { rows: [], sinceYesterday: 0, total: 0, error: String(e) };
+  }
 });
 
 ipcMain.handle('graph:get', async (_e, opts) => {

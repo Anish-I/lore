@@ -45,8 +45,8 @@ const OB_STEPS = [
   { id: 'purpose', eyebrow: 'Purpose', title: 'What is this library for?', next: 'Choose AIs' },
   { id: 'ai', eyebrow: 'AI', title: 'Which AIs should Lore connect to?', next: 'Pick an AI provider' },
   { id: 'provider', eyebrow: 'Provider', title: 'How should Lore power enrichment?', next: 'Set up your team' },
-  { id: 'team', eyebrow: 'Team', title: 'Who is this library for?', next: 'Indexing & upkeep' },
-  { id: 'upkeep', eyebrow: 'Upkeep', title: 'How should Lore keep itself fresh?', next: 'Import apps and files' },
+  { id: 'team', eyebrow: 'Team', title: 'Who is this library for?', next: 'Remembering & tidying' },
+  { id: 'upkeep', eyebrow: 'Tidy up', title: 'How should Lore keep itself fresh?', next: 'Import apps and files' },
   { id: 'sources', eyebrow: 'Sources', title: 'What should Lore import first?', next: null },
 ];
 
@@ -54,9 +54,9 @@ const OB_STEPS = [
 // question here — Lore ships with sensible local defaults (see Settings → Indexing &
 // recall for what actually resolved).
 const OB_UPKEEP_TOGGLES = [
-  { id: 'autoIndexOnSave', icon: 'refresh-cw', title: 'Auto-index on save',
-    description: 'Re-index a note automatically whenever its file changes on disk. Turn off to re-index manually.' },
-  { id: 'upkeepAuto', icon: 'refresh-ccw', title: 'Automatic data upkeep',
+  { id: 'autoIndexOnSave', icon: 'refresh-cw', title: 'Remember changes automatically',
+    description: 'Remember a note again automatically whenever its file changes on disk. Turn off to refresh manually.' },
+  { id: 'upkeepAuto', icon: 'refresh-ccw', title: 'Automatic tidying',
     description: 'Periodically fold ephemeral date/session notes into durable topic nodes in the background.' },
 ];
 
@@ -817,7 +817,7 @@ function OB_Onboarding({ onDone }) {
 
   const supportText = {
     vault: 'This is the one local folder Lore will organize.',
-    purpose: 'Purpose helps Lore pick the right default scope.',
+    purpose: 'Purpose helps Lore file new notes in the right place.',
     ai: 'This is optional. You can connect more AIs later.',
     provider: 'Pick how Lore infers relationships in your graph. You can change this later in Settings.',
     team: 'Personal keeps everything local. Create or join a team to prepare for shared sync.',

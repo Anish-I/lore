@@ -20,17 +20,17 @@ function flatten(tree, acc = []) {
 }
 function firstNote(tree) {return flatten(tree)[0] || null;}
 
-// Top-bar scope filter (All / Private / Team / Wizards) — shared predicate used for BOTH the
-// file tree (below) and the graph (see filteredGraph). `wizardHit` is precomputed by the caller
-// (a wizard-id Set built from the unfiltered tree) since graph nodes don't carry a wizard flag.
-function passesScopeFilter(filter, scopeValue, wizardHit) {
-  if (!filter || filter === 'all') return true;
-  // Solo libraries use a purpose-based scope (e.g. "engineering"), not a literal
-  // "private" tag — so "Private" means YOUR own notes: anything that isn't an
-  // installed store wizard and isn't explicitly shared to a team/enterprise.
-  if (filter === 'private') return !wizardHit && scopeValue !== 'team' && scopeValue !== 'enterprise';
-  if (filter === 'team') return scopeValue === 'team' || scopeValue === 'enterprise';
-  if (filter === 'plugins') return Boolean(wizardHit); // id predates the Wizards label
+// Top-bar CONTEXT switch (Private / Team / Company) — shared predicate used for BOTH
+// the file tree (below) and the graph (see filteredGraph). Private is the owner's
+// view: EVERYTHING you own, including notes you pushed to a team (you still own
+// them). Team/Company narrow to what's been pushed there. (The third `wizardHit`
+// arg from the old All/Private/Team/Wizards filter is accepted and ignored so the
+// call sites stay untouched.)
+function passesScopeFilter(filter, scopeValue, _wizardHit) {
+  if (!filter || filter === 'all' || filter === 'private') return true;
+  const s = String(scopeValue || '').toLowerCase();
+  if (filter === 'team') return s === 'team';
+  if (filter === 'company') return s === 'company' || s === 'enterprise';
   return true;
 }
 
@@ -103,7 +103,17 @@ function scopeLabel(scope) {
   return s || 'None';
 }
 
-function parseNote(raw, p) {
+// Quiet "updated Xd ago" label for the doc header, from a file mtime (ms).
+function agoLabel(ms) {
+  if (!ms || !Number.isFinite(ms)) return 'on disk';
+  const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+  if (s < 90) return 'just now';
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+
+function parseNote(raw, p, mtime) {
   let scope = null,tags = [],body = raw || '';
   const fm = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/);
   if (fm) {
@@ -124,7 +134,7 @@ function parseNote(raw, p) {
   const h1 = body.match(/^#\s+(.+)$/m);
   const title = h1 ? h1[1].trim() : base.replace(/\.md$/i, '');
   const outline = [...body.matchAll(/^#{1,3}\s+(.+)$/gm)].map((m) => m[1].trim());
-  return { id: p, path: base, title, scope, owner: null, updated: 'on disk', tags, backlinks: [], outline: outline.length ? outline : [title], body: window.mdToRuns(body), raw };
+  return { id: p, path: base, title, scope, owner: null, updated: agoLabel(mtime), tags, backlinks: [], outline: outline.length ? outline : [title], body: window.mdToRuns(body), raw };
 }
 
 function evidenceFromTrace(trace) {
@@ -276,7 +286,7 @@ function normalizeProgress(payload) {
 function shouldShowProgress(p) {
   if (p.phase !== 'done') return true;
   if (p.errors > 0 || p.done > 0 || p.total > 0) return true;
-  return Boolean(p.current && p.current.toLowerCase() !== 'upkeep complete');
+  return Boolean(p.current && p.current.toLowerCase() !== 'tidy-up complete');
 }
 
 function progressCountText(p) {
@@ -287,7 +297,7 @@ function progressCountText(p) {
 
 function App() {
   const [theme, setTheme] = React.useState('dark');
-  const [view, setView] = React.useState('workspace');
+  const [view, setView] = React.useState('home'); // the app boots into the Home tab
   const [askOpen, setAskOpen] = React.useState(false);
   // Context pane (backlinks/outline) visibility — hidden via its header button,
   // reopened via the tab-strip panel icon.
@@ -318,7 +328,7 @@ function App() {
   const [graphLoading, setGraphLoading] = React.useState(false);
   const [graphNonce, setGraphNonce] = React.useState(0);
   const [kbFilter, setKbFilter] = React.useState([]); // selected knowledge bases (top-level folders); [] = all
-  const [scopeFilter, setScopeFilter] = React.useState('all'); // top-bar segmented filter: all | private | team | plugins (labelled Wizards)
+  const [scopeFilter, setScopeFilter] = React.useState('private'); // top-bar context switch: private | team | company — filters tree+graph AND sets the ask source
   const [showImportModal, setShowImportModal] = React.useState(false);
   const [renamingId, setRenamingId] = React.useState(null); // sidebar node currently showing an inline rename input
   const [previewNote, setPreviewNote] = React.useState(null); // {title, body} for DB-only graph nodes with no source_path
@@ -504,7 +514,7 @@ function App() {
   const askSourceOptions = React.useMemo(() => {
     const scopes = persona.scopes || [];
     return [
-    { value: 'all', label: scopes.length > 1 ? `All (${scopes.length})` : 'Configured scope', icon: 'layers' },
+    { value: 'all', label: scopes.length > 1 ? `All (${scopes.length})` : 'Everything', icon: 'layers' },
     ...scopes.map((s) => ({ value: s, label: scopeLabel(s), icon: 'tag' }))];
 
   }, [(persona.scopes || []).join('\u0000')]);
@@ -521,7 +531,7 @@ function App() {
   const loadNote = React.useCallback(async (id) => {
     if (notes[id]) return notes[id];
     const r = await window.lore.readNote(id);
-    const parsed = parseNote(r.raw, id);
+    const parsed = parseNote(r.raw, id, r.mtime);
     setNotes((m) => ({ ...m, [id]: parsed }));
     setDrafts((m) => ({ ...m, [id]: r.raw }));
     setTabs((ts) => ts.map((t) => t.id === id ? { ...t, title: parsed.title } : t));
@@ -758,7 +768,21 @@ function App() {
         setRenamingId((r) => r === id ? null : r);
         return;
       }
-      // 'trash-failed' — fail soft, nothing to reconcile client-side.
+      if (action === 'scope-changed') {
+        // Context-menu "Push to Team" / "Make Private" landed in main — re-read
+        // the note (frontmatter changed on disk), refresh the tree glyphs + graph.
+        try {
+          const r = await window.lore.readNote(id);
+          const parsed = parseNote(r.raw, id, r.mtime);
+          setNotes((m) => m[id] ? { ...m, [id]: parsed } : m);
+          setDrafts((m) => m[id] != null ? { ...m, [id]: r.raw } : m);
+          setActiveId((a) => {if (a === id) setScope(parsed.scope);return a;});
+        } catch {/* note may be closed — tree refresh below still applies */}
+        if (treeData) await reloadTree(treeData.root);
+        setGraphNonce((n) => n + 1);
+        return;
+      }
+      // 'trash-failed' / 'scope-change-failed' — fail soft, nothing to reconcile client-side.
     });
     return unsub;
   }, [treeData, openNote, reloadTree, closeNotesWhere]);
@@ -942,35 +966,103 @@ function App() {
   const onMode = async (m) => {
     if (mode === 'edit' && m === 'read' && activeId) {
       await window.lore.writeNote(activeId, drafts[activeId] || '');
-      const parsed = parseNote(drafts[activeId] || '', activeId);
+      const parsed = parseNote(drafts[activeId] || '', activeId, Date.now());
       setNotes((mm) => ({ ...mm, [activeId]: parsed }));
       setTabs((ts) => ts.map((t) => t.id === activeId ? { ...t, title: parsed.title } : t));
     }
     setMode(m);
   };
 
+  // The chat's context follows the top-bar switch: Private → the persona scopes
+  // (as before, still narrowable in the panel), Team/Company → only pushed notes.
+  const askScopesFor = () => {
+    if (scopeFilter === 'team') return ['team'];
+    if (scopeFilter === 'company') return ['company', 'enterprise'];
+    return sourceScopes(persona.scopes, askSource);
+  };
+
+  // One active thread; the History drawer lists/resumes/deletes past ones.
+  const askThreadRef = React.useRef(null);
+  const [askThreads, setAskThreads] = React.useState(null);
+  const persistTurn = (turn) => {
+    // Fire-and-forget: history is a convenience, never a blocker for the answer.
+    if (tenant && window.lore?.askHistory?.append) {
+      window.lore.askHistory.append(tenant, { thread_id: askThreadRef.current, source: scopeFilter, ...turn }).catch(() => {});
+    }
+  };
+  const loadAskThreads = React.useCallback(async () => {
+    if (!tenant || !window.lore?.askHistory?.threads) {setAskThreads([]);return;}
+    try {const r = await window.lore.askHistory.threads(tenant);setAskThreads(r && r.threads || []);}
+    catch {setAskThreads([]);}
+  }, [tenant]);
+  const resumeAskThread = React.useCallback(async (threadId) => {
+    if (!tenant || !window.lore?.askHistory?.thread) return;
+    try {
+      const r = await window.lore.askHistory.thread(tenant, threadId);
+      askThreadRef.current = threadId;
+      setMessages((r.messages || []).map((m) => m.role === 'user' ?
+      { role: 'user', text: m.text } :
+      { role: 'answer', shown: [], streaming: false, text: m.text, citations: m.sources || [] }));
+      setAskOpen(true);
+    } catch {/* thread gone — drawer refresh will show it */}
+  }, [tenant]);
+  const deleteAskThread = React.useCallback(async (threadId) => {
+    if (!tenant || !window.lore?.askHistory?.remove) return;
+    try {await window.lore.askHistory.remove(tenant, threadId);} catch {/* refresh below either way */}
+    if (askThreadRef.current === threadId) {askThreadRef.current = null;setMessages([]);}
+    loadAskThreads();
+  }, [tenant, loadAskThreads]);
+  const newAskChat = React.useCallback(() => {askThreadRef.current = null;setMessages([]);}, []);
+
+  // Citation chip context action: push the cited note to the team. Same
+  // redaction-gated IPC as the editor's visibility control; the note's path
+  // comes from the graph (nodes carry path per note id).
+  const pushCitationScope = React.useCallback(async (cite, scope) => {
+    const node = graphData && graphData.nodes.find((x) => x.id === cite.note_id);
+    if (!node || !node.path || !window.lore?.setNoteScope) return;
+    let r = await window.lore.setNoteScope(node.path, scope, false);
+    if (r && r.reason === 'secret' && !r.ok) {
+      if (!window.confirm(`${r.detail}\n\nShare it anyway?`)) return;
+      r = await window.lore.setNoteScope(node.path, scope, true);
+    }
+    if (r && r.ok) {
+      setGraphNonce((n) => n + 1);
+      if (treeData) reloadTree(treeData.root);
+    }
+  }, [graphData, treeData, reloadTree]);
+
   const ask = async (q, model) => {
     if (asking) return;
     setAskOpen(true);setAsking(true);
+    // Follow-ups: hand the backend the running conversation (it uses the last 6 turns).
+    const history = messages.
+    filter((m) => m.role === 'user' && m.text || m.role === 'answer' && !m.streaming && m.text).
+    map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text })).
+    slice(-6);
+    if (!askThreadRef.current) askThreadRef.current = 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     setMessages((m) => [...m, { role: 'user', text: q }, { role: 'answer', shown: [], streaming: true }]);
-    const scopes = sourceScopes(persona.scopes, askSource);
+    const scopes = askScopesFor();
     if (!tenant || !scopes.length) {
       setMessages((m) => {const c = m.slice();c[c.length - 1] = { role: 'answer', shown: [{ x: 'Finish setup with an account, library, and purpose before asking Lore.' }], streaming: false };return c;});
       setAsking(false);return;
     }
+    persistTurn({ role: 'user', text: q });
     let trace;
-    try {trace = await window.lore.ask(q, scopes, tenant, model);}
+    try {trace = await window.lore.ask(q, scopes, tenant, model, history);}
     catch (e) {
-      setMessages((m) => {const c = m.slice();c[c.length - 1] = { role: 'answer', shown: [{ x: 'Couldn’t reach the index. Make sure the Lore backend is running on :8099.' }], streaming: false };return c;});
+      setMessages((m) => {const c = m.slice();c[c.length - 1] = { role: 'answer', shown: [{ x: 'The memory engine isn’t reachable yet (:8099) — try again in a moment.' }], streaming: false };return c;});
       setAsking(false);return;
     }
-    const words = String(trace.answer || 'No notes in your scope mention this yet.').split(/(\s+)/).filter(Boolean).map((w) => ({ x: w }));
+    const answerText = String(trace.answer || 'Nothing you can see mentions this yet.');
+    const words = answerText.split(/(\s+)/).filter(Boolean).map((w) => ({ x: w }));
     const evidence = evidenceFromTrace(trace);
+    const citations = trace.citations || [];
     const sources = (trace.final || []).length;
-    // Prefer the scopes the backend ACTUALLY searched (scopes_used) — makes the
+    // Prefer the sources the backend ACTUALLY searched (scopes_used) — makes the
     // confidentiality boundary of each answer honest and visible.
     const used = trace.scopes_used && trace.scopes_used.length ? trace.scopes_used : trace.scopes_asked || scopes;
     const scopesLabel = `answered from ${used.map(scopeLabel).join(', ')} · ${sources} chunks`;
+    persistTurn({ role: 'assistant', text: answerText, sources: citations });
     let i = 0;
     clearInterval(timer.current);
     timer.current = setInterval(() => {
@@ -979,7 +1071,7 @@ function App() {
         const c = m.slice();const last = c[c.length - 1];
         if (!last || last.role !== 'answer') return m;
         const shown = words.slice(0, i);
-        if (i >= words.length) {clearInterval(timer.current);c[c.length - 1] = { ...last, shown, streaming: false, sources, scopes: scopesLabel, evidence, text: String(trace.answer || 'No notes in your scope mention this yet.') };setAsking(false);} else
+        if (i >= words.length) {clearInterval(timer.current);c[c.length - 1] = { ...last, shown, streaming: false, sources, scopes: scopesLabel, evidence, citations, text: answerText };setAsking(false);} else
         c[c.length - 1] = { ...last, shown };
         return c;
       });
@@ -987,19 +1079,21 @@ function App() {
   };
 
   const D = window.VaultDesignSystem_ffbf58;
-  const simpleMode = !!(appConfig && appConfig.simpleMode);
+  // Advanced mode (default OFF) gates the developer surfaces. The old
+  // cfg.simpleMode flag is ignored entirely — the default experience IS simple.
+  const advancedMode = !!(appConfig && appConfig.advancedMode === true);
   const Titlebar = window.LoreTitlebar,Rail = window.LoreActivityRail,Sidebar = window.LoreSidebar,
     Editor = window.LoreEditor,ContextPane = window.LoreContextPane,FloatingGraph = window.LoreFloatingGraph,AskPanel = window.LoreAskPanel,
     TeamsView = window.LoreTeamsView,GraphView = window.LoreGraphView,
     BucketsView = window.LoreBucketsView,SettingsView = window.LoreSettingsView,
     HooksView = window.LoreHooksView,Onboarding = window.LoreOnboarding,
-    ImportModal = window.LoreImportModal;
+    ImportModal = window.LoreImportModal,HomeView = window.LoreHomeView;
 
   const activeTab = tabs.find((t) => t.id === activeId);
   const activeNote = activeTab && activeTab.kind === 'note' ? notes[activeId] : null;
   const editorNote = activeNote && { ...activeNote, raw: drafts[activeId], onEdit: setDraft };
   const activeBucket = activeTab && activeTab.kind === 'bucket' ? activeTab.bucket : null;
-  const workspace = { name: treeData ? treeData.name : 'No library', scope: appConfig && appConfig.scope || null, indexedLabel: treeData ? `${treeData.indexed} notes` : 'open a library' };
+  const workspace = { name: treeData ? treeData.name : 'No library', scope: appConfig && appConfig.scope || null, indexedLabel: treeData ? `${treeData.indexed} things remembered` : 'open a library' };
   const progressCount = progressCountText(progressState);
 
   // The open note's connections (from the knowledge graph edges) — shown in the ContextPane.
@@ -1020,14 +1114,41 @@ function App() {
     return out;
   }, [graphData, activeId]);
 
-  // When viewing a Wizard, pre-generate suggested questions for it; otherwise use the profile examples.
+  // Personalized prompt chips (Home + the empty chat): deterministic
+  // suggestPrompts over the persisted ask history + the most recently active
+  // section from /digest. Falls back to the profile examples pre-setup.
+  const [promptSeed, setPromptSeed] = React.useState({ history: [], recentSection: null });
+  React.useEffect(() => {
+    if (!identityReady) return;
+    let live = true;
+    (async () => {
+      let history = [],recentSection = null;
+      try {
+        const r = window.lore?.askHistory?.recent ? await window.lore.askHistory.recent(tenant, 200) : null;
+        history = r && r.messages || [];
+      } catch {/* engine starting */}
+      try {
+        const d = window.lore?.digest ? await window.lore.digest(tenant, 7) : null;
+        recentSection = d && d.rows && d.rows[0] && d.rows[0].section || null;
+      } catch {/* engine starting */}
+      if (live) setPromptSeed({ history, recentSection });
+    })();
+    return () => {live = false;};
+  }, [identityReady, tenant, askOpen, view]);
+  const personalPrompts = React.useMemo(() => {
+    if (!window.LoreSuggestPrompts) return suggestions;
+    return window.LoreSuggestPrompts(promptSeed.history, { recentSection: promptSeed.recentSection });
+  }, [promptSeed, suggestions]);
+
+  // When viewing a Wizard, pre-generate suggested questions for it; otherwise the personalized chips.
   const bucketQuestions = (b) => b ? [
   `Summarize ${b.name}`,
   ...(b.topics || []).slice(0, 2).map((t) => `What's important about ${t}?`),
   `What are the open risks or gaps in ${b.name}?`].
   slice(0, 4) : suggestions;
-  const askSuggestions = activeBucket ? bucketQuestions(activeBucket) : suggestions;
-  const askPanel = /*#__PURE__*/React.createElement(AskPanel, { messages: messages, asking: asking, suggestions: askSuggestions, onSend: ask, onClose: () => setAskOpen(false), source: askSource, onSource: setAskSource, sourceOptions: askSourceOptions, identityReady: identityReady, onSetup: () => {setView('settings');setShowOnboarding(true);} });
+  const askSuggestions = activeBucket ? bucketQuestions(activeBucket) : identityReady ? personalPrompts : suggestions;
+  const askPanel = /*#__PURE__*/React.createElement(AskPanel, { messages: messages, asking: asking, suggestions: askSuggestions, onSend: ask, onClose: () => setAskOpen(false), source: askSource, onSource: setAskSource, sourceOptions: askSourceOptions, identityReady: identityReady, onSetup: () => {setView('settings');setShowOnboarding(true);},
+    threads: askThreads, onLoadThreads: loadAskThreads, onResumeThread: resumeAskThread, onDeleteThread: deleteAskThread, onNewChat: newAskChat, onCiteScope: pushCitationScope });
 
   const EmptyEditor = () => {
     const [draftQ, setDraftQ] = React.useState('');
@@ -1042,7 +1163,7 @@ function App() {
       treeData ? /*#__PURE__*/
       React.createElement(React.Fragment, null, /*#__PURE__*/
       React.createElement("img", { src: "design/assets/sprites/lore-familiar.png", alt: "", style: { width: 96, height: 96, objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))' }, onError: (e) => {e.target.style.display = 'none';} }), /*#__PURE__*/
-      React.createElement("div", { style: { fontFamily: 'var(--font-serif)', fontSize: 20, color: 'var(--text-body)' } }, treeData.name, " \xB7 ", treeData.indexed, " notes"), /*#__PURE__*/
+      React.createElement("div", { style: { fontFamily: 'var(--font-serif)', fontSize: 20, color: 'var(--text-body)' } }, treeData.name, " \xB7 ", treeData.indexed, " things remembered"), /*#__PURE__*/
       React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', maxWidth: 480, padding: '0 24px', boxSizing: 'border-box' } }, /*#__PURE__*/
       React.createElement("input", {
         autoFocus: true,
@@ -1098,13 +1219,22 @@ function App() {
   return (/*#__PURE__*/
     React.createElement("div", { style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-sunken)' },
       onDragOver: (e) => {e.preventDefault();}, onDrop: onDropImport }, /*#__PURE__*/
-    React.createElement(Titlebar, { theme: theme, onToggleTheme: () => setTheme((t) => t === 'dark' ? 'light' : 'dark'), onSearch: () => setSearchOpen(true), onAsk: () => setAskOpen(true), onSettings: () => setView('settings'), onProfile: () => setView('settings'), onImport: onImport, scopeFilter: scopeFilter, onScopeFilter: simpleMode ? null : setScopeFilter }), /*#__PURE__*/
+    React.createElement(Titlebar, { theme: theme, onToggleTheme: () => setTheme((t) => t === 'dark' ? 'light' : 'dark'), onSearch: () => setSearchOpen(true), onAsk: () => setAskOpen(true), onSettings: () => setView('settings'), onProfile: () => setView('settings'), onImport: onImport, scopeFilter: scopeFilter, onScopeFilter: setScopeFilter }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', minHeight: 0, position: 'relative' } }, /*#__PURE__*/
-    React.createElement(Rail, { view: view, askOpen: askOpen, simpleMode: simpleMode,
+    React.createElement(Rail, { view: view, askOpen: askOpen, advancedMode: advancedMode,
       onView: (v) => {if (v === 'search') setSearchOpen(true);else setView(v);},
       onAsk: () => setAskOpen((o) => !o) }), /*#__PURE__*/
 
     React.createElement(LoreErrorBoundary, { key: view },
+    view === 'home' && /*#__PURE__*/
+    React.createElement(React.Fragment, null,
+    HomeView ? /*#__PURE__*/
+    React.createElement(HomeView, { config: appConfig, tenant: tenant, identityReady: identityReady, prompts: personalPrompts,
+      onAsk: (q) => ask(q), onSetup: () => setShowOnboarding(true) }) : /*#__PURE__*/
+    React.createElement(EmptyEditor, null),
+    askOpen && askPanel
+    ),
+
     view === 'workspace' && /*#__PURE__*/
     React.createElement(React.Fragment, null, /*#__PURE__*/
     React.createElement(Sidebar, { tree: shownTree, activeNote: activeId, workspace: workspace, onOpen: onNodeClick, onToggle: (id) => setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) })),
@@ -1143,9 +1273,9 @@ function App() {
     askOpen && askPanel
     ),
 
-    view === 'buckets' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(BucketsView, { buckets: M.buckets, onAsk: () => setAskOpen(true), onOpen: openBucket, onChanged: reloadAfterImport, scopes: persona.scopes }), askOpen && askPanel),
+    view === 'buckets' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(BucketsView, { buckets: M.buckets, onAsk: () => setAskOpen(true), onOpen: openBucket, onChanged: reloadAfterImport, scopes: persona.scopes, advancedMode: advancedMode }), askOpen && askPanel),
     view === 'settings' && /*#__PURE__*/React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions, onConfig: setAppConfig, onOpenSetup: () => setShowOnboarding(true) }),
-    view === 'hooks' && HooksView && /*#__PURE__*/React.createElement(HooksView, { scopeOptions: scopeOptions, identityReady: identityReady, tenant: tenant, scope: persona.scopes && persona.scopes[0], onOpenSetup: () => setShowOnboarding(true) })
+    view === 'hooks' && advancedMode && HooksView && /*#__PURE__*/React.createElement(HooksView, { scopeOptions: scopeOptions, identityReady: identityReady, tenant: tenant, scope: persona.scopes && persona.scopes[0], onOpenSetup: () => setShowOnboarding(true) })
     ),
 
     searchOpen && /*#__PURE__*/React.createElement(SearchPalette, { notes: allNotes, onPick: openNote, onClose: () => setSearchOpen(false) }),
@@ -1210,7 +1340,7 @@ function App() {
     ), /*#__PURE__*/
     React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, /*#__PURE__*/
     React.createElement(D.Icon, { name: "circle-dot", size: 12, style: { color: backendOk ? 'var(--jade-400)' : 'var(--clay-400)' } }),
-    backendOk ? 'backend ready' : 'backend offline (:8099)'
+    backendOk ? 'memory engine ready' : 'memory engine is starting… (:8099)'
     ), /*#__PURE__*/
     React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 5 } }, /*#__PURE__*/
     React.createElement(D.Icon, { name: identityReady ? 'key-round' : 'alert-circle', size: 12, style: { color: identityReady ? 'var(--brand-fg)' : 'var(--text-faint)' } }),

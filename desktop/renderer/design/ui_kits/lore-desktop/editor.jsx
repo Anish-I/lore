@@ -235,28 +235,32 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
           </div>
         )}
         {/* Confidentiality control — changing this actually re-writes the note's
-            scope on disk and re-indexes it (see wired-app onSetNoteScope), so it
-            is the real "who can see this" switch, not a cosmetic picker. */}
+            visibility on disk and refreshes the memory (see wired-app
+            onSetNoteScope), so it is the real "who can see this" switch. */}
         <VisibilityControl note={note} onSetScope={onSetScope} />
-        <div style={{ display: 'flex', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 2, gap: 2 }}>
-          {['read', 'edit'].map((m) => (
-            <button key={m} onClick={() => onMode(m)} style={{
-              border: 'none', cursor: 'pointer', padding: '4px 11px', borderRadius: 'var(--radius-xs)',
-              background: mode === m ? 'var(--surface-raised)' : 'transparent',
-              color: mode === m ? 'var(--text-strong)' : 'var(--text-subtle)',
-              fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: mode === m ? 600 : 400, textTransform: 'capitalize',
-            }}>{m}</button>
-          ))}
-        </div>
+        {mode === 'edit' && (
+          <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>editing · click away or ⌘S to save</span>
+        )}
       </div>
 
+      {/* The demo's calm editor: no Read/Edit toggle. Reading view by default;
+          CLICK the body to edit (textarea autofocuses); blur or Cmd/Ctrl-S saves
+          and returns to reading. */}
       <div style={edS.scroll}>
         {mode === 'edit'
           ? <div style={edS.col}>
-              <textarea value={note.raw || ''} onChange={(e) => note.onEdit && note.onEdit(e.target.value)}
+              <textarea autoFocus value={note.raw || ''} onChange={(e) => note.onEdit && note.onEdit(e.target.value)}
+                onBlur={() => onMode && onMode('read')}
+                onKeyDown={(e) => {
+                  if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); onMode && onMode('read'); }
+                }}
                 style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 180px)', resize: 'none', border: 'none', borderRadius: 0, background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--brand-fg)' }} />
             </div>
-          : <div style={edS.col}>
+          : <div style={edS.col} onClick={() => onMode && onMode('edit')} title="Click to edit">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 18px', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{note.path || (note.title + '.md')}</span>
+                {note.updated && <span style={{ flexShrink: 0 }}>· updated {note.updated}</span>}
+              </div>
               {note.body.map((b, i) => <Block key={i} b={b} note={note} onOpen={onOpen} />)}
             </div>}
       </div>
@@ -383,13 +387,13 @@ function ContextPane({ note, onAsk, connections, onOpenNote, cameFromId, onHide 
       </div>
       <div style={{ padding: '0 12px' }}>
         <EdTabs value={tab} onChange={setTab} tabs={[
-          { value: 'backlinks', label: 'Backlinks', count: conns.length },
+          { value: 'backlinks', label: 'Mentioned in', count: conns.length },
           { value: 'outline', label: 'Outline' },
         ]} />
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
         {tab === 'backlinks' && (conns.length === 0
-          ? <div style={{ fontSize: 12.5, color: 'var(--text-faint)', padding: '8px 8px', lineHeight: 1.5 }}>No connections yet. Add a <code>[[wikilink]]</code> or tag and re-index.</div>
+          ? <div style={{ fontSize: 12.5, color: 'var(--text-faint)', padding: '8px 8px', lineHeight: 1.5 }}>No connections yet. Add a <code>[[wikilink]]</code> or tag and refresh.</div>
           : <React.Fragment>
             <div style={{ background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', marginBottom: 10 }}>
               <EdMiniGraph connections={conns} centerLabel={note.title} onOpen={(p) => onOpenNote && onOpenNote(p)} cameFromPath={cameFromId} />
@@ -398,7 +402,7 @@ function ContextPane({ note, onAsk, connections, onOpenNote, cameFromId, onHide 
             {conns.map((c, i) => {
               const meta = c.kind === 'folder' ? { lbl: 'Same folder', sub: 'sits in the same folder', icon: 'folder', col: 'var(--jade-500)' }
                 : c.kind === 'tag' ? { lbl: 'Shared tag', sub: 'shares a #tag', icon: 'hash', col: 'var(--amber-400)' }
-                : (c.dir === 'in' ? { lbl: 'Backlink', sub: 'links to this note', icon: 'corner-down-left', col: 'var(--azure-500)' }
+                : (c.dir === 'in' ? { lbl: 'Mentions this', sub: 'links to this note', icon: 'corner-down-left', col: 'var(--azure-500)' }
                   : { lbl: 'Outgoing link', sub: 'this note links to it', icon: 'corner-up-right', col: 'var(--azure-500)' });
               return (
                 <div key={c.id || i} onClick={() => onOpenNote && onOpenNote(c.path)} title={meta.sub} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 9px', borderRadius: 'var(--radius-sm)', cursor: 'pointer' }}
