@@ -89,11 +89,14 @@ Rules:
 // AI can pitch its answers right); label each option with what it actually means.
 const HK_PURPOSE_SCOPES = new Set(['engineering', 'research', 'writing', 'team-memory']);
 function HK_scopeOption(s) {
-  if (s === 'private') return { value: s, label: 'private (only you)' };
-  if (HK_PURPOSE_SCOPES.has(s)) return { value: s, label: `${s} (your role)` };
-  return { value: s, label: s };
+  // Business words only — internal ids (engineering/research/…) are all the
+  // user's own private notes; never surface them as jargon.
+  const low = String(s).toLowerCase();
+  if (low === 'team') return { value: s, label: 'Team' };
+  if (low === 'company' || low === 'enterprise') return { value: s, label: 'Company' };
+  return { value: s, label: 'Private (only you)' };
 }
-const HK_SCOPE_TIP = 'Where captured sessions are filed. "none" leaves them unfiled; "private" keeps them local-only, visible just to you; a role like "engineering" (your purpose from setup) tells the connected AI who is using Lore so answers match your work.';
+const HK_SCOPE_TIP = 'Where captured AI sessions are filed. Private keeps them just for you; Team/Company share them once team sync is on; Unfiled skips filing.';
 
 function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg, onToggle, onMode, onScope, scopeOptions, identityReady, last }) {
   const known       = HK_KNOWN[id] || {};
@@ -103,7 +106,7 @@ function HK_ToolRow({ id, name, description, detected, status, statusEntry, cfg,
   const enabled     = cfg.enabled;
   const installing  = cfg.installing;
   const cannotEnable = experimental || !detected || !identityReady;
-  const scopeSelectOptions = [{ value: '', label: 'none (unscoped)' }, ...(scopeOptions || []).map(HK_scopeOption)];
+  const scopeSelectOptions = [{ value: '', label: 'Unfiled' }, ...(scopeOptions || []).map(HK_scopeOption)];
 
   // Derive badge from live status + statusEntry
   const liveStatus  = statusEntry

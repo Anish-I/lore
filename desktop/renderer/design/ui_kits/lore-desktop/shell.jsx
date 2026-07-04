@@ -383,7 +383,6 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)' }}>
           <Icon name="library" size={16} style={{ color: 'var(--brand-fg)' }} />
           <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{wizard.name}</span>
-          {wizard.scope && <ScopeTag scope={wizard.scope} size="sm" showLabel={false} />}
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {wizard.desc && <div style={{ fontSize: 12.5, color: 'var(--text-subtle)', lineHeight: 1.5 }}>{wizard.desc}</div>}
@@ -425,7 +424,6 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)' }}>
         <Icon name="folder-open" size={16} style={{ color: 'var(--brand-fg)' }} />
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>{workspace.name}</span>
-        {workspace.scope && <ScopeTag scope={workspace.scope} size="sm" showLabel={false} />}
         {showLibrarySwitcher && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <IconButton icon="chevron-up" label={`Previous library — ${prevLibraryName}`} size="sm" onClick={() => openLib(prevLib)} />

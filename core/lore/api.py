@@ -65,6 +65,28 @@ def _audit(endpoint: str, tenant, principal, scopes, query: str, hits: int) -> N
     except Exception:
         pass
 
+# Temporal-meta questions ("summarize my recent notes", "what's new this week")
+# can't be answered by semantic retrieval — nothing in the store *says* "recent".
+# Detect them and answer from the newest notes in-scope instead.
+_TEMPORAL_RE = __import__("re").compile(
+    r"\b(recent|latest|newest|today|yesterday|this week|last week|past (few )?(days?|weeks?)|"
+    r"what'?s new|catch me up|worked on)\b", __import__("re").I)
+
+
+def _recent_note_rows(tenant: str, scopes: list, limit: int = 8):
+    """Newest in-scope notes with their leading chunk text (skips captured session
+    bodies' noise by preferring title+first chunk)."""
+    frag, sparams = in_clause("n.scope_id", list(scopes))
+    rows = _conn.execute(
+        f"""select n.id, n.title, n.scope_id, n.updated_at, c.text
+            from notes n
+            left join chunks c on c.note_id = n.id and c.chunk_index = 0
+            where n.tenant_id=%s and {frag}
+            order by n.updated_at desc limit %s""",
+        (tenant, *sparams, limit)).fetchall()
+    return rows
+
+
 # Model selection: Voyage if an API key is set, else REAL local models (fastembed),
 # and only Fake if explicitly forced (VAULT_FAKE=1) for fast unit tests.
 _FAKE = os.environ.get("VAULT_FAKE") == "1"
@@ -452,6 +474,26 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
     with a reduced trace ("fallback" flag), never a dead end for the desktop chat.
     """
     _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
+    if _TEMPORAL_RE.search(req.question or ""):
+        rows = _recent_note_rows(tenant, scopes, limit=8)
+        tr = {
+            "query": req.question,
+            "classification": "recency",
+            "final": [{"title": r[1] or r[0], "scope": r[2], "final": 1.0,
+                       "text": (r[4] or "")[:400], "note_id": r[0],
+                       "updated": str(r[3])} for r in rows],
+        }
+        tr["citations"] = [{"note_id": r[0], "heading_path": r[1] or r[0],
+                            "title": r[1] or r[0], "scope": r[2], "why": "recent"}
+                           for r in rows]
+        chunks = [{"title": f"{f['title']} (updated {f['updated'][:10]})", "text": f["text"]}
+                  for f in tr["final"]]
+        text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history)
+        tr["answer"] = text
+        tr["engine"] = engine
+        tr["scopes_asked"] = scopes
+        _audit("trace", tenant, _uid, scopes, req.question, len(tr["final"]))
+        return tr
     if sparse is None:
         hits = retrieve(req.question, embedder, reranker, scopes, tenant,
                         sparse_embedder=None)
@@ -480,6 +522,35 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
     tr["scopes_asked"] = scopes
     _audit("trace", tenant, _uid, scopes, req.question, len(tr["final"]))
     return tr
+
+@app.get("/recent-prompts")
+def recent_prompts(tenant: Optional[str] = None, limit: int = 200,
+                   authorization: Optional[str] = Header(default=None)):
+    """Raw texts of the user's recent AI-session prompts (for the Home suggestion
+    chips). Mined from captured session notes' 'Prompt [...]' sections. Local data
+    only; empty tenant returns nothing."""
+    if not tenant:
+        return {"prompts": []}
+    n = max(1, min(int(limit), 500))
+    rows = _conn.execute(
+        """select c.text, n.updated_at from chunks c
+           join notes n on n.id = c.note_id
+           where n.tenant_id=%s and c.heading_path like '%%Prompt [%%'
+           order by n.updated_at desc limit %s""",
+        (tenant, n)).fetchall()
+    out = []
+    for text, _ts in rows:
+        t = (text or "").strip()
+        # strip the boilerplate lead-in the capture writes
+        for marker in ("'. ", "]. "):
+            i = t.find(marker)
+            if 0 < i < 160:
+                t = t[i + len(marker):]
+                break
+        if t:
+            out.append(t[:280])
+    return {"prompts": out}
+
 
 @app.get("/presets")
 def presets():

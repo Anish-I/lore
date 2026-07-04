@@ -100,7 +100,13 @@ function collectTreeScopes(tree, out = []) {
 
 function scopeLabel(scope) {
   const s = cleanScope(scope);
-  return s || 'None';
+  if (!s) return 'None';
+  // Business words only — internal scope ids (engineering/research/…) are all
+  // the solo user's own notes, so anything that isn't team/company IS Private.
+  const low = String(s).toLowerCase();
+  if (low === 'team') return 'Team';
+  if (low === 'company' || low === 'enterprise') return 'Company';
+  return 'Private';
 }
 
 // Quiet "updated Xd ago" label for the doc header, from a file mtime (ms).
@@ -1033,7 +1039,8 @@ function App() {
 
   const ask = async (q, model) => {
     if (asking) return;
-    setAskOpen(true); setAsking(true);
+    if (view !== 'home') setAskOpen(true);
+    setAsking(true);
     // Follow-ups: hand the backend the running conversation (it uses the last 6 turns).
     const history = messages
       .filter((m) => (m.role === 'user' && m.text) || (m.role === 'answer' && !m.streaming && m.text))
@@ -1061,7 +1068,7 @@ function App() {
     // Prefer the sources the backend ACTUALLY searched (scopes_used) — makes the
     // confidentiality boundary of each answer honest and visible.
     const used = (trace.scopes_used && trace.scopes_used.length) ? trace.scopes_used : (trace.scopes_asked || scopes);
-    const scopesLabel = `answered from ${used.map(scopeLabel).join(', ')} · ${sources} chunks`;
+    const scopesLabel = `answered from ${[...new Set(used.map(scopeLabel))].join(', ')} · ${sources} chunks`;
     persistTurn({ role: 'assistant', text: answerText, sources: citations });
     let i = 0;
     clearInterval(timer.current);
@@ -1117,7 +1124,7 @@ function App() {
   // Personalized prompt chips (Home + the empty chat): deterministic
   // suggestPrompts over the persisted ask history + the most recently active
   // section from /digest. Falls back to the profile examples pre-setup.
-  const [promptSeed, setPromptSeed] = React.useState({ history: [], recentSection: null });
+  const [promptSeed, setPromptSeed] = React.useState({ history: [], recentSection: null, sessionPrompts: [] });
   React.useEffect(() => {
     if (!identityReady) return;
     let live = true;
@@ -1131,13 +1138,18 @@ function App() {
         const d = window.lore?.digest ? await window.lore.digest(tenant, 7) : null;
         recentSection = (d && d.rows && d.rows[0] && d.rows[0].section) || null;
       } catch { /* engine starting */ }
-      if (live) setPromptSeed({ history, recentSection });
+      let sessionPrompts = [];
+      try {
+        const sp = window.lore?.recentPrompts ? await window.lore.recentPrompts(tenant, 200) : null;
+        sessionPrompts = (sp && sp.prompts) || [];
+      } catch { /* engine starting */ }
+      if (live) setPromptSeed({ history, recentSection, sessionPrompts });
     })();
     return () => { live = false; };
   }, [identityReady, tenant, askOpen, view]);
   const personalPrompts = React.useMemo(() => {
     if (!window.LoreSuggestPrompts) return suggestions;
-    return window.LoreSuggestPrompts(promptSeed.history, { recentSection: promptSeed.recentSection });
+    return window.LoreSuggestPrompts(promptSeed.history, { recentSection: promptSeed.recentSection, sessionPrompts: promptSeed.sessionPrompts });
   }, [promptSeed, suggestions]);
 
   // When viewing a Wizard, pre-generate suggested questions for it; otherwise the personalized chips.
@@ -1230,9 +1242,15 @@ function App() {
           <React.Fragment>
             {HomeView
               ? <HomeView config={appConfig} tenant={tenant} identityReady={identityReady} prompts={personalPrompts}
+                  chatActive={messages.length > 0}
+                  chat={
+                    <div style={{ '--ask-width': '100%', display: 'flex', minHeight: messages.length ? '56vh' : 300, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', background: 'var(--surface-panel)' }}>
+                      <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={null} source={askSource} onSource={setAskSource} sourceOptions={askSourceOptions} identityReady={identityReady} onSetup={() => { setView('settings'); setShowOnboarding(true); }}
+                        threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={newAskChat} onCiteScope={pushCitationScope} />
+                    </div>
+                  }
                   onAsk={(q) => ask(q)} onSetup={() => setShowOnboarding(true)} />
               : <EmptyEditor />}
-            {askOpen && askPanel}
           </React.Fragment>
         )}
         {view === 'workspace' && (
@@ -1342,10 +1360,12 @@ function App() {
           <D.Icon name="circle-dot" size={12} style={{ color: backendOk ? 'var(--jade-400)' : 'var(--clay-400)' }} />
           {backendOk ? 'memory engine ready' : 'memory engine is starting… (:8099)'}
         </span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <D.Icon name={identityReady ? 'key-round' : 'alert-circle'} size={12} style={{ color: identityReady ? 'var(--brand-fg)' : 'var(--text-faint)' }} />
-          {identityReady ? `${tenant} · ${(persona.scopes || []).join(', ')}` : 'setup incomplete'}
-        </span>
+        {!identityReady && (
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <D.Icon name="alert-circle" size={12} style={{ color: 'var(--text-faint)' }} />
+            setup incomplete
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <span>{tabs.length} tab{tabs.length === 1 ? '' : 's'}</span>
       </div>

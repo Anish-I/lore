@@ -76,3 +76,28 @@ describe('suggestPrompts — activity fallback', () => {
     expect(out.filter((p) => normalizePrompt(p) === "what's new in wingman").length).toBe(1);
   });
 });
+
+describe('session-prompt mining (Claude/Codex history)', () => {
+  it('counts repeats across ask history AND session prompts', () => {
+    const history = [{ role: 'user', text: 'Catch me up on the Kalshi bot' }];
+    const out = suggestPrompts(history, {
+      sessionPrompts: ['catch me up on the kalshi bot?', 'random other thing that is long enough'],
+    });
+    expect(out[0]).toMatch(/kalshi bot/i);
+  });
+
+  it('uses the newest chip-worthy session prompt when no repeats exist', () => {
+    const out = suggestPrompts([], {
+      sessionPrompts: ['How does the recall pipeline rank results?'],
+    });
+    expect(out[0]).toBe('How does the recall pipeline rank results?');
+  });
+
+  it('filters commands, code and over/undersized prompts', () => {
+    const out = suggestPrompts([], {
+      sessionPrompts: ['git push origin main', 'fix {this} now', 'ok', 'x'.repeat(200)],
+    });
+    // none are chip-worthy → falls back to cold start
+    expect(out[0]).toBe('What did I work on this week?');
+  });
+});

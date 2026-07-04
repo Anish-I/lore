@@ -192,7 +192,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
         )}
         {onNewChat && messages.length > 0 && <AkIconBtn icon="plus" label="New conversation" size="sm" onClick={onNewChat} />}
         {onResumeThread && <AkIconBtn icon="history" label="Past conversations" size="sm" onClick={openHistory} />}
-        <AkIconBtn icon="x" label="Close Ask" size="sm" onClick={onClose} />
+        {onClose && <AkIconBtn icon="x" label="Close Ask" size="sm" onClick={onClose} />}
         {historyOpen && (
           <AskHistoryDrawer threads={threads} onClose={() => setHistoryOpen(false)}
             onResume={onResumeThread} onDelete={(id) => { if (onDeleteThread) onDeleteThread(id); }} />

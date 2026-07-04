@@ -107,6 +107,12 @@ contextBridge.exposeInMainWorld('lore', {
   // --- stats (live counts for graph/tree refresh polling) ---
   stats: (tenant) => ipcRenderer.invoke('stats:get', tenant),
 
+  // --- recent AI-session prompts (Home suggestion mining) ---
+  recentPrompts: async (tenant, limit) => {
+    const r = await fetch(`${BACKEND}/recent-prompts?tenant=${encodeURIComponent(tenant)}&limit=${limit || 200}`, { headers: authH() });
+    return r.json();
+  },
+
   // --- digest (Home tab: notes grouped by day × section + since-yesterday count) ---
   // digest(tenant, days) → {rows:[{day, section, count, topTitles}], sinceYesterday, total}
   digest: (tenant, days) => ipcRenderer.invoke('digest:get', { tenant, days }),

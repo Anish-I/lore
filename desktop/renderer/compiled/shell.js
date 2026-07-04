@@ -382,8 +382,7 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
       React.createElement("div", { style: shellS.sidebar }, /*#__PURE__*/
       React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)' } }, /*#__PURE__*/
       React.createElement(Icon, { name: "library", size: 16, style: { color: 'var(--brand-fg)' } }), /*#__PURE__*/
-      React.createElement("span", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, wizard.name),
-      wizard.scope && /*#__PURE__*/React.createElement(ScopeTag, { scope: wizard.scope, size: "sm", showLabel: false })
+      React.createElement("span", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, wizard.name)
       ), /*#__PURE__*/
       React.createElement("div", { style: { flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 14 } },
       wizard.desc && /*#__PURE__*/React.createElement("div", { style: { fontSize: 12.5, color: 'var(--text-subtle)', lineHeight: 1.5 } }, wizard.desc),
@@ -425,7 +424,6 @@ function Sidebar({ tree, activeNote, onOpen, onToggle, workspace, bases, baseSco
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', borderBottom: '1px solid var(--divider)' } }, /*#__PURE__*/
     React.createElement(Icon, { name: "folder-open", size: 16, style: { color: 'var(--brand-fg)' } }), /*#__PURE__*/
     React.createElement("span", { style: { flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' } }, workspace.name),
-    workspace.scope && /*#__PURE__*/React.createElement(ScopeTag, { scope: workspace.scope, size: "sm", showLabel: false }),
     showLibrarySwitcher && /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 1 } }, /*#__PURE__*/
     React.createElement(IconButton, { icon: "chevron-up", label: `Previous library — ${prevLibraryName}`, size: "sm", onClick: () => openLib(prevLib) }), /*#__PURE__*/

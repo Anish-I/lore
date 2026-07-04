@@ -23,7 +23,7 @@ function HM_dayLabel(dayIso) {
   return d.toLocaleDateString(undefined, { weekday: 'short' });
 }
 
-function HomeView({ config, tenant, identityReady, prompts, onAsk, onSetup }) {
+function HomeView({ config, tenant, identityReady, prompts, onAsk, onSetup, chat, chatActive }) {
   const [stats, setStats] = React.useState(null);      // {notes, chunks, edges}
   const [digest, setDigest] = React.useState(null);    // {rows, sinceYesterday, total}
   const [backup, setBackup] = React.useState(null);    // backup:status result
@@ -67,36 +67,10 @@ function HomeView({ config, tenant, identityReady, prompts, onAsk, onSetup }) {
               </span>}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-          <input
-            autoFocus
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
-            placeholder={identityReady ? 'Ask your memory anything…' : 'Finish setup to ask Lore…'}
-            disabled={!identityReady}
-            style={{ flex: 1, padding: '12px 16px', borderRadius: 'var(--radius-md)', border: '1.5px solid var(--border-field)', background: 'var(--surface-raised)', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 14.5, outline: 'none' }}
-          />
-          <HmButton variant="primary" icon="sparkles" onClick={() => submit()} disabled={!identityReady}>Ask</HmButton>
-        </div>
+        {chat || null}
         {!identityReady && (
-          <div style={{ marginBottom: 16 }}>
+          <div style={{ margin: '14px 0' }}>
             <HmButton variant="secondary" icon="settings" onClick={onSetup}>Finish setup</HmButton>
-          </div>
-        )}
-
-        {identityReady && prompts && prompts.length > 0 && (
-          <div style={{ marginBottom: 28 }}>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {prompts.map((p) => (
-                <button key={p} onClick={() => submit(p)} style={{
-                  padding: '6px 12px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)',
-                  background: 'var(--surface-inset)', color: 'var(--text-body)', cursor: 'pointer',
-                  fontFamily: 'var(--font-sans)', fontSize: 12.5,
-                }}>{p}</button>
-              ))}
-            </div>
-            <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10, color: 'var(--text-faint)', marginTop: 6 }}>these learn from what you ask</div>
           </div>
         )}
 

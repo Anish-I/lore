@@ -191,8 +191,8 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     React.createElement(SourceToggle, { value: source || 'all', onChange: onSource || (() => {}), options: sourceOptions }),
 
     onNewChat && messages.length > 0 && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "plus", label: "New conversation", size: "sm", onClick: onNewChat }),
-    onResumeThread && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "history", label: "Past conversations", size: "sm", onClick: openHistory }), /*#__PURE__*/
-    React.createElement(AkIconBtn, { icon: "x", label: "Close Ask", size: "sm", onClick: onClose }),
+    onResumeThread && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "history", label: "Past conversations", size: "sm", onClick: openHistory }),
+    onClose && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "x", label: "Close Ask", size: "sm", onClick: onClose }),
     historyOpen && /*#__PURE__*/
     React.createElement(AskHistoryDrawer, { threads: threads, onClose: () => setHistoryOpen(false),
       onResume: onResumeThread, onDelete: (id) => {if (onDeleteThread) onDeleteThread(id);} })

@@ -1285,7 +1285,7 @@ ipcMain.handle('wizards:personal-chat-history', async (_e, id) => {
   const cfg = loadConfig() || {};
   if (!cfg.tenant) return { messages: [] };
   try {
-    const r = await fetch(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/chat?tenant=${encodeURIComponent(cfg.tenant)}`);
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/chat?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
     return await r.json();
   } catch (e) {
     return { messages: [], error: String(e) };
@@ -1297,7 +1297,7 @@ ipcMain.handle('wizards:personal-notes', async (_e, id) => {
   const cfg = loadConfig() || {};
   if (!cfg.tenant) return { notes: [] };
   try {
-    const r = await fetch(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/notes?tenant=${encodeURIComponent(cfg.tenant)}`);
+    const r = await fetch(`${BACKEND_URL()}/wizards/personal/${encodeURIComponent(id)}/notes?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
     return await r.json();
   } catch (e) {
     return { notes: [], error: String(e) };
@@ -1386,7 +1386,7 @@ ipcMain.handle('notes:get', async (_e, id) => {
     const cfg = loadConfig() || {};
     if (!cfg.tenant) return { error: 'tenant is not configured' };
     const qs = `?tenant=${encodeURIComponent(cfg.tenant)}`;
-    const r = await fetch(`${BACKEND_URL()}/notes/${encodeURIComponent(id)}${qs}`);
+    const r = await fetch(`${BACKEND_URL()}/notes/${encodeURIComponent(id)}${qs}`, { headers: authHeaders() });
     return r.json();
   } catch (e) {
     return { error: String(e) };
@@ -1453,7 +1453,7 @@ ipcMain.handle('sections:list', async () => {
   const cfg = loadConfig() || {};
   if (!cfg.tenant) return { sections: [] };
   try {
-    const r = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`);
+    const r = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
     return await r.json();
   } catch (e) {
     return { sections: [], error: String(e) };
@@ -1517,7 +1517,7 @@ ipcMain.handle('sections:apply', async (_e, id) => {
   // Resolve the section name so the destination folder can be computed up front.
   let section;
   try {
-    const lr = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`);
+    const lr = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
     const body = await lr.json();
     section = (body.sections || []).find((s) => s.id === id);
   } catch (e) { return { ok: false, error: String(e) }; }
@@ -1597,7 +1597,7 @@ ipcMain.handle('sections:undo', async (_e, id) => {
 // ---------- IPC: enrichment LLM providers (codex sub / claude sub / byok) ----------
 ipcMain.handle('enrich:providers', async () => {
   try {
-    const r = await fetch(`${BACKEND_URL()}/enrich/providers`);
+    const r = await fetch(`${BACKEND_URL()}/enrich/providers`, { headers: authHeaders() });
     return await r.json();   // { codex, claude, byok }
   } catch (e) { return { codex: false, claude: false, byok: false, error: String(e) }; }
 });
@@ -1644,7 +1644,7 @@ ipcMain.handle('retrieval:config', async () => {
   try {
     const cfg = loadConfig() || {};
     const qs = cfg.tenant ? `?tenant=${encodeURIComponent(cfg.tenant)}` : '';
-    const r = await fetch(`${BACKEND_URL()}/config/retrieval${qs}`);
+    const r = await fetch(`${BACKEND_URL()}/config/retrieval${qs}`, { headers: authHeaders() });
     return await r.json();
   } catch (e) {
     return { error: String(e) };
