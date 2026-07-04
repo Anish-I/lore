@@ -318,6 +318,9 @@ class AskReq(BaseModel):
     # questions ("what about the second one?") resolve against the running chat.
     # Only the last 6 turns are used (see llm._history_block).
     history: Optional[list] = None
+    # 'codex' | 'claude' | 'byok' — answer through the user's subscription/key
+    # (see llm_providers). None → local Ollama / extractive fallback.
+    provider: Optional[str] = None
 
 class IngestReq(BaseModel):
     source_id: str
@@ -453,7 +456,7 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
     hits = retrieve(req.question, embedder, reranker, scopes, tenant,
                     sparse_embedder=sparse)
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
-    text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history)
+    text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history, provider=req.provider)
     _audit("ask", tenant, _uid, scopes, req.question, len(hits))
     return {"answer": text, "engine": engine,
             "scopes_used": list(scopes),
@@ -488,7 +491,7 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
                            for r in rows]
         chunks = [{"title": f"{f['title']} (updated {f['updated'][:10]})", "text": f["text"]}
                   for f in tr["final"]]
-        text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history)
+        text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history, provider=req.provider)
         tr["answer"] = text
         tr["engine"] = engine
         tr["scopes_asked"] = scopes
@@ -516,7 +519,7 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
         if note_scope.get(f.get("note_id")):
             f["scope"] = note_scope[f["note_id"]]
     chunks = [{"title": f["title"], "text": f["text"]} for f in tr["final"]]
-    text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history)
+    text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history, provider=req.provider)
     tr["answer"] = text
     tr["engine"] = engine
     tr["scopes_asked"] = scopes
@@ -1224,6 +1227,8 @@ class WizardAskReq(BaseModel):
     question: str
     tenant: str
     model: Optional[str] = None
+    # 'codex' | 'claude' | 'byok' — same provider routing as the main chat.
+    provider: Optional[str] = None
 
 
 @app.post("/sections/{section_id}/promote")
@@ -1270,7 +1275,7 @@ def wizards_personal_ask(wizard_id: str, req: WizardAskReq, embedder=Depends(get
                                     limit=32, sparse_embedder=sparse)
                 if h.note_id in member_ids][:8]
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
-    text, engine = llm.answer(req.question, chunks, model=req.model)
+    text, engine = llm.answer(req.question, chunks, model=req.model, provider=req.provider)
     citations = [{"note_id": h.note_id, "heading_path": h.heading_path, "why": h.why} for h in hits]
     sections.append_wizard_chat(_conn, req.tenant, wizard_id, "user", req.question)
     sections.append_wizard_chat(_conn, req.tenant, wizard_id, "assistant", text, sources=citations)

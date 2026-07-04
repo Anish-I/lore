@@ -27,16 +27,20 @@ def _history_block(history) -> str:
     return "Previous conversation (for follow-up context only):\n" + "\n".join(lines) + "\n\n"
 
 
-def ollama_answer(question, chunks, model=DEFAULT_MODEL, timeout=90, history=None) -> str:
-    """chunks: list of dicts with 'title' and 'text'. Returns grounded NL answer."""
+def _grounded_prompt(question, chunks, history=None) -> str:
     context = "\n\n".join(f"[{c['title']}]\n{c['text']}" for c in chunks)
-    prompt = (
+    return (
         "You are a company knowledge assistant. Using ONLY the context below, answer the "
         "question in 2-4 sentences. Cite the note titles you used in square brackets. "
         "If the context does not contain the answer, say so plainly.\n\n"
         f"{_history_block(history)}"
         f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"
     )
+
+
+def ollama_answer(question, chunks, model=DEFAULT_MODEL, timeout=90, history=None) -> str:
+    """chunks: list of dicts with 'title' and 'text'. Returns grounded NL answer."""
+    prompt = _grounded_prompt(question, chunks, history)
     body = json.dumps({"model": model, "prompt": prompt, "stream": False,
                        "options": {"temperature": 0.2}}).encode()
     req = urllib.request.Request(f"{OLLAMA_BASE}/api/generate", data=body,
@@ -50,14 +54,24 @@ def extractive_answer(question, chunks) -> str:
     lines = [f"- {c['text'].strip()[:200]}  [{c['title']}]" for c in chunks[:4]]
     return "Based on your library:\n" + "\n".join(lines)
 
-def answer(question, chunks, model=None, history=None):
-    """Try the local LLM (optionally a caller-chosen model); fall back to extractive.
-    history: optional [{role:'user'|'assistant', text}, ...] prior turns (last 6 used)
-    so follow-up questions resolve against the running conversation.
+def answer(question, chunks, model=None, history=None, provider=None):
+    """Answer through the user's chosen provider — their Claude/Codex SUBSCRIPTION
+    (CLI OAuth, no API key) or their own key (byok) — falling back to local Ollama,
+    then extractive. history: optional prior turns (last 6 used) for follow-ups.
     Returns (text, engine)."""
     mdl = model or DEFAULT_MODEL
     if os.environ.get("VAULT_FAKE") == "1":
         return extractive_answer(question, chunks), "extractive(test)"
+    if provider in ("codex", "claude", "byok") and chunks:
+        try:
+            from .llm_providers import resolve_llm_call
+            call = resolve_llm_call({"llmProvider": provider})
+            text = (call(_grounded_prompt(question, chunks, history)) or "").strip()
+            if text:
+                return text, provider
+        except Exception as e:
+            # fall through to local/extractive — never a dead end
+            _ = e
     if chunks and is_ollama_up():
         try:
             return ollama_answer(question, chunks, model=mdl, history=history), f"ollama:{mdl}"

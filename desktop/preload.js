@@ -296,11 +296,11 @@ contextBridge.exposeInMainWorld('lore', {
   },
   // history: optional prior turns [{role, text}] — the backend uses the last 6
   // so follow-up questions resolve against the running conversation.
-  ask: async (question, scopes, tenant, model, history) => {
+  ask: async (question, scopes, tenant, model, history, provider) => {
     const r = await fetch(`${BACKEND}/trace`, {
       method: 'POST',
       headers: authH({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ question, principal_scopes: scopes, tenant_id: tenant, model: model || null, history: history || null }),
+      body: JSON.stringify({ question, principal_scopes: scopes, tenant_id: tenant, model: model || null, history: history || null, provider: provider || null }),
     });
     if (!r.ok) throw new Error('backend ' + r.status);
     return r.json();

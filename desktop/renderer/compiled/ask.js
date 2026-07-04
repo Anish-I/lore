@@ -160,16 +160,28 @@ function AskHistoryDrawer({ threads, onResume, onDelete, onClose }) {
 }
 
 function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource, sourceOptions, identityReady, onSetup,
-  threads, onLoadThreads, onResumeThread, onDeleteThread, onNewChat, onCiteScope }) {
+  threads, onLoadThreads, onResumeThread, onDeleteThread, onNewChat, onCiteScope, providers, defaultProvider }) {
   const [draft, setDraft] = React.useState('');
-  const [model, setModel] = React.useState('gemma4:e4b (local)');
+  // Answering engine = the user's own subscriptions/key (same providers as
+  // Settings -> AI provider), defaulting to their Settings choice. 'local' is
+  // the on-device fallback (Ollama) and always offered.
+  const AK_PROVIDERS = [
+  { id: 'claude', label: 'Claude (your subscription)' },
+  { id: 'codex', label: 'Codex (your subscription)' },
+  { id: 'byok', label: 'Your API key' },
+  { id: 'local', label: 'On-device (fallback)' }];
+
+  const available = AK_PROVIDERS.filter((p) => p.id === 'local' || providers && providers[p.id]);
+  const [model, setModel] = React.useState(null); // provider id; null until defaulted
+  const provider = model || (available.some((p) => p.id === defaultProvider) ? defaultProvider : available[0] && available[0].id);
+  const providerLabel = (AK_PROVIDERS.find((p) => p.id === provider) || {}).label || provider || 'auto';
   const [showCites, setShowCites] = React.useState(true);
   const [cog, setCog] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const akSel = { width: '100%', marginTop: 4, padding: '5px 7px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-strong)', fontFamily: 'var(--font-mono)', fontSize: 11.5, outline: 'none' };
   const scrollRef = React.useRef(null);
   React.useEffect(() => {if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;}, [messages, asking]);
-  const send = (q) => {const v = (q ?? draft).trim();if (!v || asking || !identityReady) return;setDraft('');onSend(v, model.split(' ')[0]);};
+  const send = (q) => {const v = (q ?? draft).trim();if (!v || asking || !identityReady) return;setDraft('');onSend(v, null, provider === 'local' ? null : provider);};
   const openHistory = () => {
     setHistoryOpen((o) => {
       const next = !o;
@@ -259,7 +271,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     ), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, position: 'relative' } }, /*#__PURE__*/
     React.createElement("button", { onClick: () => setCog((c) => !c), title: "Model, source & citations", style: { display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 9px', border: '1px solid var(--border)', borderRadius: 'var(--radius-full)', background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5 } }, /*#__PURE__*/
-    React.createElement(AkIcon, { name: "sliders-horizontal", size: 12 }), model.split(' ')[0], " \xB7 ", source || 'all', showCites ? ' · cites' : ''
+    React.createElement(AkIcon, { name: "sliders-horizontal", size: 12 }), providerLabel, " \xB7 ", source || 'all', showCites ? ' · cites' : ''
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
     React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' } }, /*#__PURE__*/React.createElement(AkKbd, null, "\u21B5"), " send"), /*#__PURE__*/
@@ -272,8 +284,8 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     cog && /*#__PURE__*/
     React.createElement("div", { style: { position: 'absolute', bottom: 32, left: 0, width: 232, padding: 11, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10 } }, /*#__PURE__*/
     React.createElement("label", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' } }, "Model", /*#__PURE__*/
-    React.createElement("select", { value: model, onChange: (e) => setModel(e.target.value), style: akSel },
-    ['gemma4:e4b (local)', 'llama4-maverick (local)', 'qwen2.5 (local)'].map((m) => /*#__PURE__*/React.createElement("option", { key: m, value: m }, m))
+    React.createElement("select", { value: provider, onChange: (e) => setModel(e.target.value), style: akSel },
+    available.map((m) => /*#__PURE__*/React.createElement("option", { key: m.id, value: m.id }, m.label))
     )
     ), /*#__PURE__*/
     React.createElement("label", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' } }, "Source", /*#__PURE__*/

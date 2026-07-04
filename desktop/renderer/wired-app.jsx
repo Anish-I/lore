@@ -327,6 +327,13 @@ function App() {
   const [appConfig, setAppConfig] = React.useState(null);
   const [personaIdx, setPersonaIdx] = React.useState(0);
   const [backendOk, setBackendOk] = React.useState(true);
+  const [llmProviders, setLlmProviders] = React.useState(null); // {codex, claude, byok} for the Ask engine picker
+  React.useEffect(() => {
+    if (!backendOk) return;
+    let live = true;
+    window.lore?.enrich?.providers?.().then((p) => { if (live && p && !p.error) setLlmProviders(p); }).catch(() => {});
+    return () => { live = false; };
+  }, [backendOk]);
   const [showOnboarding, setShowOnboarding] = React.useState(false);
   const [showProgress, setShowProgress] = React.useState(false);
   const [progressState, setProgressState] = React.useState({ phase: 'walk', done: 0, total: 0, current: '', errors: 0 });
@@ -1050,7 +1057,7 @@ function App() {
     }
   }, [graphData, treeData, reloadTree]);
 
-  const ask = async (q, model) => {
+  const ask = async (q, model, provider) => {
     if (asking) return;
     if (view !== 'home') setAskOpen(true);
     setAsking(true);
@@ -1068,7 +1075,7 @@ function App() {
     }
     persistTurn({ role: 'user', text: q });
     let trace;
-    try { trace = await window.lore.ask(q, scopes, tenant, model, history); }
+    try { trace = await window.lore.ask(q, scopes, tenant, model, history, provider); }
     catch (e) {
       setMessages((m) => { const c = m.slice(); c[c.length - 1] = { role: 'answer', shown: [{ x: 'The memory engine isn’t reachable yet (:8099) — try again in a moment.' }], streaming: false }; return c; });
       setAsking(false); return;
@@ -1173,7 +1180,7 @@ function App() {
   ].slice(0, 4) : suggestions;
   const askSuggestions = activeBucket ? bucketQuestions(activeBucket) : (identityReady ? personalPrompts : suggestions);
   const askPanel = <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={() => setAskOpen(false)} source={askSource} onSource={setAskSource} sourceOptions={askSourceOptions} identityReady={identityReady} onSetup={() => { setView('settings'); setShowOnboarding(true); }}
-    threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={newAskChat} onCiteScope={pushCitationScope} />;
+    threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={newAskChat} onCiteScope={pushCitationScope} providers={llmProviders} defaultProvider={(appConfig && appConfig.llmProvider) || 'claude'} />;
 
   const EmptyEditor = () => {
     const [draftQ, setDraftQ] = React.useState('');
@@ -1259,7 +1266,7 @@ function App() {
                   chat={
                     <div style={{ '--ask-width': '100%', display: 'flex', minHeight: messages.length ? '56vh' : 300, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', background: 'var(--surface-panel)' }}>
                       <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={null} source={askSource} onSource={setAskSource} sourceOptions={askSourceOptions} identityReady={identityReady} onSetup={() => { setView('settings'); setShowOnboarding(true); }}
-                        threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={newAskChat} onCiteScope={pushCitationScope} />
+                        threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={newAskChat} onCiteScope={pushCitationScope} providers={llmProviders} defaultProvider={(appConfig && appConfig.llmProvider) || 'claude'} />
                     </div>
                   }
                   onAsk={(q) => ask(q)} onSetup={() => setShowOnboarding(true)} />
