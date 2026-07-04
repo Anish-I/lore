@@ -107,6 +107,45 @@ contextBridge.exposeInMainWorld('lore', {
   // --- stats (live counts for graph/tree refresh polling) ---
   stats: (tenant) => ipcRenderer.invoke('stats:get', tenant),
 
+  // --- digest (Home tab: notes grouped by day × section + since-yesterday count) ---
+  // digest(tenant, days) → {rows:[{day, section, count, topTitles}], sinceYesterday, total}
+  digest: (tenant, days) => ipcRenderer.invoke('digest:get', { tenant, days }),
+
+  // --- ask chat history (persisted threads for the main chat) ---
+  // append(tenant, turn) → {ok, id}; turn = {thread_id, role, text, sources?, source?}
+  // thread(tenant, threadId) → {messages:[...]} oldest first
+  // recent(tenant, limit?)   → {messages:[...]} across threads (suggestPrompts mining)
+  // threads(tenant)          → {threads:[{thread_id, title, count, updated_at}]}
+  // remove(tenant, threadId) → {ok, deleted}
+  askHistory: {
+    append: async (tenant, turn) => {
+      const r = await fetch(`${BACKEND}/ask-history`, {
+        method: 'POST', headers: authH({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ tenant, ...turn }),
+      });
+      return r.json();
+    },
+    thread: async (tenant, threadId) => {
+      const r = await fetch(`${BACKEND}/ask-history?tenant=${encodeURIComponent(tenant)}&thread_id=${encodeURIComponent(threadId)}`, { headers: authH() });
+      return r.json();
+    },
+    recent: async (tenant, limit) => {
+      const r = await fetch(`${BACKEND}/ask-history?tenant=${encodeURIComponent(tenant)}&limit=${limit || 200}`, { headers: authH() });
+      return r.json();
+    },
+    threads: async (tenant) => {
+      const r = await fetch(`${BACKEND}/ask-history/threads?tenant=${encodeURIComponent(tenant)}`, { headers: authH() });
+      return r.json();
+    },
+    remove: async (tenant, threadId) => {
+      const r = await fetch(`${BACKEND}/ask-history/delete`, {
+        method: 'POST', headers: authH({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ tenant, thread_id: threadId }),
+      });
+      return r.json();
+    },
+  },
+
   // --- graph ---
   // Fetches {nodes, edges} from the backend via main (avoids CORS).
   // opts: {tenant, scopes} where scopes may be an array or comma-separated string.
@@ -249,11 +288,13 @@ contextBridge.exposeInMainWorld('lore', {
     const r = await fetch(`${BACKEND}/presets`, { headers: authH() });
     return r.json();
   },
-  ask: async (question, scopes, tenant, model) => {
+  // history: optional prior turns [{role, text}] — the backend uses the last 6
+  // so follow-up questions resolve against the running conversation.
+  ask: async (question, scopes, tenant, model, history) => {
     const r = await fetch(`${BACKEND}/trace`, {
       method: 'POST',
       headers: authH({ 'content-type': 'application/json' }),
-      body: JSON.stringify({ question, principal_scopes: scopes, tenant_id: tenant, model: model || null }),
+      body: JSON.stringify({ question, principal_scopes: scopes, tenant_id: tenant, model: model || null, history: history || null }),
     });
     if (!r.ok) throw new Error('backend ' + r.status);
     return r.json();

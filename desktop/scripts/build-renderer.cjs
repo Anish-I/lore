@@ -35,6 +35,14 @@ function main() {
     if (f.endsWith('.js')) fs.unlinkSync(path.join(OUT_DIR, f));
   }
 
+  // Shared plain-JS modules that live outside renderer/ (single source of truth,
+  // vitest imports them from lib/): copied into compiled/ so index.src.html can
+  // reference them with a renderer-local path under the strict 'self' CSP.
+  const SHARED_LIB_FILES = ['suggest.js'];
+  for (const f of SHARED_LIB_FILES) {
+    fs.copyFileSync(path.join(__dirname, '..', 'lib', f), path.join(OUT_DIR, f));
+  }
+
   let html = fs.readFileSync(SRC_HTML, 'utf8');
   const compiled = [];
 
