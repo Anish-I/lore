@@ -247,6 +247,17 @@ create table if not exists personal_wizard_chats(
   created_at timestamptz default now(),
   constraint pw_chat_role_check check (role in ('user','assistant')));
 create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
+create table if not exists ask_history(
+  id text primary key,
+  tenant_id text not null,
+  thread_id text not null,
+  role text not null,
+  text text,
+  sources text,
+  source text,
+  created_at timestamptz default now(),
+  constraint ask_history_role_check check (role in ('user','assistant')));
+create index if not exists ask_history_thread on ask_history(tenant_id, thread_id);
 create table if not exists folded_paths(
   tenant_id text not null,
   path text not null,
@@ -264,7 +275,7 @@ create table if not exists query_log(
 create index if not exists query_log_ts on query_log(tenant_id, ts desc);
 """
 
-# PG migration note: personal_wizards / personal_wizard_chats are NEW tables, so the
+# PG migration note: personal_wizards / personal_wizard_chats / ask_history are NEW tables, so the
 # CREATE TABLE IF NOT EXISTS in SCHEMA above IS the migration (bootstrap step 3) —
 # same pattern section_proposals used; no ALTER/DO$$ entry needed.
 #
@@ -411,6 +422,17 @@ create table if not exists personal_wizard_chats(
   created_at timestamp default current_timestamp,
   constraint pw_chat_role_check check (role in ('user','assistant')));
 create index if not exists pw_chats_wizard on personal_wizard_chats(wizard_id, tenant_id);
+create table if not exists ask_history(
+  id text primary key,
+  tenant_id text not null,
+  thread_id text not null,
+  role text not null,
+  text text,
+  sources text,
+  source text,
+  created_at timestamp default current_timestamp,
+  constraint ask_history_role_check check (role in ('user','assistant')));
+create index if not exists ask_history_thread on ask_history(tenant_id, thread_id);
 create table if not exists folded_paths(
   tenant_id text not null,
   path text not null,

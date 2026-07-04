@@ -1,4 +1,4 @@
-import datetime, hashlib, os
+import datetime, hashlib, json, os, time, uuid
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse
@@ -292,6 +292,10 @@ class AskReq(BaseModel):
     principal_scopes: list[str]
     tenant_id: str
     model: Optional[str] = None
+    # Optional prior turns [{role:'user'|'assistant', text}, ...] so follow-up
+    # questions ("what about the second one?") resolve against the running chat.
+    # Only the last 6 turns are used (see llm._history_block).
+    history: Optional[list] = None
 
 class IngestReq(BaseModel):
     source_id: str
@@ -385,6 +389,40 @@ def ingest(req: IngestReq, authorization: Optional[str] = Header(default=None)):
     )
     return {"ok": True, "note_id": req.source_id, "chunks": n}
 
+def _note_meta(note_ids):
+    """{note_id: {title, scope}} for a set of note ids — the per-citation source
+    labels ("PairStrategy · Private") need the NOTE's title + scope, which chunk
+    payloads don't reliably carry."""
+    ids = [n for n in dict.fromkeys(note_ids) if n]
+    if not ids:
+        return {}
+    frag, sparams = in_clause("id", ids)
+    rows = _conn.execute(f"select id, title, scope_id from notes where {frag}", sparams).fetchall()
+    return {r[0]: {"title": r[1], "scope": r[2]} for r in rows}
+
+
+def _citations_for(hits_or_rows):
+    """Build citation dicts ({note_id, title, heading_path, scope, why}) from either
+    RetrievedChunk objects or trace `final` row dicts, enriching each with the
+    note's title + scope so every citation says where it came from."""
+    def field(h, name):
+        return h.get(name) if isinstance(h, dict) else getattr(h, name, None)
+    metas = _note_meta([field(h, "note_id") for h in hits_or_rows])
+    out = []
+    for h in hits_or_rows:
+        nid = field(h, "note_id")
+        heading = field(h, "heading_path") or field(h, "title") or ""
+        m = metas.get(nid) or {}
+        out.append({
+            "note_id": nid,
+            "title": m.get("title") or str(heading).split(" > ")[0],
+            "heading_path": heading,
+            "scope": m.get("scope") or field(h, "scope"),
+            "why": field(h, "why"),
+        })
+    return out
+
+
 @app.post("/ask")
 def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
         sparse=Depends(get_sparse_embedder),
@@ -393,27 +431,54 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
     hits = retrieve(req.question, embedder, reranker, scopes, tenant,
                     sparse_embedder=sparse)
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
-    text, engine = llm.answer(req.question, chunks, model=req.model)
+    text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history)
     _audit("ask", tenant, _uid, scopes, req.question, len(hits))
     return {"answer": text, "engine": engine,
             "scopes_used": list(scopes),
-            "citations": [{"note_id": h.note_id, "heading_path": h.heading_path, "why": h.why} for h in hits]}
+            "citations": _citations_for(hits)}
 
 @app.post("/trace")
 def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
           sparse=Depends(get_sparse_embedder),
           authorization: Optional[str] = Header(default=None)):
-    """Full pipeline trace for the visualizer: per-lane candidates, fusion, rerank, answer."""
+    """Full pipeline trace for the visualizer: per-lane candidates, fusion, rerank, answer.
+
+    Accepts optional `history` (prior chat turns) for follow-up questions, and returns
+    `citations` where every entry carries the source note's title + scope — the chat's
+    "PairStrategy · Private / roadmap · Team" per-citation labels.
+
+    Without a sparse model (VAULT_FAKE=1 / models unavailable) the per-lane trace is
+    skipped but the endpoint still answers via plain retrieve() — same response shape
+    with a reduced trace ("fallback" flag), never a dead end for the desktop chat.
+    """
     _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
     if sparse is None:
-        return {"error": "trace requires real models (unset VAULT_FAKE)"}
-    _, tr = retrieve_traced(req.question, embedder, reranker, sparse,
-                            scopes, tenant)
+        hits = retrieve(req.question, embedder, reranker, scopes, tenant,
+                        sparse_embedder=None)
+        tr = {
+            "query": req.question,
+            "classification": "hybrid",
+            "fallback": "no sparse model — per-lane trace skipped",
+            "final": [{"title": h.heading_path, "scope": None,
+                       "final": round(h.score, 3), "text": h.text[:240],
+                       "note_id": h.note_id} for h in hits],
+        }
+    else:
+        _, tr = retrieve_traced(req.question, embedder, reranker, sparse,
+                                scopes, tenant)
+    tr["citations"] = _citations_for(tr["final"])
+    # Stamp the NOTE-level scope back onto the final rows so the evidence trail
+    # shows the same source label as the citation chips.
+    note_scope = {c["note_id"]: c["scope"] for c in tr["citations"]}
+    for f in tr["final"]:
+        if note_scope.get(f.get("note_id")):
+            f["scope"] = note_scope[f["note_id"]]
     chunks = [{"title": f["title"], "text": f["text"]} for f in tr["final"]]
-    text, engine = llm.answer(req.question, chunks, model=req.model)
+    text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history)
     tr["answer"] = text
     tr["engine"] = engine
     tr["scopes_asked"] = scopes
+    _audit("trace", tenant, _uid, scopes, req.question, len(tr["final"]))
     return tr
 
 @app.get("/presets")
@@ -592,6 +657,74 @@ def stats(tenant: Optional[str] = None):
         "select count(*) from folded_paths where tenant_id=%s", (tenant,)
     ).fetchone()[0]
     return {"notes": notes, "chunks": chunks, "edges": edges, "foldedPaths": folded}
+
+@app.get("/digest")
+def digest(tenant: Optional[str] = None, days: int = 7):
+    """The Home tab's this-week digest: notes grouped by day × section.
+
+    Section = the note's parent folder name (from source_path); DB-only notes
+    (captures, ingests) group under "Library". No LLM — the summary line is the
+    top note titles, deterministic and cheap.
+
+    Query params:
+        tenant: required.
+        days:   window size, default 7 (clamped 1..31).
+
+    Response:
+        {
+          "days": n,
+          "rows": [{"day": "YYYY-MM-DD", "section": str, "count": int,
+                    "topTitles": [up to 3 titles, newest first]}, ...],
+          "sinceYesterday": int,   # notes CREATED in the last 24h
+          "total": int             # notes in the window
+        }
+    Rows are ordered newest day first, then by count descending.
+    """
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    days = max(1, min(days, 31))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cutoff = now - datetime.timedelta(days=days)
+    yesterday = now - datetime.timedelta(days=1)
+
+    def _aware(ts):
+        if ts is None:
+            return None
+        return ts.replace(tzinfo=datetime.timezone.utc) if ts.tzinfo is None else ts
+
+    rows = _conn.execute(
+        "select title, source_path, created_at, updated_at from notes where tenant_id=%s",
+        (tenant,)).fetchall()
+
+    groups = {}
+    since_yesterday = 0
+    total = 0
+    for title, source_path, created_at, updated_at in rows:
+        created = _aware(created_at)
+        updated = _aware(updated_at)
+        ts = created or updated
+        if created and created >= yesterday:
+            since_yesterday += 1
+        if ts is None or ts < cutoff:
+            continue
+        total += 1
+        if source_path:
+            parts = [p for p in str(source_path).replace("\\", "/").split("/") if p]
+            section = parts[-2] if len(parts) >= 2 else "Library"
+        else:
+            section = "Library"
+        key = (ts.date().isoformat(), section)
+        g = groups.setdefault(key, {"count": 0, "titles": []})
+        g["count"] += 1
+        g["titles"].append((ts, title or "Untitled"))
+
+    out = []
+    for (day, section), g in groups.items():
+        top = [t for _ts, t in sorted(g["titles"], key=lambda x: x[0], reverse=True)[:3]]
+        out.append({"day": day, "section": section, "count": g["count"], "topTitles": top})
+    out.sort(key=lambda r: (r["day"], r["count"]), reverse=True)
+    return {"days": days, "rows": out, "sinceYesterday": since_yesterday, "total": total}
+
 
 @app.get("/config/retrieval")
 def config_retrieval(tenant: Optional[str] = None):
@@ -1097,6 +1230,121 @@ def wizards_personal_chat(wizard_id: str, tenant: Optional[str] = None):
         return {"messages": sections.wizard_chat(_conn, tenant, wizard_id)}
     except sections.SectionError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+# --- Ask chat history (the main chat's persisted threads) ----------------------
+# Mirror of personal_wizard_chats plus: thread_id (one active thread at a time in
+# the UI; the History drawer lists/resumes/deletes past threads) and `source`
+# (which context the question was asked from — private/team/company).
+
+class AskHistoryAppendReq(BaseModel):
+    tenant: str
+    thread_id: str
+    role: str                       # 'user' | 'assistant'
+    text: str
+    sources: Optional[list] = None  # citations for assistant turns
+    source: Optional[str] = None    # ask context: private | team | company
+
+
+class AskHistoryDeleteReq(BaseModel):
+    tenant: str
+    thread_id: str
+
+
+def _ask_history_row(r):
+    cid, thread_id, role, text, sources, source, created = r
+    try:
+        srcs = json.loads(sources) if sources else None
+    except Exception:
+        srcs = None
+    return {"id": cid, "thread_id": thread_id, "role": role, "text": text,
+            "sources": srcs, "source": source,
+            "created_at": created.isoformat() if isinstance(created, datetime.datetime) else created}
+
+
+@app.post("/ask-history")
+def ask_history_append(req: AskHistoryAppendReq):
+    """Append one chat turn. Same id scheme as the wizard chats (nanosecond
+    timestamp + random suffix) so (created_at, id) ordering stays stable even
+    when the user turn and the assistant turn land in the same second."""
+    if req.role not in ("user", "assistant"):
+        raise HTTPException(status_code=422, detail="role must be 'user' or 'assistant'")
+    if not req.thread_id:
+        raise HTTPException(status_code=422, detail="thread_id is required")
+    cid = f"{time.time_ns():020d}-{uuid.uuid4().hex[:8]}"
+    _conn.execute(
+        "insert into ask_history(id, tenant_id, thread_id, role, text, sources, source) "
+        "values(%s,%s,%s,%s,%s,%s,%s)",
+        (cid, req.tenant, req.thread_id, req.role, req.text,
+         json.dumps(req.sources) if req.sources else None, req.source))
+    return {"ok": True, "id": cid}
+
+
+@app.get("/ask-history")
+def ask_history_list(tenant: Optional[str] = None, thread_id: Optional[str] = None,
+                     limit: int = 200):
+    """Messages for one thread (oldest first) — or, with no thread_id, the most
+    recent messages across all threads (still oldest first; feeds suggestPrompts'
+    repeat-mining). Returns {messages:[{id, thread_id, role, text, sources, source, created_at}]}"""
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    n = max(1, min(limit, 500))
+    if thread_id:
+        rows = _conn.execute(
+            "select id, thread_id, role, text, sources, source, created_at from ask_history "
+            "where tenant_id=%s and thread_id=%s order by created_at, id limit %s",
+            (tenant, thread_id, n)).fetchall()
+    else:
+        rows = _conn.execute(
+            "select id, thread_id, role, text, sources, source, created_at from ask_history "
+            "where tenant_id=%s order by created_at desc, id desc limit %s",
+            (tenant, n)).fetchall()
+        rows = list(reversed(rows))
+    return {"messages": [_ask_history_row(r) for r in rows]}
+
+
+@app.get("/ask-history/threads")
+def ask_history_threads(tenant: Optional[str] = None):
+    """Thread index for the History drawer, newest first.
+    Returns {threads:[{thread_id, title (first user question), count, updated_at}]}"""
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    rows = _conn.execute(
+        "select id, thread_id, role, text, created_at from ask_history "
+        "where tenant_id=%s order by created_at, id", (tenant,)).fetchall()
+    threads = {}
+    order = []
+    last_id = {}
+    for cid, thread_id, role, text, created in rows:
+        if thread_id not in threads:
+            threads[thread_id] = {"thread_id": thread_id, "title": None, "count": 0, "updated_at": None}
+            order.append(thread_id)
+        t = threads[thread_id]
+        t["count"] += 1
+        if t["title"] is None and role == "user" and text:
+            t["title"] = text
+        t["updated_at"] = created.isoformat() if isinstance(created, datetime.datetime) else created
+        last_id[thread_id] = cid
+    out = [threads[tid] for tid in order]
+    for t in out:
+        t["title"] = t["title"] or "(untitled)"
+    # Recency sort: ids embed a nanosecond timestamp, so the last id per thread is
+    # a stable tiebreak when created_at only has second resolution.
+    out.sort(key=lambda t: last_id.get(t["thread_id"], ""), reverse=True)
+    return {"threads": out}
+
+
+@app.post("/ask-history/delete")
+def ask_history_delete(req: AskHistoryDeleteReq):
+    """Delete one thread (History drawer's delete action). Returns {ok, deleted}."""
+    if not req.tenant or not req.thread_id:
+        raise HTTPException(status_code=422, detail="tenant and thread_id are required")
+    rows = _conn.execute(
+        "select count(*) from ask_history where tenant_id=%s and thread_id=%s",
+        (req.tenant, req.thread_id)).fetchone()
+    _conn.execute("delete from ask_history where tenant_id=%s and thread_id=%s",
+                  (req.tenant, req.thread_id))
+    return {"ok": True, "deleted": rows[0] if rows else 0}
 
 
 @app.get("/tags")
