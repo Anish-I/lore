@@ -793,6 +793,19 @@ function App() {
     return unsub;
   }, [treeData, openNote, reloadTree, closeNotesWhere]);
 
+  // Backend liveness: the boot effect below checks ONCE, usually before the
+  // engine finishes starting (~10s) — which left the status stuck on "starting"
+  // forever. Poll fast (3s) until it's up, then slow (30s) to notice a crash.
+  React.useEffect(() => {
+    let live = true;
+    const check = async () => {
+      try { await window.lore.presets(); if (live) setBackendOk(true); }
+      catch { if (live) setBackendOk(false); }
+    };
+    const id = setInterval(check, backendOk ? 30000 : 3000);
+    return () => { live = false; clearInterval(id); };
+  }, [backendOk]);
+
   React.useEffect(() => {
     (async () => {
       try { const p = await window.lore.presets(); setPresets(p); setBackendOk(true); } catch { setBackendOk(false); }
