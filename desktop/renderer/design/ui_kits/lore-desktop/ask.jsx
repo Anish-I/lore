@@ -10,9 +10,31 @@ if (typeof document !== 'undefined' && !document.getElementById('ak-md-style')) 
   s.textContent = `.ak-md{font-size:14px;line-height:1.62;color:var(--text-body)}.ak-md>:first-child{margin-top:0}.ak-md>:last-child{margin-bottom:0}.ak-md p{margin:0 0 9px}.ak-md h1,.ak-md h2,.ak-md h3,.ak-md h4{font-family:var(--font-serif);color:var(--text-strong);font-weight:600;line-height:1.3;margin:14px 0 6px}.ak-md h1{font-size:18px}.ak-md h2{font-size:16px}.ak-md h3{font-size:14.5px}.ak-md ul,.ak-md ol{margin:4px 0 9px;padding-left:20px}.ak-md li{margin:3px 0}.ak-md li>ul,.ak-md li>ol{margin:3px 0}.ak-md code{background:var(--surface-inset);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-family:var(--font-mono);font-size:12.5px}.ak-md pre{background:var(--surface-inset);border:1px solid var(--border);border-radius:var(--radius-md);padding:11px 13px;overflow-x:auto;margin:9px 0}.ak-md pre code{background:none;border:none;padding:0;font-size:12.5px}.ak-md strong{color:var(--text-strong);font-weight:600}.ak-md a{color:var(--brand-fg);text-decoration:none}.ak-md blockquote{border-left:3px solid var(--border-strong);margin:9px 0;padding:2px 0 2px 13px;color:var(--text-muted)}.ak-md hr{border:none;border-top:1px solid var(--divider);margin:12px 0}.ak-md table{border-collapse:collapse;margin:9px 0;font-size:13px}.ak-md th,.ak-md td{border:1px solid var(--border);padding:5px 9px;text-align:left}`;
   document.head.appendChild(s);
 }
-function AkMarkdown({ text }) {
+function akEscapeHtml(t) {
+  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+// refs: [{title, preview}] — every "[Title]" the model cited becomes a marked
+// span whose hover shows what that note actually says (the retrieved passage).
+function AkMarkdown({ text, refs }) {
   if (!akMd) return <span style={{ whiteSpace: 'pre-wrap' }}>{text}</span>;
-  return <div className="ak-md" dangerouslySetInnerHTML={{ __html: akMd.render(String(text || '')) }} />;
+  let html = akMd.render(String(text || ''));
+  (refs || []).forEach((r) => {
+    if (!r || !r.title) return;
+    const esc = akEscapeHtml(r.title).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const preview = akEscapeHtml((r.preview || '').replace(/\s+/g, ' ').trim());
+    if (!preview) return;
+    html = html.replace(new RegExp('\\[' + esc + '\\]', 'g'),
+      `<span class="ak-ref" title="${preview}">${akEscapeHtml(r.title)}</span>`);
+  });
+  return <div className="ak-md" dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
+// hover-refs style: accent underline, native-title preview on hover
+if (typeof document !== 'undefined' && !document.getElementById('ak-ref-style')) {
+  const st = document.createElement('style');
+  st.id = 'ak-ref-style';
+  st.textContent = '.ak-ref{color:var(--brand-fg);border-bottom:1px dotted var(--brand-fg);cursor:help;}';
+  document.head.appendChild(st);
 }
 
 const akS = {
@@ -33,7 +55,8 @@ function AnswerRuns({ runs, onCite }) {
 }
 
 function Evidence({ rows }) {
-  const [open, setOpen] = React.useState(true);
+  const [open, setOpen] = React.useState(false); // consolidated: opt-in detail
+  const [showAll, setShowAll] = React.useState(false);
   return (
     <div style={{ margin: '6px 0 4px 36px', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflow: 'hidden', background: 'var(--surface-base)' }}>
       <button onClick={() => setOpen(!open)} style={{
@@ -45,7 +68,16 @@ function Evidence({ rows }) {
         <span>why retrieved · {rows.length} chunks</span>
         <AkIcon name="chevron-down" size={13} style={{ marginLeft: 'auto', transform: open ? 'none' : 'rotate(-90deg)', transition: 'transform var(--dur-fast) var(--ease-out)' }} />
       </button>
-      {open && <div style={{ padding: '2px 4px 6px' }}>{rows.map((r) => <EvidenceRow key={r.index} {...r} onOpen={() => {}} />)}</div>}
+      {open && (
+        <div style={{ padding: '2px 4px 6px' }}>
+          {(showAll ? rows : rows.slice(0, 4)).map((r) => <EvidenceRow key={r.index} {...r} onOpen={() => {}} />)}
+          {rows.length > 4 && (
+            <button onClick={() => setShowAll((v) => !v)} style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5, padding: '4px 8px' }}>
+              {showAll ? 'show less' : `show all ${rows.length}`}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -68,6 +100,7 @@ function AkCiteDot(scope) {
 }
 function CitationSources({ citations, onCiteScope }) {
   const list = citations || [];
+  const [expanded, setExpanded] = React.useState(false);
   if (!list.length) return null;
   const seen = new Set();
   const unique = list.filter((c) => {
@@ -75,11 +108,13 @@ function CitationSources({ citations, onCiteScope }) {
     seen.add(c.note_id);
     return true;
   });
+  const visible = expanded ? unique : unique.slice(0, 4);
+  const hidden = unique.length - visible.length;
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, margin: '4px 0 4px 36px' }}>
-      {unique.map((c) => (
+      {visible.map((c) => (
         <span key={c.note_id}
-          title={`${c.heading_path || c.title}${onCiteScope && AkCiteScopeLabel(c.scope) === 'Private' ? ' — right-click to push to your team' : ''}`}
+          title={`${c.preview ? String(c.preview).replace(/\s+/g, ' ').trim() : (c.heading_path || c.title)}${onCiteScope && AkCiteScopeLabel(c.scope) === 'Private' ? '\n\n(right-click to push to your team)' : ''}`}
           onContextMenu={(e) => {
             e.preventDefault();
             if (!onCiteScope) return;
@@ -92,6 +127,12 @@ function CitationSources({ citations, onCiteScope }) {
           <span style={{ color: 'var(--text-faint)', flexShrink: 0 }}>· {AkCiteScopeLabel(c.scope)}</span>
         </span>
       ))}
+      {hidden > 0 && (
+        <button onClick={() => setExpanded(true)} style={{ padding: '2px 10px', border: '1px dashed var(--border)', borderRadius: 'var(--radius-full)', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>+{hidden} more</button>
+      )}
+      {expanded && unique.length > 4 && (
+        <button onClick={() => setExpanded(false)} style={{ padding: '2px 10px', border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10.5 }}>less</button>
+      )}
     </div>
   );
 }
@@ -250,7 +291,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
                 <AskMessage role="answer" sources={m.streaming ? undefined : m.sources} scopes={m.streaming ? undefined : m.scopes} streaming={m.streaming}>
                   {m.streaming
                     ? <AnswerRuns runs={m.shown || m.runs} />
-                    : <AkMarkdown text={m.text || (m.shown || m.runs || []).map((r) => r.x).join('')} />}
+                    : <AkMarkdown text={m.text || (m.shown || m.runs || []).map((r) => r.x).join('')} refs={m.citations} />}
                 </AskMessage>
                 {showCites && !m.streaming && <CitationSources citations={m.citations} onCiteScope={onCiteScope} />}
                 {showCites && !m.streaming && m.evidence && <Evidence rows={m.evidence} />}

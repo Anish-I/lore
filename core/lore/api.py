@@ -70,7 +70,8 @@ def _audit(endpoint: str, tenant, principal, scopes, query: str, hits: int) -> N
 # Detect them and answer from the newest notes in-scope instead.
 _TEMPORAL_RE = __import__("re").compile(
     r"\b(recent|latest|newest|today|yesterday|this week|last week|past (few )?(days?|weeks?)|"
-    r"what'?s new|catch me up|worked on)\b", __import__("re").I)
+    r"what'?s new|catch me up|worked on|what (did|have) i (been )?(do|did|done|work)\w*)\b",
+    __import__("re").I)
 
 
 def _recent_note_rows(tenant: str, scopes: list, limit: int = 8):

@@ -41,9 +41,10 @@ def _grounded_prompt(question, chunks, history=None, style=None) -> str:
         )
     else:
         instruction = (
-            "You are a company knowledge assistant. Using ONLY the context below, answer the "
-            "question in 2-4 sentences. Cite the note titles you used in square brackets. "
-            "If the context does not contain the answer, say so plainly."
+            "You are a company knowledge assistant. Using ONLY the context below, answer "
+            "concisely: at most 3 short sentences, or up to 4 tight bullets when listing. "
+            "No preamble (never start with 'Based on your notes'). Cite note titles in "
+            "square brackets. If the context does not contain the answer, say so plainly."
         )
     return (
         f"{instruction}\n\n"

@@ -1083,7 +1083,13 @@ function App() {
     const answerText = String(trace.answer || 'Nothing you can see mentions this yet.');
     const words = answerText.split(/(\s+)/).filter(Boolean).map((w) => ({ x: w }));
     const evidence = evidenceFromTrace(trace);
-    const citations = trace.citations || [];
+    // Enrich citations with a hover preview: the retrieved passage for that note
+    // (what the chip/[Title] popover shows — 'what the notebook says').
+    const akPrevByNote = {};
+    (trace.final || []).forEach((f) => {
+      if (f.note_id && f.text && !akPrevByNote[f.note_id]) akPrevByNote[f.note_id] = String(f.text).slice(0, 300);
+    });
+    const citations = (trace.citations || []).map((c) => ({ ...c, preview: akPrevByNote[c.note_id] || '' }));
     const sources = (trace.final || []).length;
     // Prefer the sources the backend ACTUALLY searched (scopes_used) — makes the
     // confidentiality boundary of each answer honest and visible.
