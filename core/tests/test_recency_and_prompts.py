@@ -59,3 +59,13 @@ def test_recent_prompts_returns_session_prompt_texts():
     assert any("recall pipeline" in p for p in prompts)
     # no tenant → empty, never cross-tenant
     assert client.get("/recent-prompts").json()["prompts"] == []
+
+
+def test_digest_style_prompt_instructs_synthesis_not_refusal():
+    from lore.llm import _grounded_prompt
+    chunks = [{"title": "Fresh note (updated 2026-07-03)", "text": "changed pair sizing"}]
+    digest = _grounded_prompt("what did I work on this week?", chunks, style="digest")
+    assert "do NOT say the context lacks a summary" in digest
+    assert "bullet points" in digest
+    plain = _grounded_prompt("what did we decide?", chunks)
+    assert "say so plainly" in plain

@@ -491,7 +491,8 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
                            for r in rows]
         chunks = [{"title": f"{f['title']} (updated {f['updated'][:10]})", "text": f["text"]}
                   for f in tr["final"]]
-        text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history, provider=req.provider)
+        text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history,
+                                  provider=req.provider, style="digest")
         tr["answer"] = text
         tr["engine"] = engine
         tr["scopes_asked"] = scopes
