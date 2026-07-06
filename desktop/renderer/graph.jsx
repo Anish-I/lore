@@ -49,7 +49,7 @@ const grSectionColor = window.LoreSectionColor;
 // Scope filtering (All/Private/Team/Plugins) already happened one level up — the
 // `graph` prop is pre-filtered by the parent's kbFilter+scopeFilter, so this
 // component owns no filtering of its own beyond the date-cutoff scrubber below.
-function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
+function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideTitle, colorBy }) {
   const wrapRef = React.useRef(null);
   const canvasRef = React.useRef(null);
   const simRef = React.useRef(null);
@@ -141,9 +141,10 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
       const v = (n, f) => (cs.getPropertyValue(n).trim() || f);
       const theme = document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
       palRef.current = {
-        team: v('--jade-500', '#3fb27f'), enterprise: v('--azure-500', '#4a90d9'),
-        private: v('--obsidian-400', '#8b8f9a'),
-        custom: v('--brand-fg', '#c9a24b'),
+        team: v('--place-team-solid', '#3fae6e'), enterprise: v('--place-company-solid', '#5aa0ea'),
+        company: v('--place-company-solid', '#5aa0ea'),
+        private: v('--place-my-solid', '#d99a2b'),
+        custom: v('--place-my-solid', '#d99a2b'),
         edge: v('--border-strong', '#2a2d34'), edgeLit: v('--brand-fg', '#c9a24b'),
         text: v('--text-muted', '#9aa0aa'), textStrong: v('--text-strong', '#f0f0f2'),
         brand: v('--brand-fg', '#c9a24b'),
@@ -229,11 +230,13 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
         // renders a near-full arc as a visibly open 'pac-man'; older Chromium
         // snapped it closed. closePath() belts-and-suspenders the fill.
         ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2); ctx.closePath();
-        // Color by Section (top-level folder) when known — the pills above filter
-        // by section, so node color should match what you're toggling. Falls back
-        // to scope-based coloring for notes outside any tracked folder (e.g.
-        // synthetic session/topic nodes with no baseOf).
-        ctx.fillStyle = (baseOf && grSectionColor(baseOf(n.path), pal.theme)) || pal[n.scope] || pal.custom || pal.private;
+        // colorBy 'place' (Map overlay): scope → place solid, matching the legend.
+        // Default: color by Section (top-level folder) when known — the pills
+        // filter by section, so node color matches what you're toggling; scope
+        // colors are the fallback for notes outside any tracked folder.
+        ctx.fillStyle = colorBy === 'place'
+          ? (pal[n.scope] || pal.custom || pal.private)
+          : ((baseOf && grSectionColor(baseOf(n.path), pal.theme)) || pal[n.scope] || pal.custom || pal.private);
         ctx.fill();
         if (n.id === selRef.current) {
           ctx.lineWidth = 2 / t.k; ctx.strokeStyle = pal.brand; ctx.stroke();
@@ -376,7 +379,7 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
       sim.on('tick', null); sim.stop();
       drawRef.current = null;
     };
-  }, [graphSig, onOpen, setSel, baseOf]);
+  }, [graphSig, onOpen, setSel, baseOf, colorBy]);
 
   const reheat = () => { if (simRef.current) simRef.current.alpha(0.55).restart(); };
   const fit = () => { if (zoomRef.current && zoomRef.current.fit) zoomRef.current.fit(); };
@@ -393,10 +396,12 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
     <div ref={wrapRef} style={{ flex: 1, minWidth: 0, position: 'relative', background: 'var(--surface-canvas)', overflow: 'hidden' }}>
       <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, touchAction: 'none', cursor: 'grab' }} />
 
+      {!hideTitle && (
       <div style={{ position: 'absolute', top: 18, left: 22, zIndex: 2, pointerEvents: 'none' }}>
-        <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>Knowledge graph</h2>
-        <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' }}>{dataRef.current.nodes.length} notes · {dataRef.current.links.length} links · scroll to zoom · drag to pan</p>
+        <h2 style={{ fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>Knowledge map</h2>
+        <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '3px 0 0' }}>{dataRef.current.nodes.length} pages · {dataRef.current.links.length} links · scroll to zoom · drag to pan</p>
       </div>
+      )}
 
       <div style={{ position: 'absolute', top: 18, right: 22, zIndex: 2, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: '68%' }}>
         {sectionRows.shown.map((name) => (
@@ -474,19 +479,76 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
         </div>
       )}
 
-      {selNode && (
-        <div style={{ position: 'absolute', right: 18, bottom: 18, width: 240, padding: 14, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 3 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-            <GrIcon name="file-text" size={15} style={{ color: 'var(--brand-fg)' }} />
+      {selNode && (() => {
+        const pm = (window.LorePlaceMeta || {})[grPlaceOf(selNode.scope)] || {};
+        return (
+        <div style={{ position: 'absolute', right: 18, bottom: 18, width: 260, padding: 14, background: 'var(--surface-overlay)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: 'var(--shadow-popover)', zIndex: 3, animation: 'lore-fade-in 140ms ease' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+            <GrIcon name="file-text" size={15} style={{ color: pm.fg || 'var(--brand-fg)' }} />
             <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selNode.label}</span>
-            <GrScope scope={selNode.scope} size="sm" showLabel={false} />
           </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)', marginBottom: 12 }}>
-            <span>{selNode.owner}</span>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}><GrIcon name="link-2" size={11} />{selNode.links} links</span>
-            <span>{selNode.updated}</span>
+          <div style={{ fontSize: 11.5, color: 'var(--text-subtle)', marginBottom: 12 }}>
+            Lives in <span style={{ color: pm.fg || 'var(--text-body)', fontWeight: 600 }}>{pm.label || 'My Notes'}</span> · {selNode.links || 0} connection{(selNode.links || 0) === 1 ? '' : 's'}
           </div>
-          <GrButton variant="secondary" size="sm" icon="arrow-up-right" fullWidth onClick={() => onOpen && onOpen(selNode.id)}>Open note</GrButton>
+          <GrButton variant="primary" size="sm" icon="arrow-up-right" fullWidth onClick={() => onOpen && onOpen(selNode.id)}>Open page</GrButton>
+        </div>
+        );
+      })()}
+    </div>
+  );
+}
+
+function grPlaceOf(scope) {
+  const s = String(scope || '').toLowerCase();
+  if (s === 'team') return 'team';
+  if (s === 'company' || s === 'enterprise') return 'company';
+  return 'my';
+}
+
+// Full-screen knowledge Map overlay (Redesign C): mockup header + place legend
+// around the existing canvas GraphView, colored by place. Esc closes.
+function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, baseOf, loading }) {
+  const meta = window.LorePlaceMeta || {};
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  const empty = !graph || !graph.nodes || graph.nodes.length === 0;
+  return (
+    <div style={{ position: 'absolute', inset: 0, zIndex: 45, background: 'var(--surface-canvas)', display: 'flex', flexDirection: 'column', animation: 'lore-fade-in 160ms ease' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 18px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+        <GrIcon name="waypoints" size={18} style={{ color: 'var(--brand-fg)' }} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>Knowledge map</div>
+          <div style={{ fontSize: 11.5, color: 'var(--text-faint)', marginTop: 1 }}>Colors show where each page lives. Double-click a dot to open it.</div>
+        </div>
+        <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {['my', 'team', 'company'].map((id) => (
+            <span key={id} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-muted)' }}>
+              <span style={{ width: 9, height: 9, borderRadius: '50%', background: (meta[id] || {}).solid || 'var(--text-faint)' }} />
+              {(meta[id] || {}).label || id}
+            </span>
+          ))}
+        </div>
+        <button onClick={onClose} style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 13px', borderRadius: 8,
+          border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer',
+          color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', fontSize: 12.5,
+        }}>
+          <GrIcon name="x" size={13} />Close
+        </button>
+      </div>
+      {empty ? (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--text-subtle)' }}>
+          <GrIcon name="waypoints" size={30} style={{ color: 'var(--text-faint)' }} />
+          <div style={{ fontSize: 14 }}>{loading ? 'Loading the map…' : 'No pages on the map yet.'}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>{loading ? 'Fetching pages and connections…' : 'Add or import pages and they appear here automatically.'}</div>
+        </div>
+      ) : (
+        <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+          <GraphView graph={graph} onOpen={onOpen} bases={bases} kbFilter={kbFilter} onToggleBase={onToggleBase} baseOf={baseOf} hideTitle colorBy="place" />
         </div>
       )}
     </div>
@@ -494,3 +556,4 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf }) {
 }
 
 window.LoreGraphView = GraphView;
+window.LoreMapOverlay = MapOverlay;

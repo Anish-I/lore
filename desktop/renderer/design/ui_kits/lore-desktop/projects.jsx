@@ -355,4 +355,7 @@ function GraphView({ graph, onOpen }) {
   );
 }
 
-Object.assign(window, { LoreTeamsView: TeamsView, LoreGraphView: GraphView });
+// NOTE: the old SVG GraphView above is dead code — the canvas GraphView in
+// graph.jsx owns window.LoreGraphView now (removed here so mount order can't
+// silently swap implementations). Full deletion tracked for the cleanup pass.
+Object.assign(window, { LoreTeamsView: TeamsView });

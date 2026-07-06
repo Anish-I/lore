@@ -1563,15 +1563,6 @@ function App() {
             {askOpen && askPanel}
           </React.Fragment>
         )}
-        {view === 'graph' && (
-          <React.Fragment>
-            {(graphLoading || !filteredGraph || filteredGraph.nodes.length === 0)
-              ? <GraphEmptyState loading={graphLoading} />
-              : <GraphView graph={filteredGraph} onOpen={onGraphOpen} bases={bases} kbFilter={kbFilter} onToggleBase={toggleBase} baseOf={baseOf} />
-            }
-            {askOpen && askPanel}
-          </React.Fragment>
-        )}
         {view === 'buckets' && (<React.Fragment><BucketsView buckets={M.buckets} onAsk={() => setAskOpen(true)} onOpen={openBucket} onChanged={reloadAfterImport} scopes={persona.scopes} advancedMode={advancedMode} />{askOpen && askPanel}</React.Fragment>)}
         {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onConfig={setAppConfig} onOpenSetup={() => setShowOnboarding(true)} />}
         {view === 'hooks' && advancedMode && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} tenant={tenant} scope={persona.scopes && persona.scopes[0]} onOpenSetup={() => setShowOnboarding(true)} />}
@@ -1610,6 +1601,13 @@ function App() {
             onClose={() => setShowImportModal(false)}
             onDone={() => { setShowImportModal(false); reloadAfterImport(); }}
           />
+        )}
+
+        {mapOpen && window.LoreMapOverlay && (
+          <window.LoreMapOverlay graph={filteredGraph} loading={graphLoading}
+            onOpen={(id) => { setMapOpen(false); onGraphOpen(id); }}
+            onClose={() => setMapOpen(false)}
+            bases={bases} kbFilter={kbFilter} onToggleBase={toggleBase} baseOf={baseOf} />
         )}
 
         {ToastPill && <ToastPill toast={toast} />}

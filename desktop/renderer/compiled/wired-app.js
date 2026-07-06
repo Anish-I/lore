@@ -1563,15 +1563,6 @@ function App() {
     askOpen && askPanel
     ),
 
-    view === 'graph' && /*#__PURE__*/
-    React.createElement(React.Fragment, null,
-    graphLoading || !filteredGraph || filteredGraph.nodes.length === 0 ? /*#__PURE__*/
-    React.createElement(GraphEmptyState, { loading: graphLoading }) : /*#__PURE__*/
-    React.createElement(GraphView, { graph: filteredGraph, onOpen: onGraphOpen, bases: bases, kbFilter: kbFilter, onToggleBase: toggleBase, baseOf: baseOf }),
-
-    askOpen && askPanel
-    ),
-
     view === 'buckets' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(BucketsView, { buckets: M.buckets, onAsk: () => setAskOpen(true), onOpen: openBucket, onChanged: reloadAfterImport, scopes: persona.scopes, advancedMode: advancedMode }), askOpen && askPanel),
     view === 'settings' && /*#__PURE__*/React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions, onConfig: setAppConfig, onOpenSetup: () => setShowOnboarding(true) }),
     view === 'hooks' && advancedMode && HooksView && /*#__PURE__*/React.createElement(HooksView, { scopeOptions: scopeOptions, identityReady: identityReady, tenant: tenant, scope: persona.scopes && persona.scopes[0], onOpenSetup: () => setShowOnboarding(true) })
@@ -1610,6 +1601,13 @@ function App() {
       onClose: () => setShowImportModal(false),
       onDone: () => {setShowImportModal(false);reloadAfterImport();} }
     ),
+
+
+    mapOpen && window.LoreMapOverlay && /*#__PURE__*/
+    React.createElement(window.LoreMapOverlay, { graph: filteredGraph, loading: graphLoading,
+      onOpen: (id) => {setMapOpen(false);onGraphOpen(id);},
+      onClose: () => setMapOpen(false),
+      bases: bases, kbFilter: kbFilter, onToggleBase: toggleBase, baseOf: baseOf }),
 
 
     ToastPill && /*#__PURE__*/React.createElement(ToastPill, { toast: toast }),
