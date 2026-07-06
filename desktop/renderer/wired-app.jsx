@@ -1264,8 +1264,11 @@ function App() {
       setAsking(false); return;
     }
     persistTurn({ role: 'user', text: q });
+    // "About: {page}" chip — /trace has no note-filter param, so v1 anchors the
+    // question to the page by name (TODO: real note_id filter backend-side).
+    const sendQ = askCtx && askCtx.title ? `Regarding the page "${askCtx.title}": ${q}` : q;
     let trace;
-    try { trace = await window.lore.ask(q, scopes, tenant, model, history, provider); }
+    try { trace = await window.lore.ask(sendQ, scopes, tenant, model, history, provider); }
     catch (e) {
       setMessages((m) => { const c = m.slice(); c[c.length - 1] = { role: 'answer', shown: [{ x: 'The memory engine isn’t reachable yet (:8099) — try again in a moment.' }], streaming: false }; return c; });
       setAsking(false); return;
@@ -1376,9 +1379,41 @@ function App() {
     ...((b.topics || []).slice(0, 2).map((t) => `What's important about ${t}?`)),
     `What are the open risks or gaps in ${b.name}?`,
   ].slice(0, 4) : suggestions;
-  const askSuggestions = activeBucket ? bucketQuestions(activeBucket) : (identityReady ? personalPrompts : suggestions);
-  const askPanel = <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={() => setAskOpen(false)} source={askSource} onSource={setAskSource} sourceOptions={askSourceOptions} identityReady={identityReady} onSetup={() => { setView('settings'); setShowOnboarding(true); }}
-    threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={newAskChat} onCiteScope={pushCitationScope} providers={llmProviders} defaultProvider={(appConfig && appConfig.llmProvider) || 'claude'} />;
+  const askSuggestions = askCtx
+    ? ['Summarize this page', 'What are the key figures here?', 'What connects to this page?']
+    : activeBucket ? bucketQuestions(activeBucket) : (identityReady ? personalPrompts : suggestions);
+
+  // Citations card row click — resolve the cited note to a real file and open it;
+  // DB-only nodes (no source_path) fall back to the preview modal.
+  const openCitation = React.useCallback((cite) => {
+    const node = graphData && graphData.nodes.find((x) => x.id === cite.note_id
+      || (cite.title && x.label && String(x.label).toLowerCase() === String(cite.title).toLowerCase()));
+    if (node && node.path) { openNote(node.path); return; }
+    if (window.lore?.notes?.get) {
+      window.lore.notes.get(cite.note_id).then((nd) => {
+        if (nd) setPreviewNote({ title: nd.title || cite.title || String(cite.note_id), body: nd.body || '' });
+      }).catch(() => {});
+    }
+  }, [graphData, openNote]);
+
+  // Composer scope chip — team/company places are pinned; My Notes cycles the
+  // configured sources (same values as the cog's Source select).
+  const askScopeChip = React.useMemo(() => {
+    if (place === 'team') return { label: 'Team', onCycle: null };
+    if (place === 'company') return { label: 'Company', onCycle: null };
+    const opts = askSourceOptions;
+    if (!opts || opts.length < 2) return { label: 'everywhere', onCycle: null };
+    const idx = Math.max(0, opts.findIndex((o) => o.value === (askSource || 'all')));
+    const cur = opts[idx] || opts[0];
+    return {
+      label: cur.value === 'all' ? 'everywhere' : cur.label,
+      onCycle: () => setAskSource(opts[(idx + 1) % opts.length].value),
+    };
+  }, [place, askSourceOptions, askSource]);
+
+  const askPanel = <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={() => { setAskOpen(false); setAskCtx(null); }} source={askSource} onSource={setAskSource} sourceOptions={askSourceOptions} identityReady={identityReady} onSetup={() => { setView('settings'); setShowOnboarding(true); }}
+    threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={() => { newAskChat(); setAskCtx(null); }} onCiteScope={pushCitationScope} onOpenCitation={openCitation} providers={llmProviders} defaultProvider={(appConfig && appConfig.llmProvider) || 'claude'}
+    ctx={askCtx} onClearCtx={() => setAskCtx(null)} scopeChip={askScopeChip} />;
 
   const EmptyEditor = () => {
     const [draftQ, setDraftQ] = React.useState('');
