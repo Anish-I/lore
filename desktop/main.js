@@ -246,6 +246,16 @@ async function ensureBackend() {
   const childEnv = { ...process.env };
   childEnv.LORE_LOCAL_TOKEN = localToken();  // lock the on-device backend port
 
+  // Local embedding model cache — fastembed defaults to %TEMP%/fastembed_cache,
+  // which Windows temp cleanup can half-delete (snapshot dir survives, .onnx
+  // gone) leaving every /reindex a 500 while the model "exists". Pin it to
+  // userData so the cache survives.
+  if (!childEnv.FASTEMBED_CACHE_PATH) {
+    const febCache = path.join(app.getPath('userData'), 'fastembed-cache');
+    try { fs.mkdirSync(febCache, { recursive: true }); } catch { /* non-fatal */ }
+    childEnv.FASTEMBED_CACHE_PATH = febCache;
+  }
+
   // Local Obsidian-light default: SQLite truth + embedded Qdrant, no servers.
   // Applies to BOTH the packaged and dev spawn paths below unless the user has
   // explicitly opted into server mode (cfg.serverMode === true), in which case

@@ -12,12 +12,13 @@ const { _electron: electron } = require('playwright');
     const note = findNote(td.tree);
     const out = { note, tenant: cfg.tenant, scope: cfg.scope, owner: cfg.owner };
     const base = 'http://localhost:8099';
+    const hdrs = { 'content-type': 'application/json', 'X-Lore-Token': cfg.localToken || '' };
     try {
-      const res = await fetch(base + '/reindex', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: note, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }) });
-      out.reindex = { status: res.status, body: (await res.text()).slice(0, 800) };
+      const res = await fetch(base + '/reindex', { method: 'POST', headers: hdrs, body: JSON.stringify({ path: note, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }) });
+      out.reindex = { status: res.status, body: (await res.text()).slice(0, 1200) };
     } catch (e) { out.reindex = { err: String(e) }; }
-    for (const ep of ['/healthz', '/stats?tenant=solo']) {
-      try { const res = await fetch(base + ep); out[ep] = { status: res.status, body: (await res.text()).slice(0, 300) }; }
+    for (const ep of ['/stats?tenant=solo']) {
+      try { const res = await fetch(base + ep, { headers: { 'X-Lore-Token': cfg.localToken || '' } }); out[ep] = { status: res.status, body: (await res.text()).slice(0, 300) }; }
       catch (e) { out[ep] = { err: String(e) }; }
     }
     return out;
