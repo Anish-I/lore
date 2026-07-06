@@ -48,12 +48,12 @@ function IM_ImportModal({ onClose, onDone }) {
 
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--backdrop)', backdropFilter: 'blur(var(--backdrop-blur))' }}>
-      <div style={{ width: 520, display: 'flex', flexDirection: 'column', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-xl)', overflow: 'hidden' }}>
+      <div style={{ width: 480, display: 'flex', flexDirection: 'column', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 14, boxShadow: 'var(--shadow-modal)', overflow: 'hidden', animation: 'lore-fade-in 140ms ease' }}>
 
         {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '16px 20px', borderBottom: '1px solid var(--divider)' }}>
           <IM_Icon name="upload" size={16} style={{ color: 'var(--brand-fg)' }} />
-          <span style={{ flex: 1, fontFamily: 'var(--font-serif)', fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>Import files</span>
+          <span style={{ flex: 1, fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' }}>Add your files</span>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', padding: 4, borderRadius: 'var(--radius-sm)' }}>
             <IM_Icon name="x" size={16} />
           </button>
@@ -86,7 +86,7 @@ function IM_ImportModal({ onClose, onDone }) {
                 {dragging ? 'Drop to import' : 'Drop files or folders here'}
               </div>
               <div style={{ fontSize: 12.5, color: 'var(--text-subtle)' }}>
-                Markdown, text, code, JSON, YAML and more
+                Word docs, PDFs, text, Markdown, code and more all work
               </div>
             </div>
             <IM_Button variant="secondary" icon="folder-open" onClick={IM_browse} disabled={busy}>
@@ -101,7 +101,7 @@ function IM_ImportModal({ onClose, onDone }) {
             <IM_Icon name="loader" size={14} style={{ color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite' }} />
           )}
           <span style={{ flex: 1, fontFamily: 'var(--font-mono)', fontSize: 11.5, color: status ? 'var(--text-muted)' : 'var(--text-faint)' }}>
-            {status || 'Files are copied into your library and remembered.'}
+            {status || 'New pages land in My Notes — private until you move them.'}
           </span>
           <IM_Button variant="ghost" onClick={onClose} disabled={busy}>Close</IM_Button>
         </div>

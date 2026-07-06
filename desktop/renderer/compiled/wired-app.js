@@ -197,26 +197,31 @@ function SearchPalette({ notes, onPick, onClose }) {
   };
   return (/*#__PURE__*/
     React.createElement("div", { onClick: onClose, style: { position: 'absolute', inset: 0, zIndex: 50, background: 'var(--backdrop)', backdropFilter: 'blur(var(--backdrop-blur))', display: 'flex', justifyContent: 'center', paddingTop: '12vh' } }, /*#__PURE__*/
-    React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 560, maxHeight: '64vh', display: 'flex', flexDirection: 'column', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-lg)', boxShadow: 'var(--shadow-xl)', overflow: 'hidden' } }, /*#__PURE__*/
+    React.createElement("div", { onClick: (e) => e.stopPropagation(), style: { width: 560, maxHeight: '64vh', display: 'flex', flexDirection: 'column', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 14, boxShadow: 'var(--shadow-modal)', overflow: 'hidden', animation: 'lore-fade-in 140ms ease' } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--divider)' } }, /*#__PURE__*/
     React.createElement(D.Icon, { name: "search", size: 16, style: { color: 'var(--text-faint)' } }), /*#__PURE__*/
     React.createElement("input", { autoFocus: true, value: q, onChange: (e) => setQ(e.target.value), onKeyDown: key,
-      placeholder: "Search notes by name\u2026",
+      placeholder: "Search pages by name\u2026",
       style: { flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 15 } }), /*#__PURE__*/
     React.createElement(D.Kbd, null, "esc")
     ), /*#__PURE__*/
     React.createElement("div", { style: { overflowY: 'auto', padding: 6 } },
-    results.length === 0 && /*#__PURE__*/React.createElement("div", { style: { padding: 18, color: 'var(--text-faint)', fontSize: 13 } }, "No notes match."),
-    results.map((n, i) => /*#__PURE__*/
-    React.createElement("div", { key: n.id, onMouseEnter: () => setIdx(i), onClick: () => onPick(n.id), style: {
-        display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
-        background: i === idx ? 'var(--surface-selected)' : 'transparent'
-      } }, /*#__PURE__*/
-    React.createElement(D.Icon, { name: "file-text", size: 15, style: { color: i === idx ? 'var(--brand-fg)' : 'var(--text-faint)' } }), /*#__PURE__*/
-    React.createElement("span", { style: { flex: 1, fontSize: 13.5, color: 'var(--text-body)' } }, n.name),
-    n.scope && /*#__PURE__*/React.createElement(D.ScopeTag, { scope: n.scope, size: "sm", showLabel: false })
-    )
-    )
+    results.length === 0 && /*#__PURE__*/React.createElement("div", { style: { padding: 18, color: 'var(--text-faint)', fontSize: 13 } }, "No pages match."),
+    results.map((n, i) => {
+      const pm = (window.LorePlaceMeta || {})[placeOfScope(n.scope)] || {};
+      return (/*#__PURE__*/
+        React.createElement("div", { key: n.id, onMouseEnter: () => setIdx(i), onClick: () => onPick(n.id), style: {
+            display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px', borderRadius: 'var(--radius-sm)', cursor: 'pointer',
+            background: i === idx ? 'var(--surface-selected)' : 'transparent'
+          } }, /*#__PURE__*/
+        React.createElement(D.Icon, { name: "file-text", size: 15, style: { color: i === idx ? 'var(--brand-fg)' : 'var(--text-faint)' } }), /*#__PURE__*/
+        React.createElement("span", { style: { flex: 1, fontSize: 13.5, color: 'var(--text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, n.name), /*#__PURE__*/
+        React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10.5, color: pm.fg || 'var(--text-faint)', flexShrink: 0 } }, /*#__PURE__*/
+        React.createElement(D.Icon, { name: pm.icon || 'lock', size: 11 }), pm.label || ''
+        )
+        ));
+
+    })
     )
     )
     ));
@@ -855,6 +860,48 @@ function App() {
     const td = await window.lore.readTree(root);
     if (td) setTreeData(td);
   }, []);
+
+  // "Move…" — the page changes place via the redaction-gated setNoteScope IPC
+  // (frontmatter rewrite + reindex in main). Move-to-my restores the user's own
+  // configured scope (purpose scopes like `engineering` ARE "My Notes"), never a
+  // blind `scope: private` unless nothing is configured.
+  const [moveBusy, setMoveBusy] = React.useState(false);
+  const moveNote = React.useCallback(async (target) => {
+    if (!activeId || !window.lore?.setNoteScope || moveBusy) return;
+    const scopeVal = target === 'team' ? 'team' :
+    target === 'company' ? 'company' :
+    appConfig && appConfig.scope || 'private';
+    setMoveBusy(true);
+    try {
+      let r = await window.lore.setNoteScope(activeId, scopeVal, false);
+      if (r && r.reason === 'secret' && !r.ok) {
+        if (!window.confirm(`${r.detail}\n\nShare it anyway?`)) {setMoveBusy(false);return;}
+        r = await window.lore.setNoteScope(activeId, scopeVal, true);
+      }
+      if (r && r.ok) {
+        setMoveOpen(false);
+        try {
+          const rr = await window.lore.readNote(activeId);
+          const parsed = parseNote(rr.raw, activeId, rr.mtime);
+          setNotes((m) => ({ ...m, [activeId]: parsed }));
+          setDrafts((m) => ({ ...m, [activeId]: rr.raw }));
+          setScope(parsed.scope);
+        } catch {/* tree refresh below still applies */}
+        setGraphNonce((n) => n + 1);
+        if (treeData) reloadTree(treeData.root);
+        markStep('moved');
+        const movedId = activeId;
+        setFreshIds((prev) => new Set(prev).add(movedId));
+        setTimeout(() => setFreshIds((prev) => {const c = new Set(prev);c.delete(movedId);return c;}), 6000);
+        setScopeFilter(target === 'my' ? 'private' : target); // follow the page to its new place
+        const label = (window.LorePlaceMeta[target] || {}).label || target;
+        if (target === 'team' && !inTeam) flash('Moved to Team — finish team setup so teammates can see it.');else
+        flash(`Moved to ${label}.`);
+      } else if (r && r.error) {
+        flash('Move failed: ' + r.error);
+      }
+    } finally {setMoveBusy(false);}
+  }, [activeId, appConfig, treeData, reloadTree, markStep, flash, inTeam, moveBusy]);
 
   // Library up/down switcher (sidebar header chevrons) — cycles appConfig.roots, wrapping
   // around, and opens the target library via loadTree (its initial-load variant is correct
@@ -1620,7 +1667,7 @@ function App() {
     ToastPill && /*#__PURE__*/React.createElement(ToastPill, { toast: toast }),
 
     moveOpen && window.LoreMoveDialog && activeNote && /*#__PURE__*/
-    React.createElement(window.LoreMoveDialog, { note: activeNote, place: place, onClose: () => setMoveOpen(false) }),
+    React.createElement(window.LoreMoveDialog, { note: activeNote, busy: moveBusy, onMove: moveNote, onClose: () => setMoveOpen(false) }),
 
 
     previewNote && /*#__PURE__*/
