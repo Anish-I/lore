@@ -15,8 +15,8 @@ const edS = {
     boxShadow: on ? 'inset 0 2px 0 var(--brand-bg)' : 'none',
   }),
   toolbar: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 18px', borderBottom: '1px solid var(--divider)', flexShrink: 0 },
-  scroll: { flex: 1, overflowY: 'auto', padding: '48px 0 120px' },
-  col: { maxWidth: 720, width: '100%', margin: '0 auto', padding: '0 48px', boxSizing: 'border-box' },
+  scroll: { flex: 1, overflowY: 'auto', padding: '40px 0 120px' },
+  col: { maxWidth: 700, width: '100%', margin: '0 auto', padding: '0 44px', boxSizing: 'border-box' },
   context: { width: 'var(--context-width)', flexShrink: 0, background: 'var(--surface-panel)', borderLeft: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column' },
 };
 
@@ -29,8 +29,9 @@ function Runs({ runs, onOpen }) {
   });
 }
 
-function Block({ b, note, onOpen }) {
-  if (b.t === 'h1') return <h1 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-4xl)', fontWeight: 600, lineHeight: 1.15, letterSpacing: '-0.01em', margin: '0 0 14px', color: 'var(--text-strong)' }}>{b.s}</h1>;
+function Block({ b, note, onOpen, accent }) {
+  const ac = accent || 'var(--brand-fg)';
+  if (b.t === 'h1') return <h1 style={{ fontFamily: 'var(--type-reading-font)', fontSize: 27, fontWeight: 700, lineHeight: 1.2, letterSpacing: '-0.01em', margin: '0 0 14px', color: 'var(--text-strong)' }}>{b.s}</h1>;
   if (b.t === 'meta') return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 26px', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' }}>
       <EdScope scope={note.scope} size="sm" />
@@ -38,17 +39,17 @@ function Block({ b, note, onOpen }) {
       <span style={{ color: 'var(--link-fg)' }}>{note.tags.map((t) => '#' + t).join('  ')}</span>
     </div>
   );
-  if (b.t === 'h2') return <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-2xl)', fontWeight: 600, margin: '30px 0 12px', color: 'var(--text-strong)' }}>{b.s}</h2>;
-  if (b.t === 'h3') return <h3 style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-xl)', fontWeight: 600, margin: '24px 0 10px', color: 'var(--text-strong)' }}>{b.s}</h3>;
-  if (b.t === 'quote') return <blockquote style={{ margin: '20px 0', padding: '4px 18px', borderLeft: '3px solid var(--brand-soft-border)', color: 'var(--text-muted)', fontStyle: 'italic', fontFamily: 'var(--font-serif)' }}>{b.runs ? <Runs runs={b.runs} onOpen={onOpen} /> : b.s}</blockquote>;
+  if (b.t === 'h2') return <h2 style={{ fontFamily: 'var(--type-reading-font)', fontSize: 17, fontWeight: 600, margin: '28px 0 10px', color: 'var(--text-strong)' }}>{b.s}</h2>;
+  if (b.t === 'h3') return <h3 style={{ fontFamily: 'var(--type-reading-font)', fontSize: 15, fontWeight: 600, margin: '22px 0 8px', color: 'var(--text-strong)' }}>{b.s}</h3>;
+  if (b.t === 'quote') return <blockquote style={{ margin: '18px 0', padding: '8px 16px', borderLeft: `3px solid ${ac}`, background: 'var(--surface-hover)', borderRadius: '0 8px 8px 0', color: 'var(--text-body)', fontFamily: 'var(--type-reading-font)', fontSize: 14, lineHeight: 1.65 }}>{b.runs ? <Runs runs={b.runs} onOpen={onOpen} /> : b.s}</blockquote>;
   if (b.t === 'code') return <pre style={{ margin: '16px 0', padding: '12px 14px', background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', overflowX: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12.5, lineHeight: 1.6, color: 'var(--text-body)' }}>{b.s}</pre>;
   if (b.t === 'li') return (
-    <div style={{ display: 'flex', gap: 10, margin: '6px 0', fontFamily: 'var(--font-serif)', fontSize: 'var(--text-lg)', lineHeight: 1.6, color: 'var(--text-body)' }}>
-      <span style={{ color: 'var(--brand-fg)', marginTop: 1 }}>—</span>
+    <div style={{ display: 'flex', gap: 10, margin: '5px 0', fontFamily: 'var(--type-reading-font)', fontSize: 14.5, lineHeight: 1.6, color: 'var(--text-body)' }}>
+      <span style={{ color: ac, marginTop: 1 }}>•</span>
       <span>{b.runs ? <Runs runs={b.runs} onOpen={onOpen} /> : b.s}</span>
     </div>
   );
-  return <p style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-lg)', lineHeight: 1.65, margin: '0 0 16px', color: 'var(--text-body)' }}>{b.runs ? <Runs runs={b.runs} onOpen={onOpen} /> : b.s}</p>;
+  return <p style={{ fontFamily: 'var(--type-reading-font)', fontSize: 14.5, lineHeight: 1.7, margin: '0 0 14px', color: 'var(--text-body)' }}>{b.runs ? <Runs runs={b.runs} onOpen={onOpen} /> : b.s}</p>;
 }
 
 // Overflow: past ED_TAB_MAX open tabs, the strip shows the first ED_TAB_SHOW pills
@@ -213,18 +214,19 @@ function VisibilityControl({ note, onSetScope }) {
   );
 }
 
-function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions, onSetScope }) {
+function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions, onSetScope, hideTabs, hideToolbar, accent, footer }) {
   if (bucket) {
     return (
       <div style={edS.center}>
-        <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} onTogglePane={onTogglePane} />
+        {!hideTabs && <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} onTogglePane={onTogglePane} />}
         <BucketBody bucket={bucket} onOpen={onOpen} />
       </div>
     );
   }
   return (
     <div style={edS.center}>
-      <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} onTogglePane={onTogglePane} />
+      {!hideTabs && <TabStrip tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={onCloseTab} onCloseOthers={onCloseOthers} onTogglePane={onTogglePane} />}
+      {!hideToolbar && (
       <div style={edS.toolbar}>
         <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' }}>{note.path || (note.title + '.md')}</span>
         <div style={{ flex: 1 }} />
@@ -242,6 +244,7 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', whiteSpace: 'nowrap' }}>editing · click away or ⌘S to save</span>
         )}
       </div>
+      )}
 
       {/* The demo's calm editor: no Read/Edit toggle. Reading view by default;
           CLICK the body to edit (textarea autofocuses); blur or Cmd/Ctrl-S saves
@@ -254,14 +257,15 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
                 onKeyDown={(e) => {
                   if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); onMode && onMode('read'); }
                 }}
-                style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 180px)', resize: 'none', border: 'none', borderRadius: 0, background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--brand-fg)' }} />
+                style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 340px)', resize: 'none', border: 'none', borderRadius: 0, background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--amber-400)' }} />
             </div>
           : <div style={edS.col} onClick={() => onMode && onMode('edit')} title="Click to edit">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 18px', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{note.path || (note.title + '.md')}</span>
                 {note.updated && <span style={{ flexShrink: 0 }}>· updated {note.updated}</span>}
               </div>
-              {note.body.map((b, i) => <Block key={i} b={b} note={note} onOpen={onOpen} />)}
+              {note.body.map((b, i) => <Block key={i} b={b} note={note} onOpen={onOpen} accent={accent} />)}
+              {footer}
             </div>}
       </div>
     </div>

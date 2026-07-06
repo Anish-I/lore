@@ -143,6 +143,27 @@ function parseNote(raw, p, mtime) {
   return { id: p, path: base, title, scope, owner: null, updated: agoLabel(mtime), tags, backlinks: [], outline: outline.length ? outline : [title], body: window.mdToRuns(body), raw };
 }
 
+// First meaningful body line for the page-card snippet (frontmatter/headings/fences skipped).
+function snippetOf(raw) {
+  let body = String(raw || '');
+  const fm = body.match(/^---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?/);
+  if (fm) body = body.slice(fm[0].length);
+  for (const line of body.split(/\r?\n/)) {
+    const t = line.trim();
+    if (!t || t.startsWith('#') || t.startsWith('```') || t.startsWith('---')) continue;
+    return t.replace(/\[\[([^\]]+)\]\]/g, '$1').replace(/[*_`>]/g, '').slice(0, 180);
+  }
+  return '';
+}
+
+// scope value -> place id ('my' | 'team' | 'company')
+function placeOfScope(scope) {
+  const s = String(scope || '').toLowerCase();
+  if (s === 'team') return 'team';
+  if (s === 'company' || s === 'enterprise') return 'company';
+  return 'my';
+}
+
 function evidenceFromTrace(trace) {
   return (trace.final || []).map((f, i) => {
     const parts = String(f.title || '').split(' > ');
@@ -303,7 +324,7 @@ function progressCountText(p) {
 
 function App() {
   const [theme, setTheme] = React.useState('dark');
-  const [view, setView] = React.useState('home');   // the app boots into the Home tab
+  const [view, setView] = React.useState('workspace');   // hybrid shell boots into the place grid
   const [askOpen, setAskOpen] = React.useState(false);
   // Context pane (backlinks/outline) visibility — hidden via its header button,
   // reopened via the tab-strip panel icon.
@@ -352,6 +373,12 @@ function App() {
   const [moveOpen, setMoveOpen] = React.useState(false);   // "Move…" place dialog
   const [mapOpen, setMapOpen] = React.useState(false);     // full-screen knowledge map overlay
   const [authUser, setAuthUser] = React.useState(null);    // {user_id, email, scopes} | null — avatar menu
+  const [askCtx, setAskCtx] = React.useState(null);        // {id, title} — "About: {page}" chat context chip
+  const [noteMeta, setNoteMeta] = React.useState({});      // id -> {snippet} card-snippet cache
+  const [freshIds, setFreshIds] = React.useState(() => new Set()); // "Moved just now" badges
+  const [teamBusy, setTeamBusy] = React.useState(false);
+  const [teamError, setTeamError] = React.useState('');
+  const noteMetaFetched = React.useRef(new Set());
   const toastTimer = React.useRef(null);
   const timer = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
@@ -519,6 +546,30 @@ function App() {
     }
     return c;
   }, [allNotes]);
+  // Pages created/edited in the last day — the greeting's "N new since yesterday".
+  const newCount = React.useMemo(() => {
+    const cutoff = Date.now() - 86400 * 1000;
+    return allNotes.filter((n) => n.mtimeMs && n.mtimeMs > cutoff).length;
+  }, [allNotes]);
+
+  // Getting-started checklist — flags persist in config.gettingStarted.
+  const checklistCfg = (appConfig && appConfig.gettingStarted) || {};
+  const markStep = React.useCallback(async (step) => {
+    setAppConfig((cfg) => {
+      const cur = (cfg && cfg.gettingStarted) || {};
+      if (cur[step]) return cfg;
+      const gettingStarted = { ...cur, [step]: true };
+      if (window.lore?.config?.set) window.lore.config.set({ gettingStarted }).catch(() => {});
+      return { ...(cfg || {}), gettingStarted };
+    });
+  }, []);
+  const dismissChecklist = React.useCallback(() => {
+    setAppConfig((cfg) => {
+      const gettingStarted = { ...((cfg && cfg.gettingStarted) || {}), dismissed: true };
+      if (window.lore?.config?.set) window.lore.config.set({ gettingStarted }).catch(() => {});
+      return { ...(cfg || {}), gettingStarted };
+    });
+  }, []);
 
   // Knowledge bases = the library's top-level folders. Selecting them filters BOTH the file tree and the graph.
   const bases = React.useMemo(() => tree.filter((n) => n.kind === 'folder').map((n) => n.name), [tree]);
@@ -548,6 +599,83 @@ function App() {
   const toggleBase = React.useCallback((name) => {
     setKbFilter((f) => f.includes(name) ? f.filter((x) => x !== name) : [...f, name]);
   }, []);
+
+  // Grid data for the current place (+ section filter), newest first.
+  const placeNotes = React.useMemo(() => {
+    const list = flatten(shownTree);
+    return [...list].sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
+  }, [shownTree]);
+  // Section rail rows — top-level folders of this place with note counts.
+  const railSections = React.useMemo(() =>
+    scopeFilteredTree.filter((n) => n.kind === 'folder')
+      .map((f) => ({ name: f.name, count: flatten([f]).length }))
+      .filter((s) => s.count > 0),
+  [scopeFilteredTree]);
+  const railActive = kbFilter.length === 1 ? kbFilter[0] : 'all';
+  const onRailSelect = React.useCallback((name) => {
+    setKbFilter(name === 'all' ? [] : [name]);
+  }, []);
+
+  // Card snippets — lazy readNote for the first 60 visible cards, ~6 at a time.
+  // The fetched-set ref stops refetch loops; vault changes clear both caches.
+  React.useEffect(() => {
+    let live = true;
+    const want = placeNotes.slice(0, 60).filter((n) => !noteMetaFetched.current.has(n.id));
+    if (!want.length || !window.lore?.readNote) return;
+    want.forEach((n) => noteMetaFetched.current.add(n.id));
+    const queue = want.slice();
+    const worker = async () => {
+      while (queue.length && live) {
+        const n = queue.shift();
+        try {
+          const r = await window.lore.readNote(n.id);
+          if (live) setNoteMeta((m) => ({ ...m, [n.id]: { snippet: snippetOf(r && r.raw) } }));
+        } catch { /* card renders without a snippet */ }
+      }
+    };
+    Promise.all(Array.from({ length: 6 }, worker)).catch(() => {});
+    return () => { live = false; };
+  }, [placeNotes]);
+  React.useEffect(() => {
+    if (!window.lore?.onVaultChanged) return;
+    return window.lore.onVaultChanged(() => { noteMetaFetched.current = new Set(); setNoteMeta({}); });
+  }, []);
+
+  // Team place gate — create/join flows (mirrors the Teams view logic).
+  const inTeam = Boolean(appConfig && appConfig.team && appConfig.team.team_id)
+    || Boolean(authUser && Array.isArray(authUser.scopes) && authUser.scopes.length > 0);
+  const createTeam = React.useCallback(async (name) => {
+    setTeamBusy(true); setTeamError('');
+    try {
+      let user = authUser;
+      if (!user && window.lore?.auth?.login) {
+        try {
+          const r = await window.lore.auth.login();
+          if (r && r.ok) { user = { user_id: r.user_id, email: r.email, scopes: r.scopes || [] }; setAuthUser(user); }
+        } catch { /* offline sign-in */ }
+      }
+      if (!user) {
+        // No session available — save the intent locally, same as the Teams view.
+        const teamCfg = { intent: 'create', name, pending: 'sign-in' };
+        if (window.lore?.config?.set) { try { const next = await window.lore.config.set({ team: teamCfg }); setAppConfig(next); } catch { /* non-fatal */ } }
+        setTeamError(`Team "${name}" saved locally — team sync and invites activate once sign-in is available.`);
+      } else {
+        const res = await window.lore.teams.create(name);
+        if (!res || !res.ok) { setTeamError((res && res.body && res.body.detail) || 'Could not create the team.'); }
+        else {
+          const teamCfg = { intent: 'create', name, team_id: res.body.team_id, scope: res.body.scope, ...(user.email ? { email: user.email } : {}) };
+          if (window.lore?.config?.set) { try { const next = await window.lore.config.set({ team: teamCfg }); setAppConfig(next); } catch { /* non-fatal */ } }
+          flash(`Team "${name}" created.`);
+          refreshAuth();
+        }
+      }
+    } catch (e) { setTeamError(String((e && e.message) || e)); }
+    setTeamBusy(false);
+  }, [authUser, flash, refreshAuth]);
+  const joinTeam = React.useCallback(async () => {
+    await signIn();
+    refreshInvites();
+  }, [signIn, refreshInvites]);
   const filteredGraph = React.useMemo(() => {
     if (!graphData) return graphData;
     const kbSet = kbFilter.length ? new Set(kbFilter) : null;
@@ -610,9 +738,21 @@ function App() {
     setCameFromId(cameFrom);
     setTabs((ts) => ts.some((t) => t.id === id) ? ts : [...ts, { id, title: id.split(/[\\/]/).pop().replace(/\.md$/i, ''), kind: 'note' }]);
     setActiveId(id); setView('workspace'); setMode('read'); setSearchOpen(false);
+    markStep('opened');
     const parsed = await loadNote(id);
     setScope(parsed.scope);
-  }, [loadNote]);
+  }, [loadNote, markStep]);
+
+  // Wiki-link clicks in the reading view: resolve "[[Name]]" (or a path) to a
+  // real note and open it, keeping the backlink breadcrumb.
+  const openByRef = React.useCallback((ref) => {
+    if (!ref) return;
+    const low = String(ref).toLowerCase();
+    const hit = allNotes.find((n) => n.id.toLowerCase() === low)
+      || allNotes.find((n) => n.name.toLowerCase() === low)
+      || allNotes.find((n) => n.name.toLowerCase() === low.replace(/\.md$/i, ''));
+    if (hit) openNote(hit.id, activeId);
+  }, [allNotes, openNote, activeId]);
 
   // Wraps openNote so a backlink/connection click marks where the user came from —
   // the mini-graph on the note they land on highlights that node in a distinct
@@ -681,14 +821,13 @@ function App() {
     else openNote(id);
   };
 
+  // Initial/switch library load — lands on the place grid (no auto-opened note).
   const loadTree = React.useCallback(async (root) => {
     const td = await window.lore.readTree(root);
     if (!td) return false;
     setTreeData(td);
-    const f = firstNote(td.tree);
-    if (f) openNote(f.id);
     return true;
-  }, [openNote]);
+  }, []);
   // Change the OPEN note's confidentiality. Persists on disk + reindexes via the
   // main process; on a redaction block (broadening a note that has secrets),
   // confirm and retry with force. Refreshes the note + graph so the new scope
@@ -910,10 +1049,8 @@ function App() {
     setTabs([]);
     setNotes({});
     setDrafts({});
-    const f = firstNote(td.tree);
-    if (f) openNote(f.id);
-    else setActiveId(null);
-  }, [appConfig, openNote]);
+    setActiveId(null);
+  }, [appConfig]);
 
   const openVault = async () => {
     const td = await window.lore.pickVault();
@@ -1111,8 +1248,9 @@ function App() {
 
   const ask = async (q, model, provider) => {
     if (asking) return;
-    if (view !== 'home') setAskOpen(true);
+    setAskOpen(true);
     setAsking(true);
+    markStep('asked');
     // Follow-ups: hand the backend the running conversation (it uses the last 6 turns).
     const history = messages
       .filter((m) => (m.role === 'user' && m.text) || (m.role === 'answer' && !m.streaming && m.text))
@@ -1167,14 +1305,14 @@ function App() {
   // Advanced mode (default OFF) gates the developer surfaces. The old
   // cfg.simpleMode flag is ignored entirely — the default experience IS simple.
   const advancedMode = !!(appConfig && appConfig.advancedMode === true);
-  const Sidebar = window.LoreSidebar,
-    PlacesBar = window.LorePlacesBar, Ribbon = window.LoreRibbon,
+  const PlacesBar = window.LorePlacesBar, Ribbon = window.LoreRibbon,
     SectionRail = window.LoreSectionRail, ToastPill = window.LoreToast,
-    Editor = window.LoreEditor, ContextPane = window.LoreContextPane, FloatingGraph = window.LoreFloatingGraph, AskPanel = window.LoreAskPanel,
+    HomeGrid = window.LoreHomeGrid, PageView = window.LorePageView, RelatedPages = window.LoreRelatedPages,
+    Editor = window.LoreEditor, AskPanel = window.LoreAskPanel,
     TeamsView = window.LoreTeamsView, GraphView = window.LoreGraphView,
     BucketsView = window.LoreBucketsView, SettingsView = window.LoreSettingsView,
     HooksView = window.LoreHooksView, Onboarding = window.LoreOnboarding,
-    ImportModal = window.LoreImportModal, HomeView = window.LoreHomeView;
+    ImportModal = window.LoreImportModal;
 
   const activeTab = tabs.find((t) => t.id === activeId);
   const activeNote = activeTab && activeTab.kind === 'note' ? notes[activeId] : null;
@@ -1196,7 +1334,7 @@ function App() {
       let other = null, dir = null;
       if (s === self.id) { other = byId[d]; dir = 'out'; }
       else if (d === self.id) { other = byId[s]; dir = 'in'; }
-      if (other && other.path && !seen.has(other.id)) { seen.add(other.id); out.push({ id: other.id, label: other.label, path: other.path, kind, dir }); }
+      if (other && other.path && !seen.has(other.id)) { seen.add(other.id); out.push({ id: other.id, label: other.label, path: other.path, kind, dir, scope: other.scope }); }
     }
     return out;
   }, [graphData, activeId]);
@@ -1328,40 +1466,58 @@ function App() {
         onMove={() => setMoveOpen(true)} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         <LoreErrorBoundary key={view}>
-        {view === 'home' && (
-          <React.Fragment>
-            {HomeView
-              ? <HomeView config={appConfig} tenant={tenant} identityReady={identityReady} prompts={personalPrompts}
-                  chatActive={messages.length > 0}
-                  chat={
-                    <div style={{ '--ask-width': '100%', display: 'flex', minHeight: messages.length ? '56vh' : 300, border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', background: 'var(--surface-panel)' }}>
-                      <AskPanel messages={messages} asking={asking} suggestions={askSuggestions} onSend={ask} onClose={null} source={askSource} onSource={setAskSource} sourceOptions={askSourceOptions} identityReady={identityReady} onSetup={() => { setView('settings'); setShowOnboarding(true); }}
-                        threads={askThreads} onLoadThreads={loadAskThreads} onResumeThread={resumeAskThread} onDeleteThread={deleteAskThread} onNewChat={newAskChat} onCiteScope={pushCitationScope} providers={llmProviders} defaultProvider={(appConfig && appConfig.llmProvider) || 'claude'} />
-                    </div>
-                  }
-                  onAsk={(q) => ask(q)} onSetup={() => setShowOnboarding(true)} />
-              : <EmptyEditor />}
-          </React.Fragment>
-        )}
         {view === 'workspace' && (
           <React.Fragment>
-            <Sidebar tree={shownTree} activeNote={activeId} workspace={workspace} onOpen={onNodeClick} onToggle={(id) => setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) }))}
-              bases={bases} baseScopes={baseScopes} kbFilter={kbFilter} onToggleBase={toggleBase} onClearBases={() => setKbFilter([])} wizard={activeBucket} onCreateNote={onCreateNote}
-              renamingId={renamingId} onTreeContextMenu={onTreeContextMenu} onRenameCommit={onRenameCommit} onRenameCancel={onRenameCancel}
-              roots={(appConfig && appConfig.roots) || []} activeRoot={treeData ? treeData.root : null} onSwitchRoot={switchLibrary}
-              discoveredLibraries={otherLibraries} onOpenDiscovered={openDiscoveredLibrary}
-              sectionProposals={sectionProposals} onSectionApply={onSectionApply} onSectionDismiss={onSectionDismiss} onSectionUndo={onSectionUndo} onSectionPromote={onSectionPromote} theme={theme} />
-            <PaneResizer side="sidebar" />
-            {activeBucket
-              ? <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onTogglePane={() => setContextOpen((o) => !o)} onOpen={() => setAskOpen(true)} />
-              : (editorNote
-                ? <div style={{ position: 'relative', flex: 1, minWidth: 0, display: 'flex' }}>
-                    <Editor note={editorNote} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} onTogglePane={() => setContextOpen((o) => !o)} mode={mode} onMode={onMode} onOpen={() => {}} scope={scope} onScope={setScope} scopeOptions={scopeOptions} onSetScope={onSetNoteScope} />
-                    {FloatingGraph && <FloatingGraph note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} />}
-                  </div>
-                : <EmptyEditor />)}
-            {!askOpen && editorNote && contextOpen && <PaneResizer side="context" />}
-            {askOpen ? askPanel : (editorNote && contextOpen && <ContextPane note={editorNote} connections={connections} onOpenNote={openNoteFromBacklink} cameFromId={cameFromId} onAsk={() => setAskOpen(true)} onHide={() => setContextOpen(false)} />)}
+            {!treeData ? (
+              <EmptyEditor />
+            ) : (
+              <React.Fragment>
+                {!(place === 'team' && !inTeam && placeCounts.team === 0) && (
+                  <SectionRail sections={railSections} allCount={placeCounts[place]}
+                    active={railActive} onSelect={onRailSelect} place={place} theme={theme} />
+                )}
+                {activeBucket ? (
+                  <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} hideTabs onOpen={() => setAskOpen(true)} />
+                ) : editorNote ? (
+                  <PageView note={editorNote} place={place} mode={mode}
+                    onBack={() => setActiveId(null)}
+                    onChatAbout={() => { setAskCtx({ id: activeId, title: editorNote.title }); setAskOpen(true); }}
+                    onMove={() => setMoveOpen(true)}
+                    editor={
+                      <Editor note={editorNote} mode={mode} onMode={onMode} onOpen={openByRef}
+                        hideTabs hideToolbar
+                        accent={(window.LorePlaceMeta[placeOfScope(editorNote.scope)] || {}).fg}
+                        footer={RelatedPages ? <RelatedPages connections={connections} onOpen={openNoteFromBacklink} /> : null} />
+                    } />
+                ) : (
+                  <HomeGrid place={place} theme={theme}
+                    ownerName={(authUser && authUser.email && authUser.email.split('@')[0]) || (appConfig && appConfig.owner) || null}
+                    totalCount={placeCounts.my} newCount={newCount}
+                    suggestions={askSuggestions} onAsk={(q) => ask(q)}
+                    checklist={{
+                      imported: Boolean((treeData && treeData.indexed > 0) || allNotes.length > 0),
+                      opened: Boolean(checklistCfg.opened), asked: Boolean(checklistCfg.asked),
+                      moved: Boolean(checklistCfg.moved), dismissed: Boolean(checklistCfg.dismissed),
+                    }}
+                    onChecklistGo={(step) => {
+                      if (step === 'imported') setShowImportModal(true);
+                      else if (step === 'opened' && placeNotes[0]) openNote(placeNotes[0].id);
+                      else if (step === 'asked') setAskOpen(true);
+                      else if (step === 'moved') flash('Open a page, then press Move… in the ribbon.');
+                    }}
+                    onChecklistDismiss={dismissChecklist}
+                    sectionFilter={railActive} notes={placeNotes} noteMeta={noteMeta} baseOf={baseOf} freshIds={freshIds}
+                    onOpen={openNote} onChat={(id) => { const n = placeNotes.find((x) => x.id === id); setAskCtx({ id, title: (n && n.name) || id }); setAskOpen(true); }}
+                    onNewPage={onCreateNote} onAddFiles={onImport}
+                    teamGate={(place === 'team' && !inTeam && placeCounts.team === 0) ? {
+                      onCreateTeam: createTeam, onJoinTeam: joinTeam,
+                      invites: pendingInvites, inviteBusy, onAcceptInvite: acceptInvite,
+                      busy: teamBusy, error: teamError,
+                    } : null} />
+                )}
+              </React.Fragment>
+            )}
+            {askOpen && askPanel}
           </React.Fragment>
         )}
 

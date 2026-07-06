@@ -346,7 +346,9 @@ function buildTree(root, depth = 0) {
       if (children.length) folders.push({ id: full, kind: 'folder', name: e.name, depth, open: depth === 0, children });
     } else if (e.name.toLowerCase().endsWith('.md')) {
       const meta = scopeOf(full);
-      notes.push({ id: full, kind: 'note', name: e.name.replace(/\.md$/i, ''), depth, scope: meta.scope, wizard: meta.wizard });
+      let mtimeMs = null;
+      try { mtimeMs = fs.statSync(full).mtimeMs; } catch { /* card falls back to no label */ }
+      notes.push({ id: full, kind: 'note', name: e.name.replace(/\.md$/i, ''), depth, scope: meta.scope, wizard: meta.wizard, mtimeMs });
     }
   }
   folders.sort((a, b) => a.name.localeCompare(b.name));
