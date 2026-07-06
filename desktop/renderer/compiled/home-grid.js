@@ -229,13 +229,45 @@ function TeamGate({ onCreateTeam, onJoinTeam, invites, inviteBusy, onAcceptInvit
 
 }
 
+// Soft variant of the Team gate — shown when Team pages already exist locally
+// but no team is set up yet, so sharing isn't actually live.
+function TeamSetupBanner({ onCreateTeam, onJoinTeam, busy, error }) {
+  const [creating, setCreating] = React.useState(false);
+  const [name, setName] = React.useState('');
+  const meta = window.LorePlaceMeta.team;
+  return (/*#__PURE__*/
+    React.createElement("div", { style: { border: `1px solid ${meta.border}`, background: meta.tint, borderRadius: 12, padding: '11px 14px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } }, /*#__PURE__*/
+    React.createElement(HgIcon, { name: "users", size: 16, style: { color: meta.fg, flexShrink: 0 } }), /*#__PURE__*/
+    React.createElement("span", { style: { flex: 1, minWidth: 220, fontSize: 12.5, color: 'var(--text-body)', lineHeight: 1.5 } }, "These pages are marked Team, but you haven\u2019t set up a team yet \u2014 teammates can\u2019t see them until you do."
+
+    ),
+    creating ? /*#__PURE__*/
+    React.createElement("span", { style: { display: 'inline-flex', gap: 7 } }, /*#__PURE__*/
+    React.createElement("input", { autoFocus: true, value: name, onChange: (e) => setName(e.target.value),
+      onKeyDown: (e) => {if (e.key === 'Enter' && name.trim()) onCreateTeam(name.trim());if (e.key === 'Escape') setCreating(false);},
+      placeholder: "Team name\u2026",
+      style: { width: 160, height: 30, padding: '0 10px', border: '1px solid var(--border-strong)', borderRadius: 8, background: 'var(--surface-canvas)', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 12.5, outline: 'none' } }), /*#__PURE__*/
+    React.createElement(HgButton, { variant: "success", onClick: () => name.trim() && onCreateTeam(name.trim()), style: { height: 30, fontSize: 12 } }, busy ? 'Creating…' : 'Create')
+    ) : /*#__PURE__*/
+
+    React.createElement("span", { style: { display: 'inline-flex', gap: 7 } }, /*#__PURE__*/
+    React.createElement(HgButton, { variant: "success", icon: "users", onClick: () => setCreating(true), style: { height: 30, fontSize: 12 } }, "Create our team"), /*#__PURE__*/
+    React.createElement(HgButton, { icon: "mail", onClick: onJoinTeam, style: { height: 30, fontSize: 12 } }, "I have an invite")
+    ),
+
+    error && /*#__PURE__*/React.createElement("span", { style: { width: '100%', fontSize: 11.5, color: 'var(--danger-fg)' } }, error)
+    ));
+
+}
+
 function HomeGrid({
   place, theme, ownerName, totalCount, newCount,
   suggestions, onAsk,
   checklist, onChecklistGo, onChecklistDismiss,
   sectionFilter, notes, noteMeta, baseOf, freshIds,
   onOpen, onChat, onNewPage, onAddFiles,
-  teamGate // null | {onCreateTeam,onJoinTeam,invites,inviteBusy,onAcceptInvite,busy,error}
+  teamGate, // null | {onCreateTeam,onJoinTeam,invites,inviteBusy,onAcceptInvite,busy,error} — full gate (no team pages yet)
+  teamSetup // null | same handlers — soft banner (team pages exist but no team)
 }) {
   const meta = window.LorePlaceMeta[place] || window.LorePlaceMeta.my;
   if (teamGate) return /*#__PURE__*/React.createElement(TeamGate, teamGate);
@@ -264,6 +296,8 @@ function HomeGrid({
 
 
     React.createElement(AskHero, { suggestions: suggestions, onAsk: onAsk }),
+
+    teamSetup && /*#__PURE__*/React.createElement(TeamSetupBanner, teamSetup),
 
     showChecklist && /*#__PURE__*/React.createElement(Checklist, { steps: checklist, onGo: onChecklistGo, onDismiss: onChecklistDismiss }), /*#__PURE__*/
 

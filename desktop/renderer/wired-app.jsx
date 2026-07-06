@@ -396,10 +396,14 @@ function App() {
     setInviteBusy(inviteId);
     try {
       const r = await window.lore.invites.accept(inviteId);
-      if (r && r.ok) setPendingInvites((list) => list.filter((i) => i.invite_id !== inviteId));
+      if (r && r.ok) {
+        setPendingInvites((list) => list.filter((i) => i.invite_id !== inviteId));
+        // Joining a team changes the signed-in scopes — the Team gate reads them.
+        refreshAuth();
+      }
     } catch { /* keep the banner so the user can retry */ }
     setInviteBusy(null);
-  }, []);
+  }, [refreshAuth]);
 
   // Section PROPOSALS — background upkeep (main.js) tags notes and proposes folders,
   // but NEVER moves a file itself. This is read-only polling; the only paths that ever
@@ -476,6 +480,12 @@ function App() {
     if (progressDoneTimerRef.current) clearTimeout(progressDoneTimerRef.current);
   }, []);
 
+  // Current library root for callbacks registered once at boot (the
+  // onVaultChanged handler used to close over the initial treeData = null and
+  // never refreshed the tree on file-watcher changes).
+  const treeRootRef = React.useRef(null);
+  React.useEffect(() => { treeRootRef.current = treeData ? treeData.root : null; }, [treeData]);
+
   const tree = treeData ? treeData.tree : [];
   const allNotes = React.useMemo(() => flatten(tree), [tree]);
   const noteScopes = React.useMemo(() => uniqScopes(collectTreeScopes(tree)), [tree]);
@@ -486,6 +496,11 @@ function App() {
   const setPlace = React.useCallback((id) => {
     setScopeFilter(id === 'my' ? 'private' : id);
     setView('workspace');
+    // A place switch lands on that place's grid — don't keep another place's
+    // open page, section filter, or "About: {page}" chat anchor.
+    setActiveId(null);
+    setKbFilter([]);
+    setAskCtx(null);
   }, []);
   // Tab count badges — notes passing each place's filter (counts match what the
   // place shows, so "My Notes" includes pages you own that are also shared).
@@ -978,7 +993,7 @@ function App() {
       for (const root of rootsToTry) {
         try { if (await loadTree(root)) { loadedRoot = true; break; } } catch { /* try next */ }
       }
-      if (window.lore.onVaultChanged) window.lore.onVaultChanged(() => { if (treeData) loadTree(treeData.root); });
+      if (window.lore.onVaultChanged) window.lore.onVaultChanged(() => { if (treeRootRef.current) loadTree(treeRootRef.current); });
       // Once a user has set up locally (or explicitly skipped), NEVER auto-prompt
       // onboarding again — not on a version bump, and not just because the library
       // root failed to load this boot (a transient state, not a reason to re-onboard).
@@ -1118,12 +1133,16 @@ function App() {
     const ts = Date.now().toString(36).slice(-5);
     const sep = treeData.root.includes('/') ? '/' : '\\';
     const path = treeData.root.replace(/[\\/]+$/, '') + sep + 'Untitled ' + ts + '.md';
-    const noteScope = scope || (appConfig && appConfig.scope);
+    // New pages land in the CURRENT place — creating from the Team tab must not
+    // produce a private note that instantly vanishes from the view.
+    const noteScope = place === 'team' ? 'team'
+      : place === 'company' ? 'company'
+      : (scope || (appConfig && appConfig.scope));
     const content = `${noteScope ? `---\nscope: ${noteScope}\n---\n\n` : ''}# New note\n\n`;
     try { await window.lore.writeNote(path, content); } catch { return; }
     await openNote(path);
     setMode('edit');
-  }, [treeData, openNote, scope, appConfig]);
+  }, [treeData, openNote, scope, appConfig, place]);
 
   const onImport = React.useCallback(() => {
     setShowImportModal(true);
@@ -1174,6 +1193,10 @@ function App() {
     if (!tenant || !window.lore?.askHistory?.thread) return;
     try {
       const r = await window.lore.askHistory.thread(tenant, threadId);
+      // Replacing messages mid-stream would strand the word-reveal interval
+      // with a guard that never matches — panel stuck "busy" forever.
+      clearInterval(timer.current);
+      setAsking(false);
       askThreadRef.current = threadId;
       setMessages((r.messages || []).map((m) => m.role === 'user'
         ? { role: 'user', text: m.text }
@@ -1187,7 +1210,12 @@ function App() {
     if (askThreadRef.current === threadId) { askThreadRef.current = null; setMessages([]); }
     loadAskThreads();
   }, [tenant, loadAskThreads]);
-  const newAskChat = React.useCallback(() => { askThreadRef.current = null; setMessages([]); }, []);
+  const newAskChat = React.useCallback(() => {
+    clearInterval(timer.current); // cancel an in-flight word-reveal
+    setAsking(false);
+    askThreadRef.current = null;
+    setMessages([]);
+  }, []);
 
   // Citation chip context action: push the cited note to the team. Same
   // redaction-gated IPC as the editor's visibility control; the note's path
@@ -1487,6 +1515,10 @@ function App() {
                     teamGate={(place === 'team' && !inTeam && placeCounts.team === 0) ? {
                       onCreateTeam: createTeam, onJoinTeam: joinTeam,
                       invites: pendingInvites, inviteBusy, onAcceptInvite: acceptInvite,
+                      busy: teamBusy, error: teamError,
+                    } : null}
+                    teamSetup={(place === 'team' && !inTeam && placeCounts.team > 0) ? {
+                      onCreateTeam: createTeam, onJoinTeam: joinTeam,
                       busy: teamBusy, error: teamError,
                     } : null} />
                 )}

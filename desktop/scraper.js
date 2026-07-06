@@ -59,10 +59,15 @@ function sha1(str) {
   return crypto.createHash('sha1').update(str).digest('hex');
 }
 
+// Auth headers for the on-device backend (X-Lore-Token). Set per-run from
+// runScrape opts — without it every /ingest//reindex 401s and the scrape
+// "succeeds" with everything counted as skipped while the index stays empty.
+let AUTH_HEADERS = {};
+
 async function postJSON(url, body) {
   return fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...AUTH_HEADERS },
     body: JSON.stringify(body),
   });
 }
@@ -268,8 +273,10 @@ async function runScrape({
   tenant        = null,
   full          = false,
   promptHistory = false,
+  headers       = {},
   onProgress    = () => {},
 } = {}) {
+  AUTH_HEADERS = headers || {};
   const summary = {
     files: 0, ingested: 0, skipped: 0, errors: 0,
     redacted: 0, secretsSkipped: 0,
@@ -382,7 +389,14 @@ async function runScrape({
             scope_id:  scope,
             tenant_id: tenant,
           });
-          r.ok ? summary.ingested++ : summary.skipped++;
+          if (r.ok) {
+            summary.ingested++;
+          } else {
+            // Surface the failure class — a whole-run of silent "skipped" 401s
+            // once masked an empty index for weeks.
+            summary.skipped++;
+            if (summary.errorDetails.length < 5) summary.errorDetails.push(`${filePath}: /reindex HTTP ${r.status}`);
+          }
 
         } else if (ingestExts.has(ext)) {
           // Lite/Standard: /ingest for other text files.

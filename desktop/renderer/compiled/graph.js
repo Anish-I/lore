@@ -68,7 +68,9 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
   // (and re-scatter) the force layout.
   const graphSig = React.useMemo(() => {
     const ns = graph.nodes || [];
-    return ns.length + '|' + (graph.edges || []).length + '|' + ns.map((n) => n.id).join(',');
+    // id+scope: a Move rewrites a node's scope without changing the node set —
+    // the place-colored Map must rebuild (recolor) when that happens.
+    return ns.length + '|' + (graph.edges || []).length + '|' + ns.map((n) => n.id + ':' + (n.scope || '')).join(',');
   }, [graph]);
 
   // Which edge kinds are actually present → the legend only lists relevant colors.
@@ -297,7 +299,10 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
     const sel3 = d3.select(cv);
     sel3.call(zoom).on('dblclick.zoom', null);
     zoomRef.current = { zoom, sel: sel3 };
-    tRef.current = d3.zoomIdentity;
+    // First entry = no prior transform. Don't reset an existing one — a live
+    // data refresh must not yank the viewport away from where the user panned.
+    const firstEntry = !tRef.current;
+    if (firstEntry) tRef.current = d3.zoomIdentity;
 
     const fitView = () => {
       const ns = dataRef.current.nodes;
@@ -362,11 +367,13 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
     const mo = new MutationObserver(() => {readPalette();render();});
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-    // Auto-fit ONLY on first entry (no prior zoom transform): fitting at 420ms
-    // mid-simulation zoomed to a still-moving cluster then visibly bounced out;
-    // and re-fitting on every live data refresh yanked the viewport away from
-    // wherever the user had panned. 900ms lets the layout mostly settle first.
-    const fitTimer = tRef.current ? null : setTimeout(fitView, 900);
+    // Auto-fit ONLY on first entry: fitting at 420ms mid-simulation zoomed to a
+    // still-moving cluster then visibly bounced out; and re-fitting on every
+    // live data refresh yanked the viewport away from wherever the user had
+    // panned. 900ms lets the layout mostly settle first. (This used to check
+    // tRef.current AFTER assigning zoomIdentity above — always truthy, so the
+    // first fit never ran and the Map opened at 1:1 in a corner.)
+    const fitTimer = firstEntry ? setTimeout(fitView, 900) : null;
 
     return () => {
       if (fitTimer) clearTimeout(fitTimer);

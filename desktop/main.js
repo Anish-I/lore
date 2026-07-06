@@ -907,6 +907,7 @@ ipcMain.handle('scrape:start', (_e, scrapeConfig) => {
   runScrape({
     roots, excludes, extensions, maxFiles, maxBytes, scope, owner, tenant,
     full, promptHistory,
+    headers: authHeaders(),
     onProgress: (evt) => {
       if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt);
     },
@@ -984,6 +985,7 @@ async function runImport(paths) {
         roots: [r.dir], excludes: [], extensions: undefined, maxFiles: 5000, maxBytes: 4 * 1024 * 1024,
         scope: r.cfg.scope, owner: r.cfg.owner, tenant: r.cfg.tenant,
         full: false, promptHistory: false,
+        headers: authHeaders(),
         onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
       });
     } catch { summary.errors++; }
@@ -1204,6 +1206,7 @@ ipcMain.handle('wizards:install', async (_e, id) => {
     await runScrape({
       roots: [dir], excludes: [], extensions: undefined, maxFiles: 500, maxBytes: 2 * 1024 * 1024,
       scope: w.scope, owner: cfg.owner, tenant: cfg.tenant, full: false, promptHistory: false,
+      headers: authHeaders(),
       onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
     });
   } catch { /* ignore */ }
@@ -1751,6 +1754,7 @@ async function reconcileIndex(bootStatus) {
       tenant:    cfg.tenant,
       full:      false,
       promptHistory: false,
+      headers:   authHeaders(),
       // Reuse the existing scrape:progress renderer plumbing so the app's progress
       // banner shows this exactly like a user-initiated scrape.
       onProgress: (evt) => { if (win && !win.isDestroyed()) win.webContents.send('scrape:progress', evt); },
