@@ -2,7 +2,7 @@
 // Lore desktop — Hybrid home: greeting, Ask hero, getting-started checklist,
 // section header, page cards grid, per-place empty states, Team gate.
 const hgNS = window.VaultDesignSystem_ffbf58;
-const hgIcon = hgNS.Icon;
+const HgIcon = hgNS.Icon;
 
 function hgAgo(ms) {
   if (!ms || !Number.isFinite(ms)) return null;
@@ -38,7 +38,7 @@ function HgButton({ icon, children, onClick, variant, style: extra }) {
         padding: '0 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-sans)',
         fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', ...base, ...(extra || {}),
       }}>
-      {icon && <hgIcon name={icon} size={15} />}
+      {icon && <HgIcon name={icon} size={15} />}
       {children}
     </button>
   );
@@ -56,7 +56,7 @@ function AskHero({ suggestions, onAsk }) {
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{ width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
-          <hgIcon name="sparkles" size={17} style={{ color: 'var(--brand-fg)' }} />
+          <HgIcon name="sparkles" size={17} style={{ color: 'var(--brand-fg)' }} />
         </span>
         <input value={q} onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') submit(); }}
@@ -72,7 +72,7 @@ function AskHero({ suggestions, onAsk }) {
               border: '1px solid var(--border)', background: 'var(--surface-panel)', cursor: 'pointer',
               color: 'var(--text-muted)', fontFamily: 'var(--font-sans)', fontSize: 12,
             }}>
-              <hgIcon name="message-circle-question" size={12} />{s}
+              <HgIcon name="message-circle-question" size={12} />{s}
             </button>
           ))}
         </div>
@@ -98,7 +98,7 @@ function Checklist({ steps, onGo, onDismiss }) {
         <span style={{ fontSize: 12, color: 'var(--text-faint)' }}>{done} of {items.length} done</span>
         <div style={{ flex: 1 }} />
         <button onClick={onDismiss} title="Dismiss" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', padding: 2 }}>
-          <hgIcon name="x" size={14} />
+          <HgIcon name="x" size={14} />
         </button>
       </div>
       <div style={{ height: 5, borderRadius: 999, background: 'rgba(127,127,127,0.18)', marginBottom: 12, overflow: 'hidden' }}>
@@ -115,7 +115,7 @@ function Checklist({ steps, onGo, onDismiss }) {
                 background: isDone ? 'var(--brand-bg)' : 'transparent',
                 border: isDone ? '1px solid transparent' : '1px solid var(--border-strong)',
               }}>
-                {isDone && <hgIcon name="check" size={12} style={{ color: 'var(--text-onbrand)' }} />}
+                {isDone && <HgIcon name="check" size={12} style={{ color: 'var(--text-onbrand)' }} />}
               </span>
               <span style={{ flex: 1, fontSize: 12.5, color: isDone ? 'var(--text-faint)' : 'var(--text-body)', textDecoration: isDone ? 'line-through' : 'none' }}>{it.label}</span>
               {!isDone && onGo && (
@@ -167,7 +167,7 @@ function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, onOp
           color: 'var(--brand-fg)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 11.5, fontWeight: 600,
           opacity: hover ? 1 : 0.75,
         }}>
-          <hgIcon name="sparkles" size={11} />Chat
+          <HgIcon name="sparkles" size={11} />Chat
         </button>
       </div>
     </div>
@@ -187,7 +187,7 @@ function TeamGate({ onCreateTeam, onJoinTeam, invites, inviteBusy, onAcceptInvit
         alignItems: 'center', gap: 14, textAlign: 'center',
       }}>
         <span style={{ width: 54, height: 54, borderRadius: 14, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: meta.tint, border: `1px solid ${meta.border}` }}>
-          <hgIcon name="users" size={26} style={{ color: meta.fg }} />
+          <HgIcon name="users" size={26} style={{ color: meta.fg }} />
         </span>
         <div style={{ fontSize: 17, fontWeight: 600, color: 'var(--text-strong)' }}>Team is where shared pages live</div>
         <div style={{ fontSize: 13, color: 'var(--text-subtle)', lineHeight: 1.55, maxWidth: 360 }}>
@@ -197,7 +197,7 @@ function TeamGate({ onCreateTeam, onJoinTeam, invites, inviteBusy, onAcceptInvit
           <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 }}>
             {invites.map((iv) => (
               <div key={iv.invite_id} style={{ display: 'flex', alignItems: 'center', gap: 9, padding: '9px 12px', borderRadius: 10, border: `1px solid ${meta.border}`, background: meta.tint }}>
-                <hgIcon name="mail" size={14} style={{ color: meta.fg, flexShrink: 0 }} />
+                <HgIcon name="mail" size={14} style={{ color: meta.fg, flexShrink: 0 }} />
                 <span style={{ flex: 1, minWidth: 0, textAlign: 'left', fontSize: 12.5, color: 'var(--text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   Invite to <strong>{iv.team_name || iv.team_id}</strong>
                 </span>
@@ -277,7 +277,7 @@ function HomeGrid({
         {notes.length === 0 ? (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 0', textAlign: 'center' }}>
             <span style={{ width: 46, height: 46, borderRadius: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: meta.tint, border: `1px solid ${meta.border}` }}>
-              <hgIcon name={meta.icon} size={22} style={{ color: meta.fg }} />
+              <HgIcon name={meta.icon} size={22} style={{ color: meta.fg }} />
             </span>
             <div style={{ fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)' }}>{emptyCopy.title}</div>
             <div style={{ fontSize: 12.5, color: 'var(--text-subtle)', maxWidth: 380, lineHeight: 1.55 }}>{emptyCopy.body}</div>

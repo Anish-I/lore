@@ -4,7 +4,7 @@
 // catalog; creation uses the existing chat-driven LoreWizardBuilder
 // (search-first → createFromNotes).
 const wzNS = window.VaultDesignSystem_ffbf58;
-const wzIcon = wzNS.Icon;
+const WzIcon = wzNS.Icon;
 
 function WzButton({ icon, children, onClick, variant, disabled, style: extra }) {
   const [hover, setHover] = React.useState(false);
@@ -19,7 +19,7 @@ function WzButton({ icon, children, onClick, variant, disabled, style: extra }) 
         padding: '0 13px', borderRadius: 8, cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.5 : 1,
         fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: 600, whiteSpace: 'nowrap', ...base, ...(extra || {})
       } },
-    icon && /*#__PURE__*/React.createElement("wzIcon", { name: icon, size: 14 }),
+    icon && /*#__PURE__*/React.createElement(WzIcon, { name: icon, size: 14 }),
     children
     ));
 
@@ -36,7 +36,7 @@ function WizardCard({ name, meta, teamBadge, onChat, extraAction }) {
       } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 11 } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
-    React.createElement("wzIcon", { name: "wand-2", size: 17, style: { color: 'var(--brand-fg)' } })
+    React.createElement(WzIcon, { name: "wand-2", size: 17, style: { color: 'var(--brand-fg)' } })
     ), /*#__PURE__*/
     React.createElement("div", { style: { minWidth: 0, flex: 1 } }, /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, name), /*#__PURE__*/
@@ -66,7 +66,7 @@ function CreateTile({ onClick }) {
         display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
         color: hover ? 'var(--brand-fg)' : 'var(--text-subtle)', fontFamily: 'var(--font-sans)'
       } }, /*#__PURE__*/
-    React.createElement("wzIcon", { name: "plus", size: 20 }), /*#__PURE__*/
+    React.createElement(WzIcon, { name: "plus", size: 20 }), /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 13, fontWeight: 600 } }, "Create one"), /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 11.5, color: 'var(--text-faint)' } }, "e.g. \u201Ceverything about Northwind\u201D")
     ));
@@ -123,14 +123,14 @@ function WizardChatDrawer({ wizard, onClose }) {
       } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--divider)', flexShrink: 0 } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 30, height: 30, borderRadius: 9, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
-    React.createElement("wzIcon", { name: "wand-2", size: 15, style: { color: 'var(--brand-fg)' } })
+    React.createElement(WzIcon, { name: "wand-2", size: 15, style: { color: 'var(--brand-fg)' } })
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, wizard.name), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 11, color: 'var(--text-faint)', marginTop: 1 } }, "Answers only from this Wizard\u2019s ", wizard.note_count != null ? `${wizard.note_count} ` : '', "pages")
     ), /*#__PURE__*/
     React.createElement("button", { onClick: onClose, "aria-label": "Close wizard chat", style: { border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', padding: 4 } }, /*#__PURE__*/
-    React.createElement("wzIcon", { name: "x", size: 16 })
+    React.createElement(WzIcon, { name: "x", size: 16 })
     )
     ), /*#__PURE__*/
     React.createElement("div", { ref: scrollRef, style: { flex: 1, overflowY: 'auto', padding: '12px 14px' } },
@@ -148,7 +148,7 @@ function WizardChatDrawer({ wizard, onClose }) {
     ) : /*#__PURE__*/
     React.createElement("div", { key: i, style: { display: 'flex', gap: 10, margin: '12px 0' } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 24, height: 24, flexShrink: 0, marginTop: 2, borderRadius: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
-    React.createElement("wzIcon", { name: "wand-2", size: 12, style: { color: 'var(--brand-fg)' } })
+    React.createElement(WzIcon, { name: "wand-2", size: 12, style: { color: 'var(--brand-fg)' } })
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minWidth: 0, fontSize: 13.5, lineHeight: 1.6, color: 'var(--text-body)', whiteSpace: 'pre-wrap' } }, m.text)
     )
@@ -166,7 +166,7 @@ function WizardChatDrawer({ wizard, onClose }) {
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 34, height: 34,
         border: 'none', borderRadius: 9, cursor: asking || !draft.trim() ? 'not-allowed' : 'pointer',
         background: 'var(--brand-bg)', color: 'var(--text-onbrand)', opacity: asking || !draft.trim() ? 0.5 : 1
-      } }, /*#__PURE__*/React.createElement("wzIcon", { name: "arrow-up", size: 15 }))
+      } }, /*#__PURE__*/React.createElement(WzIcon, { name: "arrow-up", size: 15 }))
     )
     )
     )
@@ -213,7 +213,7 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
     React.createElement("button", { onClick: onBack,
       onMouseEnter: () => setHoverBack(true), onMouseLeave: () => setHoverBack(false),
       style: { display: 'inline-flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: 14, fontFamily: 'var(--font-sans)', fontSize: 12.5, color: hoverBack ? 'var(--text-strong)' : 'var(--text-subtle)' } }, /*#__PURE__*/
-    React.createElement("wzIcon", { name: "arrow-left", size: 14 }), "Back to ",
+    React.createElement(WzIcon, { name: "arrow-left", size: 14 }), "Back to ",
     backLabel || 'your pages'
     ), /*#__PURE__*/
     React.createElement("h1", { style: { fontSize: 23, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-strong)', margin: '0 0 6px' } }, "Wizards"), /*#__PURE__*/

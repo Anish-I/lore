@@ -527,11 +527,19 @@ function App() {
   const bases = React.useMemo(() => tree.filter((n) => n.kind === 'folder').map((n) => n.name), [tree]);
   const baseOf = React.useCallback((p) => {
     if (!treeData || !p) return null;
-    const root = treeData.root || '';
-    let rel = p;
-    if (root && p.toLowerCase().startsWith(root.toLowerCase())) rel = p.slice(root.length);
-    rel = rel.replace(/^[\\/]+/, '');
-    return rel.split(/[\\/]/)[0] || null;
+    // Normalize separators first — config roots are often forward-slashed while
+    // tree note ids are OS-native (backslashes on Windows), which made the
+    // root-strip miss and every card chip read "C:".
+    const norm = (s) => String(s).replace(/\\/g, '/');
+    const root = norm(treeData.root || '').replace(/\/+$/, '');
+    let rel = norm(p);
+    if (root && rel.toLowerCase().startsWith(root.toLowerCase())) rel = rel.slice(root.length);
+    rel = rel.replace(/^\/+/, '');
+    const seg = rel.split('/');
+    // A top-level note has no folder segment — no section chip for it. Absolute
+    // paths outside the root (drive letter would read as a "section") get none.
+    if (seg.length < 2 || /^[a-z]:$/i.test(seg[0])) return null;
+    return seg[0] || null;
   }, [treeData]);
   // Built from the UNFILTERED tree — main.js buildTree/scopeOf() sets `wizard: true` on notes
   // whose frontmatter has a `wizard:` key. Graph nodes carry no wizard flag of their own, so

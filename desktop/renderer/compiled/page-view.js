@@ -2,7 +2,7 @@
 // Lore desktop — Hybrid open-page view: header chrome (back / Lives in / Chat /
 // Move) around the LoreEditor reading column, plus the Related-pages pill row.
 const pvNS = window.VaultDesignSystem_ffbf58;
-const pvIcon = pvNS.Icon;
+const PvIcon = pvNS.Icon;
 
 function pvScopePlace(scope) {
   const s = String(scope || '').toLowerCase();
@@ -37,7 +37,7 @@ function RelatedPages({ connections, onOpen }) {
   return (/*#__PURE__*/
     React.createElement("div", { style: { marginTop: 34, paddingTop: 18, borderTop: '1px solid var(--divider)' }, onClick: (e) => e.stopPropagation() }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 } }, /*#__PURE__*/
-    React.createElement("pvIcon", { name: "link-2", size: 14, style: { color: 'var(--text-subtle)' } }), /*#__PURE__*/
+    React.createElement(PvIcon, { name: "link-2", size: 14, style: { color: 'var(--text-subtle)' } }), /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' } }, "Related pages"), /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 11.5, color: 'var(--text-faint)' } }, "linked or on the same topic")
     ), /*#__PURE__*/
@@ -67,7 +67,7 @@ function PageView({ note, editor, place, mode, connections, onBack, onChatAbout,
         cursor: 'pointer', padding: 0, fontFamily: 'var(--font-sans)', fontSize: 12.5,
         color: hoverBack ? 'var(--text-strong)' : 'var(--text-subtle)'
       } }, /*#__PURE__*/
-    React.createElement("pvIcon", { name: "arrow-left", size: 14 }), "All ",
+    React.createElement(PvIcon, { name: "arrow-left", size: 14 }), "All ",
     placeMeta.label, " pages"
     ),
     mode === 'edit' && /*#__PURE__*/
@@ -75,7 +75,7 @@ function PageView({ note, editor, place, mode, connections, onBack, onChatAbout,
 
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
     React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, color: meta.fg } }, /*#__PURE__*/
-    React.createElement("pvIcon", { name: meta.icon, size: 13 }), "Lives in ",
+    React.createElement(PvIcon, { name: meta.icon, size: 13 }), "Lives in ",
     meta.label
     ), /*#__PURE__*/
     React.createElement("button", { onClick: onChatAbout, style: {
@@ -83,14 +83,14 @@ function PageView({ note, editor, place, mode, connections, onBack, onChatAbout,
         border: '1px solid var(--brand-soft-border)', background: 'var(--brand-soft-bg)', cursor: 'pointer',
         color: 'var(--brand-fg)', fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: 600
       } }, /*#__PURE__*/
-    React.createElement("pvIcon", { name: "sparkles", size: 13 }), "Chat about this"
+    React.createElement(PvIcon, { name: "sparkles", size: 13 }), "Chat about this"
     ), /*#__PURE__*/
     React.createElement("button", { onClick: onMove, style: {
         display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 13px', borderRadius: 8,
         border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer',
         color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: 500
       } }, /*#__PURE__*/
-    React.createElement("pvIcon", { name: "corner-up-right", size: 13 }), "Move\u2026"
+    React.createElement(PvIcon, { name: "corner-up-right", size: 13 }), "Move\u2026"
     )
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minHeight: 0, display: 'flex' } },

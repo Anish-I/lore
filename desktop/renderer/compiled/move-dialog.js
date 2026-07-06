@@ -3,7 +3,7 @@
 // Presentation only; the parent performs the move via the redaction-gated
 // setNoteScope IPC and closes the dialog.
 const mvNS = window.VaultDesignSystem_ffbf58;
-const mvIcon = mvNS.Icon;
+const MvIcon = mvNS.Icon;
 
 function mvPlaceOf(scope) {
   const s = String(scope || '').toLowerCase();
@@ -25,13 +25,13 @@ function MoveTargetRow({ meta, hint, onClick, disabled }) {
         fontFamily: 'var(--font-sans)'
       } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: meta.tint, border: `1px solid ${meta.border}` } }, /*#__PURE__*/
-    React.createElement("mvIcon", { name: meta.icon, size: 16, style: { color: meta.fg } })
+    React.createElement(MvIcon, { name: meta.icon, size: 16, style: { color: meta.fg } })
     ), /*#__PURE__*/
     React.createElement("span", { style: { flex: 1, minWidth: 0 } }, /*#__PURE__*/
     React.createElement("span", { style: { display: 'block', fontSize: 13.5, fontWeight: 600, color: 'var(--text-strong)' } }, meta.label), /*#__PURE__*/
     React.createElement("span", { style: { display: 'block', fontSize: 11.5, color: 'var(--text-subtle)', marginTop: 1 } }, hint)
     ), /*#__PURE__*/
-    React.createElement("mvIcon", { name: "arrow-right", size: 15, style: { color: 'var(--text-faint)', flexShrink: 0 } })
+    React.createElement(MvIcon, { name: "arrow-right", size: 15, style: { color: 'var(--text-faint)', flexShrink: 0 } })
     ));
 
 }

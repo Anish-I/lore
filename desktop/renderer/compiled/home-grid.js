@@ -2,7 +2,7 @@
 // Lore desktop — Hybrid home: greeting, Ask hero, getting-started checklist,
 // section header, page cards grid, per-place empty states, Team gate.
 const hgNS = window.VaultDesignSystem_ffbf58;
-const hgIcon = hgNS.Icon;
+const HgIcon = hgNS.Icon;
 
 function hgAgo(ms) {
   if (!ms || !Number.isFinite(ms)) return null;
@@ -38,7 +38,7 @@ function HgButton({ icon, children, onClick, variant, style: extra }) {
         padding: '0 14px', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-sans)',
         fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', ...base, ...(extra || {})
       } },
-    icon && /*#__PURE__*/React.createElement("hgIcon", { name: icon, size: 15 }),
+    icon && /*#__PURE__*/React.createElement(HgIcon, { name: icon, size: 15 }),
     children
     ));
 
@@ -56,7 +56,7 @@ function AskHero({ suggestions, onAsk }) {
       } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10 } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 34, height: 34, borderRadius: 9, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
-    React.createElement("hgIcon", { name: "sparkles", size: 17, style: { color: 'var(--brand-fg)' } })
+    React.createElement(HgIcon, { name: "sparkles", size: 17, style: { color: 'var(--brand-fg)' } })
     ), /*#__PURE__*/
     React.createElement("input", { value: q, onChange: (e) => setQ(e.target.value),
       onKeyDown: (e) => {if (e.key === 'Enter') submit();},
@@ -72,7 +72,7 @@ function AskHero({ suggestions, onAsk }) {
         border: '1px solid var(--border)', background: 'var(--surface-panel)', cursor: 'pointer',
         color: 'var(--text-muted)', fontFamily: 'var(--font-sans)', fontSize: 12
       } }, /*#__PURE__*/
-    React.createElement("hgIcon", { name: "message-circle-question", size: 12 }), s
+    React.createElement(HgIcon, { name: "message-circle-question", size: 12 }), s
     )
     )
     )
@@ -98,7 +98,7 @@ function Checklist({ steps, onGo, onDismiss }) {
     React.createElement("span", { style: { fontSize: 12, color: 'var(--text-faint)' } }, done, " of ", items.length, " done"), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
     React.createElement("button", { onClick: onDismiss, title: "Dismiss", style: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-faint)', display: 'inline-flex', padding: 2 } }, /*#__PURE__*/
-    React.createElement("hgIcon", { name: "x", size: 14 })
+    React.createElement(HgIcon, { name: "x", size: 14 })
     )
     ), /*#__PURE__*/
     React.createElement("div", { style: { height: 5, borderRadius: 999, background: 'rgba(127,127,127,0.18)', marginBottom: 12, overflow: 'hidden' } }, /*#__PURE__*/
@@ -115,7 +115,7 @@ function Checklist({ steps, onGo, onDismiss }) {
             background: isDone ? 'var(--brand-bg)' : 'transparent',
             border: isDone ? '1px solid transparent' : '1px solid var(--border-strong)'
           } },
-        isDone && /*#__PURE__*/React.createElement("hgIcon", { name: "check", size: 12, style: { color: 'var(--text-onbrand)' } })
+        isDone && /*#__PURE__*/React.createElement(HgIcon, { name: "check", size: 12, style: { color: 'var(--text-onbrand)' } })
         ), /*#__PURE__*/
         React.createElement("span", { style: { flex: 1, fontSize: 12.5, color: isDone ? 'var(--text-faint)' : 'var(--text-body)', textDecoration: isDone ? 'line-through' : 'none' } }, it.label),
         !isDone && onGo && /*#__PURE__*/
@@ -167,7 +167,7 @@ function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, onOp
         color: 'var(--brand-fg)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 11.5, fontWeight: 600,
         opacity: hover ? 1 : 0.75
       } }, /*#__PURE__*/
-    React.createElement("hgIcon", { name: "sparkles", size: 11 }), "Chat"
+    React.createElement(HgIcon, { name: "sparkles", size: 11 }), "Chat"
     )
     )
     ));
@@ -187,7 +187,7 @@ function TeamGate({ onCreateTeam, onJoinTeam, invites, inviteBusy, onAcceptInvit
         alignItems: 'center', gap: 14, textAlign: 'center'
       } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 54, height: 54, borderRadius: 14, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: meta.tint, border: `1px solid ${meta.border}` } }, /*#__PURE__*/
-    React.createElement("hgIcon", { name: "users", size: 26, style: { color: meta.fg } })
+    React.createElement(HgIcon, { name: "users", size: 26, style: { color: meta.fg } })
     ), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 17, fontWeight: 600, color: 'var(--text-strong)' } }, "Team is where shared pages live"), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 13, color: 'var(--text-subtle)', lineHeight: 1.55, maxWidth: 360 } }, "Create a team and every page you move here becomes readable by your teammates \u2014 nothing is shared until you move it."
@@ -197,7 +197,7 @@ function TeamGate({ onCreateTeam, onJoinTeam, invites, inviteBusy, onAcceptInvit
     React.createElement("div", { style: { width: '100%', display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 } },
     invites.map((iv) => /*#__PURE__*/
     React.createElement("div", { key: iv.invite_id, style: { display: 'flex', alignItems: 'center', gap: 9, padding: '9px 12px', borderRadius: 10, border: `1px solid ${meta.border}`, background: meta.tint } }, /*#__PURE__*/
-    React.createElement("hgIcon", { name: "mail", size: 14, style: { color: meta.fg, flexShrink: 0 } }), /*#__PURE__*/
+    React.createElement(HgIcon, { name: "mail", size: 14, style: { color: meta.fg, flexShrink: 0 } }), /*#__PURE__*/
     React.createElement("span", { style: { flex: 1, minWidth: 0, textAlign: 'left', fontSize: 12.5, color: 'var(--text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, "Invite to ", /*#__PURE__*/
     React.createElement("strong", null, iv.team_name || iv.team_id)
     ), /*#__PURE__*/
@@ -277,7 +277,7 @@ function HomeGrid({
     notes.length === 0 ? /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: '48px 0', textAlign: 'center' } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 46, height: 46, borderRadius: 12, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: meta.tint, border: `1px solid ${meta.border}` } }, /*#__PURE__*/
-    React.createElement("hgIcon", { name: meta.icon, size: 22, style: { color: meta.fg } })
+    React.createElement(HgIcon, { name: meta.icon, size: 22, style: { color: meta.fg } })
     ), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 14.5, fontWeight: 600, color: 'var(--text-strong)' } }, emptyCopy.title), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 12.5, color: 'var(--text-subtle)', maxWidth: 380, lineHeight: 1.55 } }, emptyCopy.body),

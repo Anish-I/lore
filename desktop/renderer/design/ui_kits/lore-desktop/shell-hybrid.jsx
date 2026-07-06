@@ -2,7 +2,7 @@
 // Lore desktop — Hybrid shell (Redesign C): Places bar, Ribbon, Section rail,
 // Avatar menu, Toast. Replaces the old Titlebar/ActivityRail/Sidebar chrome.
 const sh2NS = window.VaultDesignSystem_ffbf58;
-const sh2Icon = sh2NS.Icon;
+const Sh2Icon = sh2NS.Icon;
 const sh2IsMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
 // Reusable "?" help hint with an instant custom tooltip (native title is
@@ -72,7 +72,7 @@ function PlaceTab({ meta, active, count, onClick }) {
         color: active ? meta.fg : 'var(--text-muted)',
         fontFamily: 'var(--font-sans)', fontSize: 13.5, fontWeight: 600, whiteSpace: 'nowrap',
       }}>
-      <sh2Icon name={meta.icon} size={16} />
+      <Sh2Icon name={meta.icon} size={16} />
       <span>{meta.label}</span>
       {count != null && (
         <span style={{
@@ -92,7 +92,7 @@ function AvatarMenu({ authUser, theme, onToggleTheme, onSettings, onHooks, onMan
       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', borderRadius: 8 }}
       onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
       onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
-      <sh2Icon name={icon} size={15} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
+      <Sh2Icon name={icon} size={15} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontSize: 13, color: 'var(--text-body)' }}>{label}</div>
         {sub && <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>{sub}</div>}
@@ -162,7 +162,7 @@ function PlacesBar({ place, onPlace, counts, onSearch, theme, onToggleTheme, aut
           color: 'var(--text-subtle)', fontFamily: 'var(--font-sans)', fontSize: 12.5, cursor: 'pointer',
           WebkitAppRegion: 'no-drag',
         }}>
-          <sh2Icon name="search" size={14} />
+          <Sh2Icon name="search" size={14} />
           <span style={{ flex: 1, textAlign: 'left' }}>Search</span>
           <span style={{ fontSize: 10.5, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 5px' }}>{sh2IsMac ? '⌘K' : 'Ctrl K'}</span>
         </button>
@@ -187,7 +187,7 @@ function RibbonTile({ icon, label, onClick, active, disabled, activeColor, title
         color: active ? 'var(--brand-fg)' : 'var(--text-body)',
         fontFamily: 'var(--font-sans)',
       }}>
-      <sh2Icon name={icon} size={19} />
+      <Sh2Icon name={icon} size={19} />
       <span style={{ fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' }}>{label}</span>
     </button>
   );
@@ -226,7 +226,7 @@ function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onNewPage, onAd
       <div style={{ flex: 1 }} />
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 0 }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: meta.fg, fontSize: 12, fontWeight: 500 }}>
-          <sh2Icon name={meta.icon} size={13} />
+          <Sh2Icon name={meta.icon} size={13} />
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{meta.hint}</span>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-faint)' }}>{meta.subHint}</div>
@@ -248,7 +248,7 @@ function RailRow({ icon, chipColor, label, count, active, onClick }) {
         fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: active ? 600 : 400,
       }}>
       {icon
-        ? <sh2Icon name={icon} size={14} style={{ color: active ? 'var(--brand-fg)' : 'var(--text-subtle)', flexShrink: 0 }} />
+        ? <Sh2Icon name={icon} size={14} style={{ color: active ? 'var(--brand-fg)' : 'var(--text-subtle)', flexShrink: 0 }} />
         : <span style={{ width: 10, height: 10, borderRadius: 3, background: chipColor || 'var(--text-faint)', flexShrink: 0 }} />}
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
       {count != null && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{count}</span>}
@@ -274,7 +274,7 @@ function SectionRail({ sections, allCount, active, onSelect, place, theme }) {
         ))}
       </div>
       <div style={{ padding: '10px 10px 2px', borderTop: '1px solid var(--divider)', display: 'flex', gap: 7, alignItems: 'flex-start' }}>
-        <sh2Icon name={meta.icon} size={12} style={{ color: meta.fg, flexShrink: 0, marginTop: 1 }} />
+        <Sh2Icon name={meta.icon} size={12} style={{ color: meta.fg, flexShrink: 0, marginTop: 1 }} />
         <span style={{ fontSize: 10.5, color: 'var(--text-faint)', lineHeight: 1.45 }}>{meta.footer}</span>
       </div>
     </div>
@@ -295,7 +295,7 @@ function Toast({ toast }) {
         boxShadow: 'var(--shadow-popover)', color: 'var(--text-body)', fontSize: 13,
         fontFamily: 'var(--font-sans)', animation: 'lore-fade-in 160ms ease',
       }}>
-        <sh2Icon name="check" size={15} style={{ color: 'var(--success-fg)' }} />
+        <Sh2Icon name="check" size={15} style={{ color: 'var(--success-fg)' }} />
         <span>{toast}</span>
       </div>
     </div>

@@ -2,7 +2,7 @@
 // Lore desktop — Hybrid shell (Redesign C): Places bar, Ribbon, Section rail,
 // Avatar menu, Toast. Replaces the old Titlebar/ActivityRail/Sidebar chrome.
 const sh2NS = window.VaultDesignSystem_ffbf58;
-const sh2Icon = sh2NS.Icon;
+const Sh2Icon = sh2NS.Icon;
 const sh2IsMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
 // Reusable "?" help hint with an instant custom tooltip (native title is
@@ -72,7 +72,7 @@ function PlaceTab({ meta, active, count, onClick }) {
         color: active ? meta.fg : 'var(--text-muted)',
         fontFamily: 'var(--font-sans)', fontSize: 13.5, fontWeight: 600, whiteSpace: 'nowrap'
       } }, /*#__PURE__*/
-    React.createElement("sh2Icon", { name: meta.icon, size: 16 }), /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: meta.icon, size: 16 }), /*#__PURE__*/
     React.createElement("span", null, meta.label),
     count != null && /*#__PURE__*/
     React.createElement("span", { style: {
@@ -92,7 +92,7 @@ function AvatarMenu({ authUser, theme, onToggleTheme, onSettings, onHooks, onMan
     style: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', borderRadius: 8 },
     onMouseEnter: (e) => e.currentTarget.style.background = 'var(--surface-hover)',
     onMouseLeave: (e) => e.currentTarget.style.background = 'transparent' }, /*#__PURE__*/
-  React.createElement("sh2Icon", { name: icon, size: 15, style: { color: 'var(--text-subtle)', flexShrink: 0 } }), /*#__PURE__*/
+  React.createElement(Sh2Icon, { name: icon, size: 15, style: { color: 'var(--text-subtle)', flexShrink: 0 } }), /*#__PURE__*/
   React.createElement("div", { style: { minWidth: 0, flex: 1 } }, /*#__PURE__*/
   React.createElement("div", { style: { fontSize: 13, color: 'var(--text-body)' } }, label),
   sub && /*#__PURE__*/React.createElement("div", { style: { fontSize: 11, color: 'var(--text-faint)', marginTop: 1 } }, sub)
@@ -162,7 +162,7 @@ function PlacesBar({ place, onPlace, counts, onSearch, theme, onToggleTheme, aut
         color: 'var(--text-subtle)', fontFamily: 'var(--font-sans)', fontSize: 12.5, cursor: 'pointer',
         WebkitAppRegion: 'no-drag'
       } }, /*#__PURE__*/
-    React.createElement("sh2Icon", { name: "search", size: 14 }), /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: "search", size: 14 }), /*#__PURE__*/
     React.createElement("span", { style: { flex: 1, textAlign: 'left' } }, "Search"), /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 10.5, color: 'var(--text-faint)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 5px' } }, sh2IsMac ? '⌘K' : 'Ctrl K')
     ), /*#__PURE__*/
@@ -187,7 +187,7 @@ function RibbonTile({ icon, label, onClick, active, disabled, activeColor, title
         color: active ? 'var(--brand-fg)' : 'var(--text-body)',
         fontFamily: 'var(--font-sans)'
       } }, /*#__PURE__*/
-    React.createElement("sh2Icon", { name: icon, size: 19 }), /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: icon, size: 19 }), /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' } }, label)
     ));
 
@@ -226,7 +226,7 @@ function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onNewPage, onAd
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 0 } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'inline-flex', alignItems: 'center', gap: 6, color: meta.fg, fontSize: 12, fontWeight: 500 } }, /*#__PURE__*/
-    React.createElement("sh2Icon", { name: meta.icon, size: 13 }), /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: meta.icon, size: 13 }), /*#__PURE__*/
     React.createElement("span", { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, meta.hint)
     ), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 11, color: 'var(--text-faint)' } }, meta.subHint)
@@ -248,7 +248,7 @@ function RailRow({ icon, chipColor, label, count, active, onClick }) {
         fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: active ? 600 : 400
       } },
     icon ? /*#__PURE__*/
-    React.createElement("sh2Icon", { name: icon, size: 14, style: { color: active ? 'var(--brand-fg)' : 'var(--text-subtle)', flexShrink: 0 } }) : /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: icon, size: 14, style: { color: active ? 'var(--brand-fg)' : 'var(--text-subtle)', flexShrink: 0 } }) : /*#__PURE__*/
     React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: chipColor || 'var(--text-faint)', flexShrink: 0 } }), /*#__PURE__*/
     React.createElement("span", { style: { flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label),
     count != null && /*#__PURE__*/React.createElement("span", { style: { fontSize: 11, color: 'var(--text-faint)' } }, count)
@@ -274,7 +274,7 @@ function SectionRail({ sections, allCount, active, onSelect, place, theme }) {
     )
     ), /*#__PURE__*/
     React.createElement("div", { style: { padding: '10px 10px 2px', borderTop: '1px solid var(--divider)', display: 'flex', gap: 7, alignItems: 'flex-start' } }, /*#__PURE__*/
-    React.createElement("sh2Icon", { name: meta.icon, size: 12, style: { color: meta.fg, flexShrink: 0, marginTop: 1 } }), /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: meta.icon, size: 12, style: { color: meta.fg, flexShrink: 0, marginTop: 1 } }), /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 10.5, color: 'var(--text-faint)', lineHeight: 1.45 } }, meta.footer)
     )
     ));
@@ -295,7 +295,7 @@ function Toast({ toast }) {
         boxShadow: 'var(--shadow-popover)', color: 'var(--text-body)', fontSize: 13,
         fontFamily: 'var(--font-sans)', animation: 'lore-fade-in 160ms ease'
       } }, /*#__PURE__*/
-    React.createElement("sh2Icon", { name: "check", size: 15, style: { color: 'var(--success-fg)' } }), /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: "check", size: 15, style: { color: 'var(--success-fg)' } }), /*#__PURE__*/
     React.createElement("span", null, toast)
     )
     ));
