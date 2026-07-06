@@ -1492,12 +1492,12 @@ function App() {
       onHooks: advancedMode ? () => setView('hooks') : null,
       onManageTeam: () => setView('projects'),
       onSignIn: signIn, onSignOut: signOut }), /*#__PURE__*/
-    React.createElement(Ribbon, { place: place, askOpen: askOpen, mapOpen: mapOpen, wizardsOpen: view === 'buckets',
+    React.createElement(Ribbon, { place: place, askOpen: askOpen, mapOpen: mapOpen, wizardsOpen: view === 'wizards',
       canMove: Boolean(activeNote),
       onNewPage: onCreateNote, onAddFiles: onImport,
       onToggleAsk: () => setAskOpen((o) => !o),
       onMap: () => setMapOpen((o) => !o),
-      onWizards: () => setView(view === 'buckets' ? 'workspace' : 'buckets'),
+      onWizards: () => setView(view === 'wizards' ? 'workspace' : 'wizards'),
       onMove: () => setMoveOpen(true) }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', minHeight: 0, position: 'relative' } }, /*#__PURE__*/
     React.createElement(LoreErrorBoundary, { key: view },
@@ -1563,7 +1563,14 @@ function App() {
     askOpen && askPanel
     ),
 
-    view === 'buckets' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement(BucketsView, { buckets: M.buckets, onAsk: () => setAskOpen(true), onOpen: openBucket, onChanged: reloadAfterImport, scopes: persona.scopes, advancedMode: advancedMode }), askOpen && askPanel),
+    view === 'wizards' && window.LoreWizardsView && /*#__PURE__*/
+    React.createElement(React.Fragment, null, /*#__PURE__*/
+    React.createElement(window.LoreWizardsView, { onBack: () => setView('workspace'),
+      backLabel: (window.LorePlaceMeta[place] || {}).label,
+      scopes: persona.scopes, onChanged: reloadAfterImport }),
+    askOpen && askPanel
+    ),
+
     view === 'settings' && /*#__PURE__*/React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions, onConfig: setAppConfig, onOpenSetup: () => setShowOnboarding(true) }),
     view === 'hooks' && advancedMode && HooksView && /*#__PURE__*/React.createElement(HooksView, { scopeOptions: scopeOptions, identityReady: identityReady, tenant: tenant, scope: persona.scopes && persona.scopes[0], onOpenSetup: () => setShowOnboarding(true) })
     ),

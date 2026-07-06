@@ -1492,12 +1492,12 @@ function App() {
         onHooks={advancedMode ? () => setView('hooks') : null}
         onManageTeam={() => setView('projects')}
         onSignIn={signIn} onSignOut={signOut} />
-      <Ribbon place={place} askOpen={askOpen} mapOpen={mapOpen} wizardsOpen={view === 'buckets'}
+      <Ribbon place={place} askOpen={askOpen} mapOpen={mapOpen} wizardsOpen={view === 'wizards'}
         canMove={Boolean(activeNote)}
         onNewPage={onCreateNote} onAddFiles={onImport}
         onToggleAsk={() => setAskOpen((o) => !o)}
         onMap={() => setMapOpen((o) => !o)}
-        onWizards={() => setView(view === 'buckets' ? 'workspace' : 'buckets')}
+        onWizards={() => setView(view === 'wizards' ? 'workspace' : 'wizards')}
         onMove={() => setMoveOpen(true)} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         <LoreErrorBoundary key={view}>
@@ -1563,7 +1563,14 @@ function App() {
             {askOpen && askPanel}
           </React.Fragment>
         )}
-        {view === 'buckets' && (<React.Fragment><BucketsView buckets={M.buckets} onAsk={() => setAskOpen(true)} onOpen={openBucket} onChanged={reloadAfterImport} scopes={persona.scopes} advancedMode={advancedMode} />{askOpen && askPanel}</React.Fragment>)}
+        {view === 'wizards' && window.LoreWizardsView && (
+          <React.Fragment>
+            <window.LoreWizardsView onBack={() => setView('workspace')}
+              backLabel={(window.LorePlaceMeta[place] || {}).label}
+              scopes={persona.scopes} onChanged={reloadAfterImport} />
+            {askOpen && askPanel}
+          </React.Fragment>
+        )}
         {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onConfig={setAppConfig} onOpenSetup={() => setShowOnboarding(true)} />}
         {view === 'hooks' && advancedMode && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} tenant={tenant} scope={persona.scopes && persona.scopes[0]} onOpenSetup={() => setShowOnboarding(true)} />}
         </LoreErrorBoundary>
