@@ -5,6 +5,23 @@ const sh2NS = window.VaultDesignSystem_ffbf58;
 const sh2Icon = sh2NS.Icon;
 const sh2IsMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
 
+// Reusable "?" help hint with an instant custom tooltip (native title is
+// unreliable in Electron). On window so other ui-kit files (buckets/projects/
+// hooks) can reuse it — moved here from the retired shell.jsx.
+function HelpHint({ tip, size = 14 }) {
+  const [show, setShow] = React.useState(false);
+  return (
+    <span style={{ position: 'relative', display: 'inline-flex', verticalAlign: 'middle' }}
+      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: size, height: size, borderRadius: '50%', border: '1px solid var(--border-strong)', color: 'var(--text-faint)', fontSize: Math.round(size * 0.62), fontWeight: 700, cursor: 'help' }}>?</span>
+      {show && (
+        <span style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, width: 240, padding: '9px 11px', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-lg)', color: 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 11.5, fontWeight: 400, lineHeight: 1.5, whiteSpace: 'normal', zIndex: 200, pointerEvents: 'none' }}>{tip}</span>
+      )}
+    </span>
+  );
+}
+window.LoreHelpHint = HelpHint;
+
 // Place metadata — the single source of truth for the My Notes / Team / Company
 // triad. Colors resolve through the --place-* tokens so both themes work.
 // Shared on window for home-grid / page-view / ask / move-dialog.

@@ -1,0 +1,1175 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&amp;display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@0.462.0/dist/umd/lucide.min.js"></script>
+<script>
+(function(){
+  function pas(n){ return String(n||'').split('-').map(function(s){return s? s[0].toUpperCase()+s.slice(1):'';}).join(''); }
+  function build(ic,size,sw){
+    var kids=(typeof ic[0]==='string')?ic[2]:ic;
+    var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('viewBox','0 0 24 24'); svg.setAttribute('fill','none'); svg.setAttribute('stroke','currentColor');
+    svg.setAttribute('stroke-linecap','round'); svg.setAttribute('stroke-linejoin','round');
+    svg.setAttribute('width',size); svg.setAttribute('height',size); svg.setAttribute('stroke-width',sw);
+    for(var i=0;i<(kids||[]).length;i++){ var t=kids[i]; if(!Array.isArray(t)) continue; var el=document.createElementNS('http://www.w3.org/2000/svg',t[0]); var at=t[1]||{}; for(var k in at){ if(k!=='key') el.setAttribute(k,at[k]); } svg.appendChild(el); }
+    return svg;
+  }
+  var C = class extends HTMLElement{
+    constructor(){ super(); if(!this.shadowRoot) this.attachShadow({mode:'open'}); }
+    static get observedAttributes(){ return ['name','size','sw']; }
+    connectedCallback(){ this.sync(); }
+    attributeChangedCallback(){ this.sync(); }
+    sync(){
+      var self=this;
+      if(!window.lucide||!window.lucide.icons){ if(!this.__t){ this.__t=setTimeout(function(){ self.__t=null; self.sync(); },120);} return; }
+      var size=parseFloat(this.getAttribute('size')||'16');
+      var name=this.getAttribute('name'); if(!name||!this.shadowRoot) return;
+      var ic=window.lucide.icons[pas(name)]||window.lucide.icons[name];
+      var sr=this.shadowRoot; sr.innerHTML='';
+      var st=document.createElement('style');
+      st.textContent=':host{display:inline-flex;align-items:center;justify-content:center;width:'+size+'px;height:'+size+'px;flex-shrink:0;line-height:0}svg{display:block}';
+      sr.appendChild(st);
+      if(ic) sr.appendChild(build(ic,size,this.getAttribute('sw')||'1.75'));
+    }
+  };
+  if(!customElements.get('l-i')) customElements.define('l-i',C);
+})();
+</script>
+<style>
+  html,body{margin:0;height:100%;background:#101116;overflow:hidden}
+  @keyframes lore-caret{0%,100%{opacity:1}50%{opacity:0}}
+  @keyframes lore-fade-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  *{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.16) transparent}
+  *::-webkit-scrollbar{width:10px;height:10px}
+  *::-webkit-scrollbar-thumb{background:rgba(255,255,255,.16);border-radius:999px;border:2px solid transparent;background-clip:content-box}
+  *::-webkit-scrollbar-corner{background:transparent}
+  ::selection{background:rgba(217,154,43,.25);color:#f6f4ee}
+  a{color:#e8b04a} a:hover{color:#f0bd62}
+  input,textarea,button,select{font-family:inherit}
+</style>
+</helmet>
+
+<div style="position:fixed; inset:0; display:flex; flex-direction:column; background:#101116; font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif; color:#d6d8de; -webkit-font-smoothing:antialiased; box-sizing:border-box">
+
+  <!-- â•â•â•â•â•â•â•â•â•â• TOP BAR: places â•â•â•â•â•â•â•â•â•â• -->
+  <div data-screen-label="Places bar" style="height:56px; display:flex; align-items:center; gap:16px; padding:0 16px; background:#191b22; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0; user-select:none">
+    <div style="display:flex; align-items:center; gap:9px; width:170px">
+      <img src="assets/logomark.svg" alt="Lore" draggable="false" style="width:22px; height:22px">
+      <span style="font-size:15.5px; font-weight:700; color:#f6f4ee">Lore</span>
+    </div>
+    <div style="flex:1; display:flex; justify-content:center; gap:6px">
+      <sc-for list="{{ placeTabs }}" as="p" hint-placeholder-count="3">
+        <button onClick="{{ p.click }}" title="{{ p.tip }}" style="display:flex; align-items:center; gap:9px; height:38px; padding:0 16px; border:1px solid {{ p.bd }}; border-radius:10px; cursor:pointer; background:{{ p.bg }}; color:{{ p.fg }}; font-size:13.5px; font-weight:600" style-hover="filter:brightness(1.12)">
+          <l-i name="{{ p.icon }}" size="16"></l-i>{{ p.label }}
+          <span style="font-size:11.5px; font-weight:600; opacity:0.75; background:rgba(255,255,255,0.10); border-radius:999px; padding:1px 7px">{{ p.count }}</span>
+        </button>
+      </sc-for>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; width:270px; justify-content:flex-end">
+      <button onClick="{{ openSearch }}" style="display:flex; align-items:center; gap:8px; height:32px; padding:0 12px; background:#101116; border:1px solid rgba(255,255,255,0.12); border-radius:8px; color:#8b8f9a; font-size:12.5px; cursor:pointer; min-width:150px" style-hover="border-color:rgba(255,255,255,0.22)">
+        <l-i name="search" size="14"></l-i><span style="flex:1; text-align:left">Search</span><span style="font-size:10.5px; color:#585c67">Ctrl K</span>
+      </button>
+      <span title="{{ ownerName }}" style="width:30px; height:30px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:#bd7f1c; color:#1c1408; font-weight:600; font-size:12.5px; cursor:default">{{ ownerInitials }}</span>
+    </div>
+  </div>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• RIBBON â•â•â•â•â•â•â•â•â•â• -->
+  <div data-screen-label="Ribbon" style="display:flex; align-items:stretch; gap:4px; padding:8px 16px; background:#15161c; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0; user-select:none">
+    <sc-for list="{{ ribbonGroups }}" as="g" hint-placeholder-count="3">
+      <div style="display:flex; flex-direction:column; gap:3px; padding:0 10px; border-right:1px solid rgba(255,255,255,0.07)">
+        <div style="display:flex; gap:4px">
+          <sc-for list="{{ g.buttons }}" as="b" hint-placeholder-count="2">
+            <button onClick="{{ b.click }}" title="{{ b.tip }}" style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; min-width:64px; height:54px; padding:0 8px; border:none; border-radius:8px; cursor:pointer; background:{{ b.bg }}; color:{{ b.fg }}; opacity:{{ b.op }}" style-hover="background:rgba(255,255,255,0.06)">
+              <l-i name="{{ b.icon }}" size="19" style="color:{{ b.iconColor }}"></l-i>
+              <span style="font-size:11px; font-weight:500; white-space:nowrap">{{ b.label }}</span>
+            </button>
+          </sc-for>
+        </div>
+        <div style="font-size:10px; color:#585c67; text-align:center; letter-spacing:0.04em">{{ g.caption }}</div>
+      </div>
+    </sc-for>
+    <div style="flex:1"></div>
+    <div style="display:flex; flex-direction:column; justify-content:center; align-items:flex-end; gap:2px; padding-right:2px">
+      <div style="display:flex; align-items:center; gap:7px; font-size:12px; color:{{ placeHintColor }}">
+        <l-i name="{{ placeHintIcon }}" size="13"></l-i>{{ placeHint }}
+      </div>
+      <div style="font-size:11px; color:#585c67">{{ placeSubHint }}</div>
+    </div>
+  </div>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• MAIN â•â•â•â•â•â•â•â•â•â• -->
+  <div style="flex:1; min-height:0; display:flex">
+
+    <!-- Wizards view -->
+    <sc-if value="{{ isWizards }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Wizards" style="flex:1; min-width:0; overflow-y:auto; background:#101116">
+        <div style="max-width:860px; margin:0 auto; padding:32px 28px 80px">
+          <button onClick="{{ backFromWizards }}" style="display:inline-flex; align-items:center; gap:7px; border:none; background:transparent; color:#8b8f9a; font-size:13px; cursor:pointer; padding:4px 0; margin-bottom:14px" style-hover="color:#e8e9ec"><l-i name="arrow-left" size="14"></l-i>Back to {{ placeName }}</button>
+          <h1 style="font-size:23px; font-weight:700; color:#f6f4ee; margin:0 0 6px">Wizards</h1>
+          <p style="font-size:13.5px; color:#8b8f9a; margin:0; line-height:1.55; max-width:520px">A Wizard is a <strong style="color:#d6d8de; font-weight:600">bundle of pages you can chat with</strong> â€” like handing someone a smart binder. Pages stay where they live; a page can be in many Wizards.</p>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px, 1fr)); gap:14px; margin-top:24px">
+            <sc-for list="{{ wizardCards }}" as="w" hint-placeholder-count="2">
+              <div style="background:#15161c; border:1px solid rgba(255,255,255,0.10); border-radius:14px; padding:18px; display:flex; flex-direction:column; gap:12px">
+                <div style="display:flex; align-items:center; gap:11px">
+                  <span style="width:36px; height:36px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; background:rgba(217,154,43,0.13); flex-shrink:0"><l-i name="wand-2" size="17" style="color:#df9f30"></l-i></span>
+                  <div style="flex:1; min-width:0">
+                    <div style="font-size:14.5px; font-weight:600; color:#f6f4ee; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ w.name }}</div>
+                    <div style="font-size:12px; color:#8b8f9a; margin-top:1px">{{ w.meta }}</div>
+                  </div>
+                  <sc-if value="{{ w.shared }}" hint-placeholder-val="{{ false }}">
+                    <span title="Lives in Team" style="display:inline-flex; align-items:center; gap:5px; height:22px; padding:0 9px; font-size:11.5px; font-weight:600; color:#5cbd84; background:rgba(63,174,110,0.14); border-radius:999px"><l-i name="users" size="11"></l-i>Team</span>
+                  </sc-if>
+                </div>
+                <button onClick="{{ w.chat }}" style="display:inline-flex; align-items:center; justify-content:center; gap:8px; height:34px; font-size:13px; font-weight:600; border-radius:8px; border:1px solid rgba(217,154,43,0.35); cursor:pointer; background:rgba(217,154,43,0.10); color:#e8b04a" style-hover="background:rgba(217,154,43,0.18)"><l-i name="message-circle" size="15"></l-i>Chat with it</button>
+              </div>
+            </sc-for>
+            <button onClick="{{ builderShow }}" style="min-height:130px; background:transparent; border:1.5px dashed rgba(255,255,255,0.16); border-radius:14px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px; cursor:pointer; color:#8b8f9a; font-size:13px" style-hover="border-color:rgba(217,154,43,0.5); color:#e8b04a">
+              <l-i name="plus" size="20"></l-i>Create one â€” e.g. â€œeverything about Northwindâ€
+            </button>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <!-- Place content -->
+    <sc-if value="{{ isPlace }}" hint-placeholder-val="{{ true }}">
+      <!-- Section rail -->
+      <sc-if value="{{ showRail }}" hint-placeholder-val="{{ true }}">
+        <div data-screen-label="Sections" style="width:190px; flex-shrink:0; background:#15161c; border-right:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column; padding:14px 8px">
+          <sc-for list="{{ railRows }}" as="r" hint-placeholder-count="4">
+            <button onClick="{{ r.click }}" style="display:flex; align-items:center; gap:9px; height:34px; padding:0 11px; border:none; border-radius:8px; cursor:pointer; background:{{ r.bg }}; color:{{ r.color }}; font-size:13.5px; font-weight:{{ r.weight }}; text-align:left" style-hover="background:rgba(255,255,255,0.05)">
+              <sc-if value="{{ r.isAll }}" hint-placeholder-val="{{ false }}"><l-i name="layout-grid" size="15" style="color:{{ r.iconColor }}"></l-i></sc-if>
+              <sc-if value="{{ r.isSection }}" hint-placeholder-val="{{ true }}"><span style="width:10px; height:10px; border-radius:3px; background:{{ r.chip }}; flex-shrink:0"></span></sc-if>
+              <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ r.name }}</span>
+              <span style="font-size:11.5px; color:#7d818c">{{ r.count }}</span>
+            </button>
+          </sc-for>
+          <div style="flex:1"></div>
+          <div style="padding:10px 11px; border-top:1px solid rgba(255,255,255,0.07); font-size:11.5px; color:#7d818c; line-height:1.5; display:flex; gap:7px">
+            <l-i name="{{ placeFootIcon }}" size="13" style="color:{{ placeColor }}; margin-top:1px"></l-i>
+            <span>{{ placeFootnote }}</span>
+          </div>
+        </div>
+      </sc-if>
+
+      <div style="flex:1; min-width:0; display:flex; flex-direction:column; background:#101116">
+
+        <!-- Welcome banner -->
+        <sc-if value="{{ showWelcomeBanner }}" hint-placeholder-val="{{ true }}">
+          <div data-screen-label="Welcome banner" style="margin:16px 20px 0; border:1px solid rgba(217,154,43,0.28); border-radius:14px; background:linear-gradient(180deg, rgba(217,154,43,0.09), rgba(217,154,43,0.03)); padding:16px 18px; display:flex; flex-wrap:wrap; gap:14px 16px; align-items:center; flex-shrink:0">
+            <div style="display:flex; gap:8px; flex-shrink:0">
+              <span style="width:38px; height:38px; border-radius:11px; display:inline-flex; align-items:center; justify-content:center; background:rgba(217,154,43,0.16)"><l-i name="lock" size="17" style="color:#e8b04a"></l-i></span>
+              <span style="width:38px; height:38px; border-radius:11px; display:inline-flex; align-items:center; justify-content:center; background:rgba(63,174,110,0.14)"><l-i name="users" size="17" style="color:#5cbd84"></l-i></span>
+              <span style="width:38px; height:38px; border-radius:11px; display:inline-flex; align-items:center; justify-content:center; background:rgba(90,160,234,0.14)"><l-i name="building-2" size="17" style="color:#7ab5f0"></l-i></span>
+            </div>
+            <div style="flex:1; min-width:240px">
+              <div style="font-size:14px; font-weight:600; color:#f6f4ee">Your notes live in three places</div>
+              <div style="font-size:12.5px; color:#a4a7b0; margin-top:2px; line-height:1.5"><strong style="color:#e8b04a; font-weight:600">My Notes</strong> is just you. Move a page to <strong style="color:#5cbd84; font-weight:600">Team</strong> or <strong style="color:#7ab5f0; font-weight:600">Company</strong> when you're ready to share â€” that's all sharing is.</div>
+            </div>
+            <button onClick="{{ dismissWelcome }}" style="display:inline-flex; align-items:center; height:32px; padding:0 14px; font-size:12.5px; font-weight:600; border-radius:8px; border:1px solid rgba(255,255,255,0.14); cursor:pointer; background:transparent; color:#e8e9ec; flex-shrink:0" style-hover="border-color:rgba(255,255,255,0.26)">Got it</button>
+          </div>
+        </sc-if>
+
+        <!-- Team join gate -->
+        <sc-if value="{{ showTeamGate }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:24px">
+            <div style="width:min(460px,100%); display:flex; flex-direction:column; align-items:center; gap:14px; padding:40px 32px; text-align:center; background:#15161c; border:1px solid rgba(255,255,255,0.10); border-radius:16px">
+              <span style="width:54px; height:54px; border-radius:14px; display:inline-flex; align-items:center; justify-content:center; background:rgba(63,174,110,0.14)"><l-i name="users" size="26" style="color:#5cbd84"></l-i></span>
+              <div style="font-size:17px; font-weight:600; color:#f6f4ee">Team is where shared pages live</div>
+              <p style="margin:0; font-size:13px; line-height:1.55; color:#8b8f9a; max-width:360px">Set up your team once â€” after that, moving a page here shares it with everyone, instantly.</p>
+              <sc-if value="{{ teamInputClosed }}" hint-placeholder-val="{{ true }}">
+                <div style="display:flex; gap:10px; margin-top:4px">
+                  <button onClick="{{ teamCreateOpen }}" style="display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 16px; font-size:13.5px; font-weight:600; border-radius:8px; border:none; cursor:pointer; background:#3fae6e; color:#0c1710" style-hover="filter:brightness(1.1)"><l-i name="plus" size="15"></l-i>Create our team</button>
+                  <button onClick="{{ teamJoin }}" style="display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 16px; font-size:13.5px; font-weight:600; border-radius:8px; border:1px solid rgba(255,255,255,0.14); cursor:pointer; background:transparent; color:#f6f4ee" style-hover="border-color:rgba(255,255,255,0.24)">I have an invite</button>
+                </div>
+              </sc-if>
+              <sc-if value="{{ teamInputOpen }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex; align-items:center; gap:8px; margin-top:4px">
+                  <input value="{{ teamDraft }}" onChange="{{ setTeamDraft }}" onKeyDown="{{ teamDraftKey }}" placeholder="Team name â€” e.g. Meridian Advisory" style="padding:8px 11px; border:1px solid rgba(255,255,255,0.16); border-radius:8px; background:#101116; color:#f6f4ee; font-size:13px; outline:none; min-width:230px">
+                  <button onClick="{{ teamCreate }}" style="display:inline-flex; align-items:center; height:34px; padding:0 13px; font-size:13px; font-weight:600; border-radius:8px; border:none; cursor:pointer; background:#3fae6e; color:#0c1710">Create</button>
+                  <button onClick="{{ teamCreateClose }}" style="display:inline-flex; align-items:center; height:34px; padding:0 11px; font-size:13px; border-radius:8px; border:none; cursor:pointer; background:transparent; color:#a4a7b0">Cancel</button>
+                </div>
+              </sc-if>
+              <div style="display:flex; align-items:center; gap:7px; font-size:12px; color:#7d818c; margin-top:6px"><l-i name="file-text" size="13"></l-i>{{ teamWaitingLabel }}</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- Cards grid -->
+        <sc-if value="{{ showGrid }}" hint-placeholder-val="{{ true }}">
+          <div data-screen-label="Pages grid" style="flex:1; overflow-y:auto; padding:18px 20px 60px">
+            <sc-if value="{{ showMyGreeting }}" hint-placeholder-val="{{ true }}">
+              <div style="margin:2px 0 16px">
+                <h1 style="font-size:22px; font-weight:700; color:#f6f4ee; margin:0 0 3px; letter-spacing:-0.01em">{{ greeting }}</h1>
+                <div style="font-size:13px; color:#8b8f9a">Lore keeps <strong style="color:#d6d8de; font-weight:600">132 pages</strong> for you â€” 6 new since yesterday.</div>
+              </div>
+            </sc-if>
+            <!-- Ask hero -->
+            <div data-screen-label="Ask hero" style="border:1px solid rgba(217,154,43,0.30); border-radius:14px; background:linear-gradient(180deg, rgba(217,154,43,0.07), rgba(217,154,43,0.02)); padding:14px 16px; margin-bottom:18px">
+              <div style="display:flex; align-items:center; gap:11px">
+                <span style="width:32px; height:32px; border-radius:9px; display:inline-flex; align-items:center; justify-content:center; background:rgba(217,154,43,0.15); flex-shrink:0"><l-i name="sparkles" size="17" style="color:#df9f30"></l-i></span>
+                <input value="{{ gridDraft }}" onChange="{{ setGridDraft }}" onKeyDown="{{ gridKey }}" placeholder="{{ gridAskPlaceholder }}" style="flex:1; border:none; outline:none; background:transparent; color:#f6f4ee; font-size:14.5px; min-width:0">
+                <button onClick="{{ gridAskGo }}" style="display:inline-flex; align-items:center; gap:7px; height:34px; padding:0 16px; border:none; border-radius:8px; cursor:pointer; background:#d99a2b; color:#1c1408; font-size:13px; font-weight:600; flex-shrink:0" style-hover="background:#df9f30">Ask</button>
+              </div>
+              <div style="display:flex; flex-wrap:wrap; align-items:center; gap:7px; margin-top:11px; padding-left:43px">
+                <sc-for list="{{ gridChips }}" as="c" hint-placeholder-count="3">
+                  <button onClick="{{ c.click }}" style="display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid rgba(255,255,255,0.12); background:rgba(16,17,22,0.6); border-radius:999px; color:#d6d8de; font-size:12.5px; cursor:pointer" style-hover="border-color:rgba(217,154,43,0.45); color:#f6f4ee">
+                    <l-i name="message-circle-question" size="13" style="color:#c9962f"></l-i>{{ c.q }}
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+            <sc-if value="{{ showChecklist }}" hint-placeholder-val="{{ false }}">
+              <div data-screen-label="Getting started" style="border:1px solid rgba(255,255,255,0.10); border-radius:14px; background:#15161c; padding:14px 16px; margin-bottom:18px">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:11px">
+                  <span style="font-size:13.5px; font-weight:600; color:#f6f4ee">Getting started</span>
+                  <span style="font-size:12px; color:#c9962f; font-weight:600">{{ checklistDoneLabel }}</span>
+                  <div style="flex:1"></div>
+                  <button onClick="{{ dismissChecklist }}" title="Hide this" style="border:none; background:transparent; color:#7d818c; cursor:pointer; display:inline-flex; padding:4px; border-radius:6px" style-hover="background:rgba(255,255,255,0.06); color:#d6d8de"><l-i name="x" size="14"></l-i></button>
+                </div>
+                <div style="height:5px; border-radius:999px; background:rgba(255,255,255,0.09); overflow:hidden; margin-bottom:12px">
+                  <div style="height:100%; border-radius:999px; background:#d99a2b; width:{{ checklistPct }}; transition:width 400ms cubic-bezier(0.2,0.6,0.2,1)"></div>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:4px">
+                  <sc-for list="{{ checklistRows }}" as="c" hint-placeholder-count="4">
+                    <button onClick="{{ c.click }}" style="display:flex; align-items:center; gap:10px; padding:7px 9px; border:none; border-radius:8px; background:transparent; cursor:pointer; text-align:left" style-hover="background:rgba(255,255,255,0.05)">
+                      <span style="width:21px; height:21px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; background:{{ c.dotBg }}; border:1.5px solid {{ c.dotBd }}; color:#1c1408">
+                        <sc-if value="{{ c.done }}" hint-placeholder-val="{{ false }}"><l-i name="check" size="12" sw="3"></l-i></sc-if>
+                      </span>
+                      <span style="flex:1; font-size:13px; color:{{ c.textColor }}; text-decoration:{{ c.deco }}">{{ c.label }}</span>
+                      <sc-if value="{{ c.showGo }}" hint-placeholder-val="{{ false }}"><span style="font-size:11.5px; color:#c9962f; font-weight:600; display:inline-flex; align-items:center; gap:3px">{{ c.go }} <l-i name="arrow-right" size="11"></l-i></span></sc-if>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-if>
+            <div style="display:flex; align-items:baseline; gap:10px; margin-bottom:14px">
+              <h2 style="font-size:16px; font-weight:700; color:#f6f4ee; margin:0">{{ gridTitle }}</h2>
+              <span style="font-size:12.5px; color:#7d818c">{{ gridSub }}</span>
+              <div style="flex:1"></div>
+              <button onClick="{{ newPage }}" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 13px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; background:transparent; color:#e8e9ec; font-size:12.5px; font-weight:600; cursor:pointer" style-hover="border-color:rgba(255,255,255,0.22)"><l-i name="plus" size="14"></l-i>New page</button>
+            </div>
+            <sc-if value="{{ gridEmpty }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; flex-direction:column; align-items:center; gap:12px; padding:60px 20px; text-align:center">
+                <span style="width:50px; height:50px; border-radius:14px; display:inline-flex; align-items:center; justify-content:center; background:rgba(255,255,255,0.05)"><l-i name="{{ emptyIcon }}" size="24" style="color:#7d818c"></l-i></span>
+                <div style="font-size:14.5px; font-weight:600; color:#e8e9ec">{{ emptyTitle }}</div>
+                <p style="margin:0; font-size:12.5px; color:#8b8f9a; max-width:340px; line-height:1.55">{{ emptyBody }}</p>
+              </div>
+            </sc-if>
+            <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(250px, 1fr)); gap:12px">
+              <sc-for list="{{ gridCards }}" as="c" hint-placeholder-count="6">
+                <div onClick="{{ c.click }}" style="display:flex; flex-direction:column; gap:8px; padding:15px 16px; border:1px solid rgba(255,255,255,0.10); border-radius:12px; background:#15161c; cursor:pointer; text-align:left; min-height:118px; box-sizing:border-box" style-hover="border-color:{{ c.hoverBd }}; background:#181a21">
+                  <div style="display:flex; align-items:center; gap:8px; width:100%">
+                    <span style="width:9px; height:9px; border-radius:3px; background:{{ c.chip }}; flex-shrink:0"></span>
+                    <span style="font-size:11.5px; color:#8b8f9a; font-weight:500">{{ c.section }}</span>
+                    <div style="flex:1"></div>
+                    <sc-if value="{{ c.fresh }}" hint-placeholder-val="{{ false }}">
+                      <span style="font-size:10.5px; font-weight:600; color:{{ placeColor }}; background:rgba(255,255,255,0.06); border-radius:999px; padding:2px 8px">Moved just now</span>
+                    </sc-if>
+                  </div>
+                  <span style="font-size:14px; font-weight:600; color:#f6f4ee; line-height:1.35">{{ c.name }}</span>
+                  <span style="font-size:12px; color:#8b8f9a; line-height:1.5; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical">{{ c.snippet }}</span>
+                  <div style="flex:1"></div>
+                  <div style="display:flex; align-items:center; gap:8px; width:100%">
+                    <span style="font-size:11.5px; color:#7d818c">Updated {{ c.updated }}</span>
+                    <div style="flex:1"></div>
+                    <span onClick="{{ c.chatClick }}" title="Chat about this page" style="display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border:1px solid rgba(217,154,43,0.32); border-radius:999px; background:rgba(217,154,43,0.10); color:#e8b04a; font-size:11.5px; font-weight:600" style-hover="background:rgba(217,154,43,0.20)">
+                      <l-i name="sparkles" size="12"></l-i>Chat
+                    </span>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- Open page -->
+        <sc-if value="{{ showPage }}" hint-placeholder-val="{{ false }}">
+          <div data-screen-label="Open page" style="flex:1; min-height:0; display:flex; flex-direction:column">
+            <div style="display:flex; align-items:center; gap:12px; padding:12px 26px; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0">
+              <button onClick="{{ closePage }}" style="display:inline-flex; align-items:center; gap:7px; border:none; background:transparent; color:#8b8f9a; font-size:13px; cursor:pointer; padding:4px 0" style-hover="color:#e8e9ec"><l-i name="arrow-left" size="14"></l-i>All {{ placeName }} pages</button>
+              <div style="flex:1"></div>
+              <sc-if value="{{ isEditing }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size:12px; color:#c9962f">Editing â€” click away to save</span>
+              </sc-if>
+              <span style="display:inline-flex; align-items:center; gap:7px; font-size:12.5px; color:{{ placeColor }}; font-weight:600"><l-i name="{{ placeIcon }}" size="14"></l-i>Lives in {{ placeName }}</span>
+              <button onClick="{{ chatAboutThis }}" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 14px; border:1px solid rgba(217,154,43,0.35); border-radius:8px; background:rgba(217,154,43,0.12); color:#e8b04a; font-size:12.5px; font-weight:600; cursor:pointer" style-hover="background:rgba(217,154,43,0.20)"><l-i name="sparkles" size="14"></l-i>Chat about this</button>
+              <button onClick="{{ openMoveMenu }}" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 13px; border:1px solid rgba(255,255,255,0.14); border-radius:8px; background:transparent; color:#e8e9ec; font-size:12.5px; font-weight:600; cursor:pointer" style-hover="border-color:rgba(255,255,255,0.26)"><l-i name="corner-up-right" size="14"></l-i>Moveâ€¦</button>
+            </div>
+            <div style="flex:1; overflow-y:auto; padding:34px 0 100px">
+              <sc-if value="{{ isEditing }}" hint-placeholder-val="{{ false }}">
+                <div style="max-width:700px; width:100%; margin:0 auto; padding:0 44px; box-sizing:border-box">
+                  <textarea value="{{ draftRaw }}" onChange="{{ setDraftRaw }}" onBlur="{{ saveDraft }}" style="display:block; width:100%; min-height:calc(100vh - 340px); resize:none; border:none; background:transparent; color:#d6d8de; font-size:14px; line-height:1.75; padding:0; outline:none; box-sizing:border-box; caret-color:#df9f30"></textarea>
+                </div>
+              </sc-if>
+              <sc-if value="{{ isReading }}" hint-placeholder-val="{{ true }}">
+                <div onClick="{{ startEdit }}" title="Click to edit" style="max-width:700px; width:100%; margin:0 auto; padding:0 44px; box-sizing:border-box; cursor:text">
+                  <sc-for list="{{ noteBlocks }}" as="b" hint-placeholder-count="6">
+                    <sc-if value="{{ b.isH1 }}" hint-placeholder-val="{{ false }}"><h1 style="font-size:27px; font-weight:700; line-height:1.2; letter-spacing:-0.01em; margin:0 0 18px; color:#f6f4ee">{{ b.s }}</h1></sc-if>
+                    <sc-if value="{{ b.isH2 }}" hint-placeholder-val="{{ false }}"><h2 style="font-size:17px; font-weight:600; margin:26px 0 10px; color:#f6f4ee">{{ b.s }}</h2></sc-if>
+                    <sc-if value="{{ b.isQuote }}" hint-placeholder-val="{{ false }}"><blockquote style="margin:18px 0; padding:10px 16px; border-left:3px solid {{ placeColor }}; background:rgba(255,255,255,0.04); border-radius:0 8px 8px 0; color:#c9cbd1; font-size:14px; line-height:1.6">{{ b.s }}</blockquote></sc-if>
+                    <sc-if value="{{ b.isLi }}" hint-placeholder-val="{{ false }}">
+                      <div style="display:flex; gap:10px; margin:7px 0; font-size:14.5px; line-height:1.6; color:#d6d8de">
+                        <span style="color:{{ placeColor }}">â€¢</span>
+                        <span><sc-for list="{{ b.runs }}" as="rn" hint-placeholder-count="1"><sc-if value="{{ rn.isLink }}" hint-placeholder-val="{{ false }}"><span onClick="{{ rn.click }}" style="cursor:pointer; color:#e8b04a; text-decoration:underline; text-decoration-color:rgba(232,176,74,0.4); text-underline-offset:3px" style-hover="background:rgba(217,154,43,0.14)">{{ rn.x }}</span></sc-if><sc-if value="{{ rn.isPlain }}" hint-placeholder-val="{{ true }}"><span>{{ rn.x }}</span></sc-if></sc-for></span>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{ b.isP }}" hint-placeholder-val="{{ true }}">
+                      <p style="font-size:14.5px; line-height:1.7; margin:0 0 14px; color:#d6d8de"><sc-for list="{{ b.runs }}" as="rn" hint-placeholder-count="1"><sc-if value="{{ rn.isLink }}" hint-placeholder-val="{{ false }}"><span onClick="{{ rn.click }}" style="cursor:pointer; color:#e8b04a; text-decoration:underline; text-decoration-color:rgba(232,176,74,0.4); text-underline-offset:3px" style-hover="background:rgba(217,154,43,0.14)">{{ rn.x }}</span></sc-if><sc-if value="{{ rn.isPlain }}" hint-placeholder-val="{{ true }}"><span>{{ rn.x }}</span></sc-if></sc-for></p>
+                    </sc-if>
+                  </sc-for>
+                </div>
+                <sc-if value="{{ hasRelated }}" hint-placeholder-val="{{ false }}">
+                  <div style="max-width:700px; width:100%; margin:26px auto 0; padding:0 44px; box-sizing:border-box">
+                    <div style="border-top:1px solid rgba(255,255,255,0.09); padding-top:16px">
+                      <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px">
+                        <l-i name="link-2" size="14" style="color:#7d818c"></l-i>
+                        <span style="font-size:13px; font-weight:600; color:#d6d8de">Related pages</span>
+                        <span style="font-size:12px; color:#7d818c">â€” pages this one links to or that mention it</span>
+                      </div>
+                      <div style="display:flex; flex-wrap:wrap; gap:8px">
+                        <sc-for list="{{ relatedChips }}" as="rc" hint-placeholder-count="3">
+                          <button onClick="{{ rc.click }}" title="{{ rc.why }}" style="display:inline-flex; align-items:center; gap:8px; padding:7px 12px; border:1px solid rgba(255,255,255,0.12); border-radius:999px; background:#15161c; color:#d6d8de; font-size:12.5px; cursor:pointer" style-hover="border-color:rgba(217,154,43,0.5); background:#191b22">
+                            <span style="width:8px; height:8px; border-radius:50%; background:{{ rc.dot }}; flex-shrink:0"></span>{{ rc.label }}
+                          </button>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </div>
+                </sc-if>
+              </sc-if>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+    </sc-if>
+
+    <!-- â•â•â•â•â•â•â•â•â•â• ASK PANEL â•â•â•â•â•â•â•â•â•â• -->
+    <sc-if value="{{ askOpen }}" hint-placeholder-val="{{ false }}">
+      <div data-screen-label="Ask panel" style="width:392px; flex-shrink:0; background:#15161c; border-left:1px solid rgba(255,255,255,0.07); display:flex; flex-direction:column">
+        <div style="display:flex; align-items:center; gap:9px; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.08); flex-shrink:0">
+          <span style="width:26px; height:26px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(217,154,43,0.13)"><l-i name="sparkles" size="15" style="color:#df9f30"></l-i></span>
+          <div style="flex:1; min-width:0">
+            <div style="font-size:14px; font-weight:600; color:#f6f4ee; line-height:1.2">Ask Lore</div>
+            <div style="font-size:11.5px; color:#8b8f9a">Answers only from your pages â€” with receipts</div>
+          </div>
+          <sc-if value="{{ hasMessages }}" hint-placeholder-val="{{ false }}">
+            <button onClick="{{ newChat }}" title="Start over" style="display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:8px; border:none; cursor:pointer; background:transparent; color:#a4a7b0" style-hover="background:rgba(255,255,255,0.06)"><l-i name="plus" size="15"></l-i></button>
+          </sc-if>
+          <button onClick="{{ toggleAsk }}" title="Close" style="display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:8px; border:none; cursor:pointer; background:transparent; color:#a4a7b0" style-hover="background:rgba(255,255,255,0.06)"><l-i name="x" size="15"></l-i></button>
+        </div>
+        <div style="flex:1; overflow-y:auto; padding:10px 14px">
+          <sc-if value="{{ noMessages }}" hint-placeholder-val="{{ true }}">
+            <div style="padding:20px 6px">
+              <img src="assets/lore-familiar.png" alt="" style="display:block; width:120px; height:120px; margin:0 auto 10px; object-fit:contain; filter:drop-shadow(0 6px 16px rgba(0,0,0,0.28)); pointer-events:none; user-select:none">
+              <p style="font-size:15px; font-weight:600; color:#f6f4ee; margin:0 0 4px; text-align:center">{{ askEmptyTitle }}</p>
+              <p style="font-size:12.5px; color:#8b8f9a; margin:0 0 16px; line-height:1.5; text-align:center">{{ askEmptyHint }}</p>
+              <div style="display:flex; flex-direction:column; gap:7px">
+                <sc-for list="{{ askChips }}" as="c" hint-placeholder-count="3">
+                  <button onClick="{{ c.click }}" style="text-align:left; display:flex; align-items:center; gap:9px; padding:10px 12px; border:1px solid rgba(255,255,255,0.10); background:#191b22; border-radius:8px; color:#d6d8de; font-size:13px; cursor:pointer" style-hover="border-color:rgba(217,154,43,0.4)">
+                    <l-i name="message-circle-question" size="15" style="color:#c9962f"></l-i>{{ c.q }}
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+          </sc-if>
+          <sc-for list="{{ msgRows }}" as="m" hint-placeholder-count="0">
+            <sc-if value="{{ m.isUser }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; justify-content:flex-end; margin:6px 0">
+                <div style="max-width:84%; padding:9px 13px; border-radius:12px 12px 3px 12px; background:#24262f; font-size:13.5px; line-height:1.5; color:#f6f4ee">{{ m.text }}</div>
+              </div>
+            </sc-if>
+            <sc-if value="{{ m.isAnswer }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; gap:10px; margin:12px 0 4px">
+                <span style="flex-shrink:0; width:26px; height:26px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(217,154,43,0.13)"><l-i name="sparkles" size="14" style="color:#df9f30"></l-i></span>
+                <div style="flex:1; min-width:0">
+                  <div style="font-size:13.5px; line-height:1.65; color:#d6d8de">
+                    <sc-if value="{{ m.streaming }}" hint-placeholder-val="{{ false }}">
+                      <span style="white-space:pre-wrap">{{ m.streamText }}</span><span style="display:inline-block; width:7px; height:15px; margin-left:2px; background:#d99a2b; vertical-align:text-bottom; animation:lore-caret 1s step-end infinite"></span>
+                    </sc-if>
+                    <sc-if value="{{ m.done }}" hint-placeholder-val="{{ true }}">
+                      <sc-for list="{{ m.blocks }}" as="ab" hint-placeholder-count="2">
+                        <sc-if value="{{ ab.isP }}" hint-placeholder-val="{{ true }}"><p style="margin:0 0 9px">{{ ab.s }}</p></sc-if>
+                        <sc-if value="{{ ab.isLi }}" hint-placeholder-val="{{ false }}"><div style="display:flex; gap:8px; margin:4px 0"><span style="color:#c9962f">â€¢</span><span>{{ ab.s }}</span></div></sc-if>
+                      </sc-for>
+                    </sc-if>
+                  </div>
+                  <sc-if value="{{ m.showMeta }}" hint-placeholder-val="{{ false }}">
+                    <div style="margin-top:10px; border:1px solid rgba(255,255,255,0.10); border-radius:10px; background:#191b22; padding:10px 12px">
+                      <div style="font-size:11.5px; font-weight:600; color:#8b8f9a; margin-bottom:7px">FROM THESE PAGES</div>
+                      <div style="display:flex; flex-direction:column; gap:5px">
+                        <sc-for list="{{ m.citations }}" as="ct" hint-placeholder-count="2">
+                          <button onClick="{{ ct.click }}" style="display:flex; align-items:center; gap:8px; padding:6px 8px; border:none; border-radius:7px; background:transparent; cursor:pointer; text-align:left; width:100%" style-hover="background:rgba(255,255,255,0.05)">
+                            <l-i name="{{ ct.icon }}" size="13" style="color:{{ ct.scopeColor }}"></l-i>
+                            <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12.5px; color:#e8e9ec; font-weight:500">{{ ct.title }}</span>
+                            <span style="font-size:11px; color:{{ ct.scopeColor }}; flex-shrink:0">{{ ct.scope }}</span>
+                            <l-i name="arrow-up-right" size="12" style="color:#7d818c"></l-i>
+                          </button>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </div>
+            </sc-if>
+          </sc-for>
+        </div>
+        <div style="flex-shrink:0; padding:12px 14px 14px">
+          <div style="border:1px solid rgba(255,255,255,0.14); border-radius:12px; background:#101116; padding:10px">
+            <textarea value="{{ askDraft }}" onChange="{{ setAskDraft }}" onKeyDown="{{ askKey }}" rows="2" placeholder="{{ askPlaceholder }}" style="width:100%; resize:none; border:none; outline:none; background:transparent; font-size:13.5px; line-height:1.5; color:#f6f4ee; box-sizing:border-box"></textarea>
+            <div style="display:flex; align-items:center; gap:8px; margin-top:6px">
+              <sc-if value="{{ askCtxOn }}" hint-placeholder-val="{{ false }}">
+                <button onClick="{{ clearAskCtx }}" title="Stop asking about this page" style="display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border:1px solid rgba(217,154,43,0.35); border-radius:999px; background:rgba(217,154,43,0.12); color:#e8b04a; cursor:pointer; font-size:11.5px; font-weight:600; max-width:240px">
+                  <l-i name="file-text" size="12"></l-i><span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap">About: {{ askCtxName }}</span><l-i name="x" size="11"></l-i>
+                </button>
+              </sc-if>
+              <sc-if value="{{ askCtxOff }}" hint-placeholder-val="{{ true }}">
+                <button onClick="{{ cycleAskScope }}" title="Click to change where Lore looks" style="display:inline-flex; align-items:center; gap:6px; height:24px; padding:0 10px; border:1px solid rgba(255,255,255,0.12); border-radius:999px; background:transparent; color:{{ askScopeColor }}; cursor:pointer; font-size:11.5px; font-weight:600">
+                  <l-i name="{{ askScopeIcon }}" size="12"></l-i>Looking in: {{ askScopeLabel }}
+                </button>
+              </sc-if>
+              <div style="flex:1"></div>
+              <button onClick="{{ askSend }}" style="display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border:none; border-radius:8px; cursor:pointer; background:#d99a2b; color:#1c1408; opacity:{{ sendOp }}" style-hover="background:#df9f30"><l-i name="arrow-up" size="15"></l-i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+  </div>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• MAP OVERLAY â•â•â•â•â•â•â•â•â•â• -->
+  <sc-if value="{{ mapOpen }}" hint-placeholder-val="{{ false }}">
+    <div data-screen-label="Map overlay" style="position:absolute; inset:0; z-index:45; background:#101116; display:flex; flex-direction:column; animation:lore-fade-in 160ms ease-out">
+      <div style="display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid rgba(255,255,255,0.07); flex-shrink:0">
+        <l-i name="waypoints" size="18" style="color:#df9f30"></l-i>
+        <div style="flex:1">
+          <div style="font-size:15px; font-weight:700; color:#f6f4ee">Knowledge map</div>
+          <div style="font-size:12px; color:#8b8f9a">Colors show where each page lives. Double-click a dot to open it.</div>
+        </div>
+        <div style="display:flex; gap:14px; align-items:center; margin-right:10px">
+          <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#e8b04a"><span style="width:9px; height:9px; border-radius:50%; background:#d99a2b"></span>My Notes</span>
+          <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#5cbd84"><span style="width:9px; height:9px; border-radius:50%; background:#3fae6e"></span>Team</span>
+          <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#7ab5f0"><span style="width:9px; height:9px; border-radius:50%; background:#5aa0ea"></span>Company</span>
+        </div>
+        <button onClick="{{ closeMap }}" style="display:inline-flex; align-items:center; gap:7px; height:32px; padding:0 13px; border:1px solid rgba(255,255,255,0.14); border-radius:8px; background:transparent; color:#e8e9ec; font-size:12.5px; font-weight:600; cursor:pointer" style-hover="border-color:rgba(255,255,255,0.26)"><l-i name="x" size="14"></l-i>Close</button>
+      </div>
+      <div style="flex:1; position:relative; overflow:hidden">
+        <svg onWheel="{{ gWheel }}" onPointerDown="{{ gDown }}" onPointerMove="{{ gMove }}" onPointerUp="{{ gUp }}" viewBox="0 0 1200 700" style="position:absolute; inset:0; width:100%; height:100%; touch-action:none; cursor:grab">
+          <g transform="{{ gTransform }}">
+            <sc-for list="{{ gEdges }}" as="e" hint-placeholder-count="8">
+              <line x1="{{ e.x1 }}" y1="{{ e.y1 }}" x2="{{ e.x2 }}" y2="{{ e.y2 }}" stroke="{{ e.stroke }}" stroke-width="{{ e.w }}" opacity="{{ e.op }}"></line>
+            </sc-for>
+            <sc-for list="{{ gNodes }}" as="n" hint-placeholder-count="8">
+              <circle cx="{{ n.x }}" cy="{{ n.y }}" r="{{ n.r }}" fill="{{ n.fill }}" opacity="{{ n.op }}" stroke="{{ n.ring }}" stroke-width="{{ n.ringW }}" style="cursor:pointer" onClick="{{ n.click }}" onDoubleClick="{{ n.dbl }}"></circle>
+              <text x="{{ n.x }}" y="{{ n.ly }}" text-anchor="middle" style="font-size:11px; font-weight:500; fill:#a4a7b0; pointer-events:none; font-family:'IBM Plex Sans',sans-serif">{{ n.label }}</text>
+            </sc-for>
+          </g>
+        </svg>
+        <sc-if value="{{ gSelNode }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute; right:20px; bottom:20px; width:260px; padding:16px; background:#20222b; border:1px solid rgba(255,255,255,0.14); border-radius:12px; box-shadow:0 14px 40px rgba(0,0,0,0.5); z-index:3; animation:lore-fade-in 140ms ease-out">
+            <div style="display:flex; align-items:center; gap:9px; margin-bottom:6px">
+              <l-i name="file-text" size="15" style="color:{{ gSelColor }}"></l-i>
+              <span style="flex:1; font-size:14px; font-weight:600; color:#f6f4ee; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ gSelLabel }}</span>
+            </div>
+            <div style="font-size:12px; color:#8b8f9a; margin-bottom:12px">Lives in {{ gSelPlace }} Â· {{ gSelLinks }} connections</div>
+            <button onClick="{{ gOpenSel }}" style="width:100%; display:inline-flex; align-items:center; justify-content:center; gap:8px; height:32px; font-size:13px; font-weight:600; border-radius:8px; border:none; cursor:pointer; background:#d99a2b; color:#1c1408" style-hover="background:#df9f30"><l-i name="arrow-up-right" size="14"></l-i>Open page</button>
+          </div>
+        </sc-if>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• MOVE DIALOG â•â•â•â•â•â•â•â•â•â• -->
+  <sc-if value="{{ moveOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeMove }}" style="position:absolute; inset:0; z-index:50; background:rgba(8,8,11,0.6); backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center">
+      <div onClick="{{ stopProp }}" style="width:440px; background:#20222b; border:1px solid rgba(255,255,255,0.14); border-radius:14px; box-shadow:0 28px 70px rgba(0,0,0,0.62); padding:22px; animation:lore-fade-in 140ms ease-out">
+        <div style="font-size:15px; font-weight:600; color:#f6f4ee; margin-bottom:4px">Move â€œ{{ moveNoteName }}â€</div>
+        <p style="font-size:12.5px; color:#8b8f9a; margin:0 0 14px; line-height:1.5">Where a page lives decides who can see it. It's in <strong style="color:{{ moveFromColor }}; font-weight:600">{{ moveFromName }}</strong> now.</p>
+        <div style="display:flex; flex-direction:column; gap:6px">
+          <sc-for list="{{ moveTargets }}" as="t" hint-placeholder-count="2">
+            <button onClick="{{ t.click }}" style="display:flex; align-items:center; gap:12px; padding:12px; border:1px solid rgba(255,255,255,0.10); border-radius:12px; cursor:pointer; background:transparent; text-align:left" style-hover="border-color:{{ t.hoverBd }}; background:rgba(255,255,255,0.03)">
+              <span style="width:34px; height:34px; border-radius:10px; display:inline-flex; align-items:center; justify-content:center; background:{{ t.iconBg }}; color:{{ t.iconFg }}; flex-shrink:0"><l-i name="{{ t.icon }}" size="16"></l-i></span>
+              <span style="flex:1; min-width:0">
+                <span style="display:block; font-size:13.5px; color:#f6f4ee; font-weight:600">{{ t.label }}</span>
+                <span style="display:block; font-size:12px; color:#8b8f9a; margin-top:1px">{{ t.hint }}</span>
+              </span>
+              <l-i name="arrow-right" size="15" style="color:#7d818c"></l-i>
+            </button>
+          </sc-for>
+        </div>
+        <div style="display:flex; justify-content:flex-end; margin-top:14px">
+          <button onClick="{{ closeMove }}" style="display:inline-flex; align-items:center; height:34px; padding:0 14px; font-size:13px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); cursor:pointer; background:transparent; color:#a4a7b0">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• SEARCH â•â•â•â•â•â•â•â•â•â• -->
+  <sc-if value="{{ searchOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeSearch }}" style="position:absolute; inset:0; z-index:50; background:rgba(8,8,11,0.6); backdrop-filter:blur(6px); display:flex; justify-content:center; padding-top:12vh">
+      <div onClick="{{ stopProp }}" style="width:560px; max-height:64vh; display:flex; flex-direction:column; background:#20222b; border:1px solid rgba(255,255,255,0.14); border-radius:14px; box-shadow:0 28px 70px rgba(0,0,0,0.62); overflow:hidden; align-self:flex-start">
+        <div style="display:flex; align-items:center; gap:10px; padding:13px 15px; border-bottom:1px solid rgba(255,255,255,0.08)">
+          <l-i name="search" size="16" style="color:#7d818c"></l-i>
+          <input value="{{ searchQ }}" onChange="{{ setSearchQ }}" onKeyDown="{{ searchKeyDown }}" placeholder="Type a page nameâ€¦" style="flex:1; border:none; outline:none; background:transparent; color:#f6f4ee; font-size:15px" data-autofocus="true">
+          <span style="font-size:11px; color:#585c67; border:1px solid rgba(255,255,255,0.14); border-radius:5px; padding:2px 6px">esc</span>
+        </div>
+        <div style="overflow-y:auto; padding:6px">
+          <sc-if value="{{ searchEmpty }}" hint-placeholder-val="{{ false }}">
+            <div style="padding:18px; color:#7d818c; font-size:13px">No pages match.</div>
+          </sc-if>
+          <sc-for list="{{ searchResults }}" as="s" hint-placeholder-count="6">
+            <div onClick="{{ s.click }}" style="display:flex; align-items:center; gap:10px; padding:9px 11px; border-radius:8px; cursor:pointer; background:{{ s.bg }}" style-hover="background:rgba(217,154,43,0.13)">
+              <l-i name="file-text" size="15" style="color:#7d818c"></l-i>
+              <span style="flex:1; font-size:13.5px; color:#e8e9ec">{{ s.name }}</span>
+              <span style="display:inline-flex; align-items:center; gap:5px; font-size:11px; color:{{ s.placeColor }}; font-weight:600"><l-i name="{{ s.placeIcon }}" size="11"></l-i>{{ s.placeName }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• IMPORT â•â•â•â•â•â•â•â•â•â• -->
+  <sc-if value="{{ importOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ closeImport }}" style="position:absolute; inset:0; z-index:50; background:rgba(8,8,11,0.6); backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center">
+      <div onClick="{{ stopProp }}" style="width:460px; background:#20222b; border:1px solid rgba(255,255,255,0.14); border-radius:14px; box-shadow:0 28px 70px rgba(0,0,0,0.62); padding:22px">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px">
+          <l-i name="upload" size="17" style="color:#df9f30"></l-i>
+          <span style="font-size:15px; font-weight:600; color:#f6f4ee">Add your files</span>
+          <div style="flex:1"></div>
+          <button onClick="{{ closeImport }}" style="border:none; background:transparent; color:#7d818c; cursor:pointer; display:inline-flex; padding:4px; border-radius:6px" style-hover="background:rgba(255,255,255,0.06)"><l-i name="x" size="15"></l-i></button>
+        </div>
+        <p style="font-size:12.5px; color:#8b8f9a; margin:0 0 14px; line-height:1.55">Word docs, PDFs, text and Markdown all work. New pages land in <strong style="color:#e8b04a; font-weight:600">My Notes</strong> â€” private until you move them.</p>
+        <div style="border:1.5px dashed rgba(255,255,255,0.18); border-radius:12px; padding:34px 20px; text-align:center; background:#15161c">
+          <l-i name="file-plus-2" size="26" style="color:#7d818c"></l-i>
+          <div style="font-size:13px; color:#a4a7b0; margin-top:8px">Drop files here, or</div>
+          <button onClick="{{ closeImport }}" style="margin-top:10px; display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 16px; font-size:13.5px; font-weight:600; border-radius:8px; border:none; cursor:pointer; background:#d99a2b; color:#1c1408" style-hover="background:#df9f30">Choose filesâ€¦</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• WIZARD BUILDER â•â•â•â•â•â•â•â•â•â• -->
+  <sc-if value="{{ builderOpen }}" hint-placeholder-val="{{ false }}">
+    <div onClick="{{ builderHide }}" style="position:absolute; inset:0; z-index:50; background:rgba(8,8,11,0.6); backdrop-filter:blur(6px); display:flex; align-items:center; justify-content:center">
+      <div onClick="{{ stopProp }}" style="width:460px; background:#20222b; border:1px solid rgba(255,255,255,0.14); border-radius:14px; box-shadow:0 28px 70px rgba(0,0,0,0.62); padding:22px">
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px">
+          <l-i name="wand-2" size="17" style="color:#df9f30"></l-i>
+          <span style="font-size:15px; font-weight:600; color:#f6f4ee">New Wizard</span>
+          <div style="flex:1"></div>
+          <button onClick="{{ builderHide }}" style="border:none; background:transparent; color:#7d818c; cursor:pointer; display:inline-flex; padding:4px; border-radius:6px" style-hover="background:rgba(255,255,255,0.06)"><l-i name="x" size="15"></l-i></button>
+        </div>
+        <p style="font-size:12.5px; color:#8b8f9a; margin:0 0 14px; line-height:1.55">Say what it should know. Lore gathers the matching pages and you confirm â€” pages stay where they live.</p>
+        <textarea value="{{ builderDraft }}" onChange="{{ setBuilderDraft }}" rows="3" placeholder="e.g. everything about the Northwind account" style="width:100%; resize:none; border:1px solid rgba(255,255,255,0.14); border-radius:10px; background:#15161c; padding:11px; outline:none; font-size:13.5px; line-height:1.5; color:#f6f4ee; box-sizing:border-box"></textarea>
+        <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:14px">
+          <button onClick="{{ builderHide }}" style="display:inline-flex; align-items:center; height:36px; padding:0 14px; font-size:13px; border-radius:8px; border:1px solid rgba(255,255,255,0.12); cursor:pointer; background:transparent; color:#a4a7b0">Cancel</button>
+          <button onClick="{{ builderCreate }}" style="display:inline-flex; align-items:center; gap:8px; height:36px; padding:0 15px; font-size:13.5px; font-weight:600; border-radius:8px; border:none; cursor:pointer; background:#d99a2b; color:#1c1408" style-hover="background:#df9f30"><l-i name="wand-2" size="15"></l-i>Create</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- â•â•â•â•â•â•â•â•â•â• WIZARD CHAT â•â•â•â•â•â•â•â•â•â• -->
+  <sc-if value="{{ wizChatOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute; inset:0; z-index:50; display:flex; justify-content:flex-end">
+      <div onClick="{{ closeWizChat }}" style="position:absolute; inset:0; background:rgba(0,0,0,0.35)"></div>
+      <div style="position:relative; width:392px; height:100%; background:#15161c; border-left:1px solid rgba(255,255,255,0.12); box-shadow:-20px 0 60px rgba(0,0,0,0.45); display:flex; flex-direction:column; animation:lore-fade-in 160ms ease-out">
+        <div style="display:flex; align-items:center; gap:9px; padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.08); flex-shrink:0">
+          <span style="width:26px; height:26px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(217,154,43,0.13)"><l-i name="wand-2" size="14" style="color:#df9f30"></l-i></span>
+          <div style="flex:1; min-width:0">
+            <div style="font-size:14px; font-weight:600; color:#f6f4ee; overflow:hidden; text-overflow:ellipsis; white-space:nowrap">{{ wizName }}</div>
+            <div style="font-size:11.5px; color:#8b8f9a">Answers only from this Wizard's {{ wizNotes }} pages</div>
+          </div>
+          <button onClick="{{ closeWizChat }}" style="border:none; background:transparent; color:#7d818c; cursor:pointer; display:inline-flex; padding:5px; border-radius:6px" style-hover="background:rgba(255,255,255,0.06)"><l-i name="x" size="15"></l-i></button>
+        </div>
+        <div style="flex:1; overflow-y:auto; padding:10px 14px">
+          <sc-if value="{{ wizNoMessages }}" hint-placeholder-val="{{ true }}">
+            <div style="padding:28px 10px; text-align:center">
+              <p style="font-size:14.5px; font-weight:600; color:#f6f4ee; margin:0 0 4px">Chat with {{ wizName }}</p>
+              <p style="font-size:12.5px; color:#8b8f9a; margin:0; line-height:1.5">Like asking a colleague who has read all {{ wizNotes }} pages.</p>
+            </div>
+          </sc-if>
+          <sc-for list="{{ wizMsgs }}" as="m" hint-placeholder-count="0">
+            <sc-if value="{{ m.isUser }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; justify-content:flex-end; margin:6px 0"><div style="max-width:84%; padding:9px 13px; border-radius:12px 12px 3px 12px; background:#24262f; font-size:13.5px; line-height:1.5; color:#f6f4ee">{{ m.text }}</div></div>
+            </sc-if>
+            <sc-if value="{{ m.isAnswer }}" hint-placeholder-val="{{ false }}">
+              <div style="display:flex; gap:10px; margin:12px 0">
+                <span style="flex-shrink:0; width:26px; height:26px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; background:rgba(217,154,43,0.13)"><l-i name="wand-2" size="13" style="color:#df9f30"></l-i></span>
+                <div style="flex:1; min-width:0; font-size:13.5px; line-height:1.65; color:#d6d8de; white-space:pre-wrap">{{ m.text }}</div>
+              </div>
+            </sc-if>
+          </sc-for>
+          <sc-if value="{{ wizThinking }}" hint-placeholder-val="{{ false }}">
+            <div style="font-size:12px; color:#7d818c; padding:4px 0 4px 36px">thinkingâ€¦</div>
+          </sc-if>
+        </div>
+        <div style="padding:12px 14px 14px; border-top:1px solid rgba(255,255,255,0.08); flex-shrink:0">
+          <div style="border:1px solid rgba(255,255,255,0.14); border-radius:12px; background:#101116; padding:10px">
+            <textarea value="{{ wizDraft }}" onChange="{{ setWizDraft }}" onKeyDown="{{ wizKey }}" rows="2" placeholder="Ask {{ wizName }}â€¦" style="width:100%; resize:none; border:none; outline:none; background:transparent; font-size:13.5px; line-height:1.5; color:#f6f4ee; box-sizing:border-box"></textarea>
+            <div style="display:flex; justify-content:flex-end; margin-top:6px">
+              <button onClick="{{ wizSend }}" style="display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border:none; border-radius:8px; cursor:pointer; background:#d99a2b; color:#1c1408" style-hover="background:#df9f30"><l-i name="arrow-up" size="15"></l-i></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- Toast -->
+  <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+    <div style="position:absolute; bottom:24px; left:50%; transform:translateX(-50%); z-index:60; display:flex; align-items:center; gap:8px; padding:10px 16px; background:#20222b; border:1px solid rgba(255,255,255,0.14); border-radius:10px; box-shadow:0 14px 40px rgba(0,0,0,0.55); font-size:13px; color:#e8e9ec; animation:lore-fade-in 140ms ease-out">
+      <l-i name="check" size="14" style="color:#5cbd84"></l-i>{{ toast }}
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;ownerName&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Jordan Lee&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Identity&quot;}, &quot;companyName&quot;: {&quot;editor&quot;: &quot;text&quot;, &quot;default&quot;: &quot;Meridian Advisory&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;Identity&quot;}, &quot;showGettingStarted&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Onboarding&quot;}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.notesRaw = [
+      { id: 'c1', folder: 'Clients', name: 'Acme Retail â€” Q3 rollout', scope: 'team', updated: '2h ago', fresh: false,
+        md: '# Acme Retail â€” Q3 rollout\n\nAcme is expanding the loyalty pilot to 40 stores in Q3. Scope is anchored to [[Acme loyalty pitch]] as the baseline â€” no custom POS work this phase.\n\n## Commitments\n\n- Pilot go-live by Aug 15 across the first 12 stores\n- Weekly status call every Tuesday â€” see [[Weekly account sync â€” Jul 1]]\n- Data migration dry-run before Jul 30\n\n## Risks\n\nThe POS vendor SLA is the long pole. Escalate through Dana if slippage passes one week.\n\n> Client sponsor: "If the pilot proves out, we take it national in Q1."' },
+      { id: 'c2', folder: 'Clients', name: 'Northwind Logistics', scope: 'team', updated: '5h ago', fresh: false,
+        md: '# Northwind Logistics\n\nNorthwind runs 3PL for mid-market retail; the current contract ends Sep 30. Renewal terms are tracked in [[Northwind renewal proposal]].\n\n## Account facts\n\n- Contract value $420k/yr Â· net-45\n- Ops contact: Priya N. (Chicago)\n- NPS dipped after the May outage â€” recovery plan in flight' },
+      { id: 'c3', folder: 'Clients', name: 'Contoso Health â€” intake', scope: 'private', updated: '1d ago', fresh: false,
+        md: '# Contoso Health â€” intake\n\nEarly conversations â€” not shared with the team yet. Compliance-heavy; we need a HIPAA-aware data plan before we pitch.\n\n- Budget signal: $150â€“200k\n- Decision by October' },
+      { id: 'm1', folder: 'Meetings', name: 'Weekly account sync â€” Jul 1', scope: 'team', updated: '4d ago', fresh: false,
+        md: '# Weekly account sync â€” Jul 1\n\nAttendees: Jordan, Dana, Priya (Northwind), plus the Acme ops lead as a guest.\n\n## Decisions\n\n- Acme data-migration dry-run moved to Jul 28\n- Renewal pricing follows [[Pricing guardrails]] â€” no bespoke discounts\n- Next sync Jul 8' },
+      { id: 'm2', folder: 'Meetings', name: 'Northwind kickoff notes', scope: 'team', updated: '6d ago', fresh: false,
+        md: '# Northwind kickoff notes\n\nKickoff for the renewal workstream. Northwind wants a multi-year deal with a volume ramp; details in [[Northwind renewal proposal]].' },
+      { id: 'p1', folder: 'Proposals', name: 'Northwind renewal proposal', scope: 'team', updated: '1d ago', fresh: false,
+        md: '# Northwind renewal proposal\n\nTwo-year renewal at $780k total â€” an 8% uplift in year 1 and 4% in year 2, tied to volume tier 2.\n\n## Terms\n\n- Term: Oct 1 2026 â€“ Sep 30 2028\n- Discount: 6%, inside [[Pricing guardrails]]\n- SLA: 99.5% with service credits\n\n> Walk-away: anything below $350k/yr.' },
+      { id: 'p2', folder: 'Proposals', name: 'Acme loyalty pitch', scope: 'private', updated: '2d ago', fresh: false,
+        md: '# Acme loyalty pitch\n\nDraft pitch for the national loyalty program â€” keep private until the pilot reads out.\n\n- Anchor at $95k for phase 1\n- Success metric: repeat-purchase rate +12%' },
+      { id: 'b1', folder: 'Playbooks', name: 'Discovery call checklist', scope: 'enterprise', updated: '8d ago', fresh: false,
+        md: '# Discovery call checklist\n\n- Map the buying committee before any demo\n- Ask about data residency early\n- Never quote pricing on the first call\n- Close with a concrete next step and date' },
+      { id: 'b2', folder: 'Playbooks', name: 'Pricing guardrails', scope: 'enterprise', updated: '3d ago', fresh: false,
+        md: '# Pricing guardrails\n\nCompany-wide guardrails for all client work.\n\n- Standard discount ceiling: 10% â€” anything more needs VP sign-off\n- Enterprise deals: floor at $350k/yr\n- Payment terms: net-45 max' },
+      { id: 's1', folder: 'Personal', name: 'Ideas scratchpad', scope: 'private', updated: '12d ago', fresh: false,
+        md: '# Ideas scratchpad\n\nLoose ideas, unfiltered.\n\n- Quarterly client-health scorecard\n- Async video recaps instead of Friday calls' },
+      { id: 's2', folder: 'Personal', name: '1:1 prep â€” Dana', scope: 'private', updated: '2d ago', fresh: false,
+        md: '# 1:1 prep â€” Dana\n\n- Raise the Northwind staffing gap\n- Acme dry-run risk owner\n- My Q3 goals draft' },
+    ];
+    this.folders = ['Clients', 'Meetings', 'Proposals', 'Playbooks', 'Personal'];
+    this.edges = [
+      ['c1','p2','link'], ['c1','m1','link'], ['c2','p1','link'], ['m2','p1','link'], ['m1','b2','link'], ['p1','b2','link'],
+      ['p1','p2','tag'], ['p2','b2','tag'],
+    ];
+    this.byId = {}; this.notesRaw.forEach((n) => { this.byId[n.id] = n; });
+    this.notesRaw.forEach((n) => { n.blocks = this.parseMd(n.md); n.raw = n.md; });
+    this.canned = {
+      q1: { q: 'What did we promise Acme for the Q3 rollout?', blocks: [
+          { t: 'p', s: 'Three commitments are on record for the Q3 rollout:' },
+          { t: 'li', s: 'Pilot go-live by Aug 15 across the first 12 stores' },
+          { t: 'li', s: 'A weekly status call every Tuesday' },
+          { t: 'li', s: 'A data-migration dry-run â€” moved to Jul 28 in the last sync' },
+          { t: 'p', s: 'Scope is anchored to the loyalty-pitch baseline, so no custom POS work is included this phase.' } ],
+        citations: [ { id: 'c1' }, { id: 'm1' } ] },
+      q2: { q: 'Summarize the Northwind renewal terms', blocks: [
+          { t: 'p', s: 'The renewal on the table is a two-year deal worth $780k total:' },
+          { t: 'li', s: '8% uplift in year 1, 4% in year 2 â€” tied to volume tier 2' },
+          { t: 'li', s: '6% discount, inside the company pricing guardrails' },
+          { t: 'li', s: '99.5% SLA with service credits Â· term Oct 1 2026 â€“ Sep 30 2028' },
+          { t: 'p', s: 'The stated walk-away is anything below $350k per year.' } ],
+        citations: [ { id: 'p1' }, { id: 'b2' } ] },
+      q3: { q: "What's our discount ceiling for enterprise deals?", blocks: [
+          { t: 'p', s: 'The standard discount ceiling is 10% â€” anything above that needs a VP sign-off.' },
+          { t: 'li', s: 'Enterprise deals carry a floor of $350k/yr' },
+          { t: 'li', s: 'Payment terms cap at net-45' } ],
+        citations: [ { id: 'b2' } ] },
+    };
+    this.ctxChipDefs = ['Summarize this page', 'What are the key figures?', 'What connects to this?'];
+    this.gLayoutCache = null;
+    this.state = {
+      place: 'my', sectionFilter: 'all', openId: null, mode: 'read', drafts: {},
+      welcomeGone: false, steps: { opened: false, asked: false, moved: false }, checklistHidden: false, inTeam: false, teamInput: false, teamDraft: '', teamName: '',
+      moveFor: null, mapOpen: false, wizardsOpen: false,
+      searchOpen: false, searchQ: '', searchIdx: 0,
+      askOpen: false, askDraft: '', messages: [], asking: false, askScope: 'here', askCtx: null, gridDraft: '',
+      importOpen: false, toast: null,
+      wizards: [ { id: 'w1', name: 'Client playbook', notes: 6, shared: false }, { id: 'w2', name: 'Northwind brain', notes: 9, shared: true } ],
+      wizChat: null, wizMsgs: [], wizDraft: '', wizThinking: false, builderOpen: false, builderDraft: '',
+      gk: 1, gtx: 0, gty: 0, gSel: null, nonce: 0,
+    };
+  }
+
+  componentDidMount() {
+    this.keyHandler = (e) => {
+      if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 'k') { e.preventDefault(); this.setState((s) => ({ searchOpen: !s.searchOpen, searchQ: '', searchIdx: 0 })); }
+      else if (e.key === 'Escape') { this.setState({ searchOpen: false, importOpen: false, builderOpen: false, moveFor: null, mapOpen: false }); }
+    };
+    window.addEventListener('keydown', this.keyHandler);
+  }
+  componentWillUnmount() { window.removeEventListener('keydown', this.keyHandler); if (this.streamTimer) clearInterval(this.streamTimer); }
+
+  parseRuns(text) {
+    const runs = [];
+    String(text).split(/(\[\[[^\]]+\]\])/g).forEach((p) => {
+      if (!p) return;
+      const w = p.match(/^\[\[([^\]]+)\]\]$/);
+      if (w) runs.push({ link: w[1], x: w[1] }); else runs.push({ x: p });
+    });
+    return runs.length ? runs : [{ x: '' }];
+  }
+  parseMd(md) {
+    const lines = String(md || '').split('\n');
+    const blocks = [];
+    for (const ln of lines) {
+      if (!ln.trim()) continue;
+      if (ln.startsWith('# ')) blocks.push({ t: 'h1', s: ln.slice(2) });
+      else if (ln.startsWith('## ')) blocks.push({ t: 'h2', s: ln.slice(3) });
+      else if (ln.startsWith('- ')) blocks.push({ t: 'li', runs: this.parseRuns(ln.slice(2)) });
+      else if (ln.startsWith('> ')) blocks.push({ t: 'quote', s: ln.slice(2) });
+      else blocks.push({ t: 'p', runs: this.parseRuns(ln) });
+    }
+    return blocks;
+  }
+  snippetOf(note) {
+    const lines = String(note.md).split('\n').filter((l) => l.trim() && !l.startsWith('#'));
+    const first = (lines[0] || '').replace(/\[\[|\]\]/g, '').replace(/^[->] /, '');
+    return first.length > 110 ? first.slice(0, 108) + 'â€¦' : first;
+  }
+  placeOf(scope) { return scope === 'team' ? 'team' : (scope === 'enterprise' ? 'company' : 'my'); }
+  placeMeta(place) {
+    if (place === 'team') return { name: 'Team', icon: 'users', color: '#5cbd84', solid: '#3fae6e', tint: 'rgba(63,174,110,0.14)', bd: 'rgba(63,174,110,0.4)' };
+    if (place === 'company') return { name: 'Company', icon: 'building-2', color: '#7ab5f0', solid: '#5aa0ea', tint: 'rgba(90,160,234,0.14)', bd: 'rgba(90,160,234,0.4)' };
+    return { name: 'My Notes', icon: 'lock', color: '#e8b04a', solid: '#d99a2b', tint: 'rgba(217,154,43,0.14)', bd: 'rgba(217,154,43,0.4)' };
+  }
+  sectionColor(name) {
+    const map = { Clients: '#5b8def', Meetings: '#e0883a', Proposals: '#a36bd6', Playbooks: '#3fa85f', Personal: '#d6b34a' };
+    return map[name] || '#7a8bb0';
+  }
+  notesIn(place) { return this.notesRaw.filter((n) => this.placeOf(n.scope) === place); }
+  connectionsOf(id) {
+    const seen = {}; const out = [];
+    for (const [a, b, kind] of this.edges) {
+      if (a === id || b === id) {
+        const other = this.byId[a === id ? b : a];
+        if (other && !seen[other.id]) { seen[other.id] = 1; out.push({ id: other.id, label: other.name, kind }); }
+      }
+    }
+    return out;
+  }
+  layoutGraph(nonce) {
+    const key = 'g' + nonce;
+    if (this.gLayoutCache && this.gLayoutCache.key === key) return this.gLayoutCache;
+    const ns = this.notesRaw.map((n, i) => {
+      const a = (i / this.notesRaw.length) * Math.PI * 2 + nonce * 0.7;
+      const deg = this.edges.filter((e) => e[0] === n.id || e[1] === n.id).length;
+      return { id: n.id, x: 600 + 240 * Math.cos(a), y: 350 + 175 * Math.sin(a), vx: 0, vy: 0, deg };
+    });
+    const idx = {}; ns.forEach((n) => { idx[n.id] = n; });
+    for (let it = 0; it < 300; it++) {
+      for (let i = 0; i < ns.length; i++) for (let j = i + 1; j < ns.length; j++) {
+        const a = ns[i], b = ns[j];
+        let dx = a.x - b.x, dy = a.y - b.y; let d2 = dx * dx + dy * dy; if (d2 < 1) d2 = 1;
+        const f = 26000 / d2, d = Math.sqrt(d2);
+        dx /= d; dy /= d; a.vx += dx * f * 0.01; a.vy += dy * f * 0.01; b.vx -= dx * f * 0.01; b.vy -= dy * f * 0.01;
+      }
+      for (const [ea, eb] of this.edges) {
+        const a = idx[ea], b = idx[eb]; if (!a || !b) continue;
+        const dx = b.x - a.x, dy = b.y - a.y; const d = Math.sqrt(dx * dx + dy * dy) || 1;
+        const f = (d - 160) * 0.02;
+        a.vx += (dx / d) * f; a.vy += (dy / d) * f; b.vx -= (dx / d) * f; b.vy -= (dy / d) * f;
+      }
+      for (const n of ns) {
+        n.vx += (600 - n.x) * 0.004; n.vy += (350 - n.y) * 0.004;
+        n.x += n.vx; n.y += n.vy; n.vx *= 0.82; n.vy *= 0.82;
+      }
+    }
+    this.gLayoutCache = { key, nodes: ns, idx };
+    return this.gLayoutCache;
+  }
+  flash(msg) { this.setState({ toast: msg }); clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: null }), 2600); }
+  openNote(id) {
+    const n = this.byId[id]; if (!n) return;
+    this.setState((s) => ({ place: this.placeOf(n.scope), openId: id, mode: 'read', searchOpen: false, mapOpen: false, wizardsOpen: false, sectionFilter: 'all', steps: { ...s.steps, opened: true } }));
+  }
+  moveNote(id, target) {
+    const n = this.byId[id]; if (!n) return;
+    const pm = this.placeMeta(target);
+    n.scope = target === 'team' ? 'team' : (target === 'company' ? 'enterprise' : 'private');
+    n.fresh = true; n.updated = 'just now';
+    clearTimeout(this._freshT); this._freshT = setTimeout(() => { n.fresh = false; this.setState((s) => ({ nonce: s.nonce + 1 })); }, 6000);
+    this.setState((s) => ({ moveFor: null, place: target, nonce: s.nonce + 1, steps: { ...s.steps, moved: true } }));
+    const teamPending = target === 'team' && !this.state.inTeam;
+    this.flash(target === 'my' ? 'Moved to My Notes â€” only you can see it now'
+      : teamPending ? 'Moved to Team â€” finish team setup and everyone on it will see it'
+      : 'Moved to ' + pm.name + ' â€” ' + (target === 'team' ? 'your whole team can see it now' : 'everyone at the company can see it now'));
+  }
+  runsText(b) { return b.s != null ? b.s : (b.runs || []).map((r) => r.x).join(''); }
+  chatAbout(id) { this.setState({ askOpen: true, askCtx: id }); }
+  ctxAnswer(question, note) {
+    const blocks = note.blocks || [];
+    if (question === 'Summarize this page') {
+      const p = blocks.find((b) => b.t === 'p');
+      const lis = blocks.filter((b) => b.t === 'li').slice(0, 4);
+      const out = [];
+      if (p) out.push({ t: 'p', s: this.runsText(p) });
+      lis.forEach((li) => out.push({ t: 'li', s: this.runsText(li) }));
+      if (!out.length) out.push({ t: 'p', s: 'This page is empty so far.' });
+      return { blocks: out, citations: [{ id: note.id }] };
+    }
+    if (question === 'What are the key figures?') {
+      const rx = /[$%]|\d{2,}/;
+      const hits = [];
+      blocks.forEach((b) => { if (b.t === 'li' || b.t === 'p' || b.t === 'quote') { const s = this.runsText(b); if (rx.test(s)) hits.push({ t: 'li', s }); } });
+      return { blocks: hits.length ? [{ t: 'p', s: 'Figures on this page:' }, ...hits.slice(0, 5)] : [{ t: 'p', s: 'No numbers or amounts on this page.' }], citations: [{ id: note.id }] };
+    }
+    if (question === 'What connects to this?') {
+      const conns = this.connectionsOf(note.id);
+      return { blocks: conns.length ? [{ t: 'p', s: 'Pages connected to this one:' }, ...conns.map((c) => ({ t: 'li', s: c.label }))] : [{ t: 'p', s: 'Nothing links to this page yet.' }], citations: conns.slice(0, 3).map((c) => ({ id: c.id })) };
+    }
+    return { blocks: [{ t: 'p', s: 'In the full app, any question about \u201c' + note.name + '\u201d is answered from its content. Try one of the suggested questions.' }], citations: [{ id: note.id }] };
+  }
+  sendAsk(q, ctxOverride) {
+    const query = (q || this.state.askDraft || '').trim();
+    if (!query || this.state.asking) return;
+    const ctxId = ctxOverride === undefined ? this.state.askCtx : ctxOverride;
+    const canned = Object.values(this.canned).find((c) => c.q === query) || null;
+    let answer;
+    if (ctxId && this.byId[ctxId]) answer = this.ctxAnswer(query, this.byId[ctxId]);
+    else if (canned) answer = canned;
+    else answer = { blocks: [ { t: 'p', s: 'This prototype answers the three suggested questions with full cited flows. In the real app, any question is answered from your pages â€” always showing where the answer came from.' } ], citations: [] };
+    const fullText = answer.blocks.map((b) => (b.t === 'li' ? 'â€¢ ' + b.s : b.s)).join('\n');
+    this.setState((s) => ({ askDraft: '', asking: true, askOpen: true, askCtx: ctxId || null, steps: { ...s.steps, asked: true }, messages: [...s.messages, { role: 'user', text: query }] }));
+    setTimeout(() => {
+      this.setState((s) => ({ messages: [...s.messages, { role: 'answer', streaming: true, streamText: '', answer }] }));
+      let i = 0;
+      const words = fullText.split(' ');
+      this.streamTimer = setInterval(() => {
+        i += 2;
+        if (i >= words.length) {
+          clearInterval(this.streamTimer);
+          this.setState((s) => {
+            const ms = s.messages.slice();
+            ms[ms.length - 1] = { role: 'answer', streaming: false, answer: ms[ms.length - 1].answer };
+            return { messages: ms, asking: false };
+          });
+        } else {
+          this.setState((s) => {
+            const ms = s.messages.slice();
+            ms[ms.length - 1] = { ...ms[ms.length - 1], streamText: words.slice(0, i).join(' ') };
+            return { messages: ms };
+          });
+        }
+      }, 50);
+    }, 600);
+  }
+  wizSendNow() {
+    const v = this.state.wizDraft.trim();
+    if (!v || this.state.wizThinking) return;
+    this.setState((s) => ({ wizMsgs: [...s.wizMsgs, { role: 'user', text: v }], wizDraft: '', wizThinking: true }));
+    setTimeout(() => {
+      const w = this.state.wizChat || { name: 'this Wizard' };
+      const reply = w.name === 'Northwind brain'
+        ? 'Northwind\u2019s contract ends Sep 30. The renewal on the table is a two-year, $780k deal â€” 8% uplift Y1, 4% Y2 â€” with a 6% discount that stays inside the pricing guardrails. Watch the May-outage NPS dip; reference the recovery plan in the renewal conversation.'
+        : 'From this Wizard\u2019s pages: map the buying committee before any demo, ask about data residency early, and never quote pricing on the first call. The discount ceiling is 10% company-wide.';
+      this.setState((s) => ({ wizMsgs: [...s.wizMsgs, { role: 'answer', text: reply }], wizThinking: false }));
+    }, 900);
+  }
+
+  renderVals() {
+    const S = this.state;
+    const me = this;
+    const owner = (this.props.ownerName ?? 'Jordan Lee');
+    const companyName = (this.props.companyName ?? 'Meridian Advisory');
+    const showGettingStarted = (this.props.showGettingStarted ?? true);
+    const hour = new Date().getHours();
+    const part = hour < 5 ? 'evening' : hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    const pm = this.placeMeta(S.place);
+
+    // place tabs
+    const placeTabs = ['my', 'team', 'company'].map((p) => {
+      const m = this.placeMeta(p);
+      const on = S.place === p && !S.wizardsOpen;
+      const tips = { my: 'Only you can see these', team: 'Everyone on your team can see these', company: 'Everyone at ' + companyName + ' can see these' };
+      return {
+        label: m.name, icon: m.icon, count: this.notesIn(p).length, tip: tips[p],
+        bg: on ? m.tint : 'transparent', bd: on ? m.bd : 'rgba(255,255,255,0.08)', fg: on ? m.color : '#a4a7b0',
+        click: () => me.setState({ place: p, openId: null, sectionFilter: 'all', wizardsOpen: false, mapOpen: false }),
+      };
+    });
+
+    // ribbon
+    const openNote = S.openId ? this.byId[S.openId] : null;
+    const mkBtn = (icon, label, tip, click, opts) => ({ icon, label, tip, click, bg: (opts && opts.bg) || 'transparent', fg: (opts && opts.fg) || '#d6d8de', iconColor: (opts && opts.iconColor) || '#c9cbd1', op: (opts && opts.disabled) ? 0.4 : 1 });
+    const ribbonGroups = [
+      { caption: 'Create', buttons: [
+        mkBtn('file-plus-2', 'New page', 'Start a new page in ' + pm.name, () => me.flash('New pages start in My Notes â€” private until you move them')),
+        mkBtn('upload', 'Add files', 'Import Word, PDF, Markdown or text', () => me.setState({ importOpen: true })),
+      ] },
+      { caption: 'Understand', buttons: [
+        mkBtn('sparkles', 'Ask Lore', 'Ask a question â€” answers cite your pages', () => me.setState((s) => ({ askOpen: !s.askOpen })), S.askOpen ? { bg: 'rgba(217,154,43,0.16)', iconColor: '#df9f30', fg: '#e8b04a' } : { iconColor: '#df9f30' }),
+        mkBtn('waypoints', 'Map', 'See how pages connect', () => me.setState({ mapOpen: true })),
+        mkBtn('wand-2', 'Wizards', 'Chat-ready bundles of pages', () => me.setState({ wizardsOpen: true, openId: null })),
+      ] },
+      { caption: 'Share', buttons: [
+        mkBtn('corner-up-right', 'Moveâ€¦', openNote ? 'Move this page to another place' : 'Open a page first, then move it to share', () => { if (openNote) me.setState({ moveFor: openNote.id }); else me.flash('Open a page first â€” then Move shares it'); }, openNote ? {} : { disabled: true }),
+      ] },
+    ];
+
+    const placeHints = {
+      my: { hint: 'Only you can see these pages', sub: 'Move a page to Team or Company to share it' },
+      team: { hint: 'Everyone on your team sees these', sub: S.inTeam || this.notesIn('team').length ? 'Shared the moment a page moves here' : 'Set up your team to start sharing' },
+      company: { hint: 'Everyone at ' + companyName + ' sees these', sub: 'Best for playbooks and standards' },
+    };
+
+    // section rail
+    const placeNotes = this.notesIn(S.place);
+    const sectionsHere = this.folders.filter((f) => placeNotes.some((n) => n.folder === f));
+    const railRows = [
+      { isAll: true, isSection: false, name: 'All pages', count: placeNotes.length, iconColor: pm.color, chip: null,
+        bg: S.sectionFilter === 'all' ? 'rgba(255,255,255,0.07)' : 'transparent', color: S.sectionFilter === 'all' ? '#f6f4ee' : '#c9cbd1', weight: S.sectionFilter === 'all' ? 600 : 500,
+        click: () => me.setState({ sectionFilter: 'all', openId: null }) },
+      ...sectionsHere.map((f) => ({
+        isAll: false, isSection: true, name: f, count: placeNotes.filter((n) => n.folder === f).length, chip: this.sectionColor(f), iconColor: null,
+        bg: S.sectionFilter === f ? 'rgba(255,255,255,0.07)' : 'transparent', color: S.sectionFilter === f ? '#f6f4ee' : '#c9cbd1', weight: S.sectionFilter === f ? 600 : 500,
+        click: () => me.setState({ sectionFilter: f, openId: null }),
+      })),
+    ];
+    const placeFootnotes = {
+      my: 'Private. Nothing here leaves this computer.',
+      team: 'Shared with everyone on your team.',
+      company: 'Visible to everyone at ' + companyName + '.',
+    };
+
+    // grid
+    const teamGate = S.place === 'team' && !S.inTeam && this.notesIn('team').length > 0 && !S.teamSetup;
+    const showTeamGate = S.place === 'team' && !S.inTeam;
+    const gridNotes = placeNotes.filter((n) => S.sectionFilter === 'all' || n.folder === S.sectionFilter);
+    const gridCards = gridNotes.map((n) => ({
+      name: n.name, section: n.folder, chip: this.sectionColor(n.folder), snippet: this.snippetOf(n),
+      updated: n.updated, fresh: !!n.fresh, hoverBd: pm.bd,
+      click: () => me.setState((s) => ({ openId: n.id, mode: 'read', steps: { ...s.steps, opened: true } })),
+      chatClick: (e) => { e.stopPropagation(); me.chatAbout(n.id); },
+    }));
+    const emptyMetas = {
+      my: { icon: 'lock', title: 'No private pages here', body: 'Pages you create or import start here, visible only to you.' },
+      team: { icon: 'users', title: 'Nothing shared with the team yet', body: 'Open any page in My Notes and press Moveâ€¦ â€” it lands here for everyone on the team.' },
+      company: { icon: 'building-2', title: 'Nothing company-wide yet', body: 'Company is for playbooks and standards everyone should see. Move a page here when it\u2019s ready.' },
+    };
+
+    // open page
+    const noteBlocks = openNote ? (openNote.blocks || []).map((b) => ({
+      ...b,
+      isH1: b.t === 'h1', isH2: b.t === 'h2', isQuote: b.t === 'quote', isLi: b.t === 'li', isP: b.t === 'p',
+      runs: (b.runs || []).map((r) => ({
+        x: r.x, isLink: !!r.link, isPlain: !r.link,
+        click: r.link ? ((e) => { e.stopPropagation(); const target = me.notesRaw.find((n) => n.name === r.link); if (target) me.openNote(target.id); }) : null,
+      })),
+    })) : [];
+
+    // move dialog
+    const moveNote = S.moveFor ? this.byId[S.moveFor] : null;
+    const movePlace = moveNote ? this.placeOf(moveNote.scope) : 'my';
+    const moveTargets = moveNote ? ['my', 'team', 'company'].filter((p) => p !== movePlace).map((p) => {
+      const m = this.placeMeta(p);
+      const hints = { my: 'Make it private again â€” only you', team: 'Everyone on your team can read and build on it', company: 'Everyone at ' + companyName + ' can see it' };
+      return { label: 'Move to ' + m.name, hint: hints[p], icon: m.icon, iconBg: m.tint, iconFg: m.color, hoverBd: m.bd, click: () => me.moveNote(moveNote.id, p) };
+    }) : [];
+
+    // map
+    const layout = this.layoutGraph(0);
+    const focus = S.gSel;
+    const nbSet = new Set();
+    if (focus) for (const [a, b] of this.edges) { if (a === focus) nbSet.add(b); if (b === focus) nbSet.add(a); }
+    const gEdges = this.edges.map(([a, b]) => {
+      const na = layout.idx[a], nb2 = layout.idx[b];
+      const lit = focus && (a === focus || b === focus);
+      return {
+        x1: +na.x.toFixed(1), y1: +na.y.toFixed(1), x2: +nb2.x.toFixed(1), y2: +nb2.y.toFixed(1),
+        stroke: lit ? '#df9f30' : '#4a4e59', w: lit ? 1.6 : 1.1, op: focus ? (lit ? 0.9 : 0.15) : 0.7,
+      };
+    });
+    const gNodes = layout.nodes.map((n) => {
+      const nn = this.byId[n.id];
+      const m = this.placeMeta(this.placeOf(nn.scope));
+      const near = !focus || nbSet.has(n.id) || n.id === focus;
+      const r = Math.max(7, Math.min(16, 7 + n.deg * 1.6));
+      return {
+        id: n.id, x: +n.x.toFixed(1), y: +n.y.toFixed(1), r,
+        fill: m.solid, op: near ? 1 : 0.25,
+        ring: n.id === S.gSel ? '#f6f4ee' : 'transparent', ringW: n.id === S.gSel ? 1.5 : 0,
+        label: nn.name.length > 26 ? nn.name.slice(0, 24) + 'â€¦' : nn.name,
+        ly: +(n.y + r + 13).toFixed(1),
+        click: () => me.setState({ gSel: n.id }),
+        dbl: () => me.openNote(n.id),
+      };
+    });
+    const gSelNote = S.gSel ? this.byId[S.gSel] : null;
+    const gSelMeta = gSelNote ? this.placeMeta(this.placeOf(gSelNote.scope)) : null;
+
+    // ask
+    const chipDefs = [this.canned.q1.q, this.canned.q2.q, this.canned.q3.q];
+    const msgRows = S.messages.map((m) => {
+      if (m.role === 'user') return { isUser: true, isAnswer: false, text: m.text };
+      const a = m.answer || { blocks: [], citations: [] };
+      return {
+        isUser: false, isAnswer: true, streaming: !!m.streaming, done: !m.streaming, streamText: m.streamText || '',
+        blocks: (a.blocks || []).map((b) => ({ s: b.s, isP: b.t === 'p', isLi: b.t === 'li' })),
+        showMeta: !m.streaming && (a.citations || []).length > 0,
+        citations: (a.citations || []).map((c) => {
+          const n = me.byId[c.id]; const m2 = me.placeMeta(me.placeOf(n.scope));
+          return { title: n.name, icon: m2.icon, scope: m2.name, scopeColor: m2.color, click: () => me.openNote(n.id) };
+        }),
+      };
+    });
+    const askScopeMeta = S.askScope === 'here' ? { label: pm.name, icon: pm.icon, color: pm.color } : { label: 'everywhere', icon: 'layout-grid', color: '#a4a7b0' };
+    const askCtxNote = S.askCtx ? this.byId[S.askCtx] : null;
+
+    // search
+    const q = S.searchQ.toLowerCase();
+    const searchList = (q ? this.notesRaw.filter((n) => n.name.toLowerCase().includes(q)) : this.notesRaw).slice(0, 12);
+    const searchResults = searchList.map((n, i) => {
+      const m = this.placeMeta(this.placeOf(n.scope));
+      return { name: n.name, bg: i === S.searchIdx ? 'rgba(217,154,43,0.13)' : 'transparent', placeIcon: m.icon, placeColor: m.color, placeName: m.name, click: () => me.openNote(n.id) };
+    });
+
+    const stepsDone = { import: true, opened: S.steps.opened, asked: S.steps.asked, moved: S.steps.moved };
+    const checklistDefs = [
+      { id: 'import', label: 'Bring in your notes', go: 'Add files', click: () => me.setState({ importOpen: true }) },
+      { id: 'opened', label: 'Open a page', go: 'Open', click: () => { const n = me.notesIn('my')[0]; if (n) me.openNote(n.id); } },
+      { id: 'asked', label: 'Ask your first question', go: 'Ask', click: () => me.setState({ askOpen: true }) },
+      { id: 'moved', label: 'Move a page to share it', go: 'Try it', click: () => { const n = me.notesIn('my')[0]; if (n) { me.setState({ place: 'my', openId: n.id }); setTimeout(() => me.setState({ moveFor: n.id }), 250); } } },
+    ];
+    const doneCount = checklistDefs.filter((c) => stepsDone[c.id]).length;
+    const checklistRows = checklistDefs.map((c) => {
+      const done = stepsDone[c.id];
+      return { label: c.label, done, go: c.go, showGo: !done,
+        dotBg: done ? '#d99a2b' : 'transparent', dotBd: done ? '#d99a2b' : 'rgba(255,255,255,0.25)',
+        textColor: done ? '#8b8f9a' : '#e8e9ec', deco: done ? 'line-through' : 'none', click: c.click };
+    });
+    const wizardCards = S.wizards.map((w) => ({
+      name: w.name, meta: w.notes + ' pages inside', shared: w.shared,
+      chat: () => me.setState({ wizChat: w, wizMsgs: [], wizDraft: '' }),
+    }));
+
+    return {
+      ownerName: owner, companyName,
+      ownerInitials: owner.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase(),
+      placeTabs, ribbonGroups,
+      placeHint: placeHints[S.place].hint, placeSubHint: placeHints[S.place].sub,
+      placeHintIcon: pm.icon, placeHintColor: pm.color,
+      placeName: pm.name, placeIcon: pm.icon, placeColor: pm.color,
+      placeFootIcon: pm.icon, placeFootnote: placeFootnotes[S.place],
+      stopProp: (e) => e.stopPropagation(),
+      toast: S.toast,
+
+      isWizards: S.wizardsOpen, isPlace: !S.wizardsOpen,
+      backFromWizards: () => me.setState({ wizardsOpen: false }),
+
+      showRail: !showTeamGate, railRows,
+      showWelcomeBanner: false,
+      dismissWelcome: () => {},
+      showMyGreeting: S.place === 'my',
+      greeting: 'Good ' + part + ', ' + owner.split(' ')[0],
+      showChecklist: showGettingStarted && !S.checklistHidden && S.place === 'my' && doneCount < 4,
+      checklistRows, checklistDoneLabel: doneCount + ' of 4 done', checklistPct: (doneCount / 4 * 100) + '%',
+      dismissChecklist: () => me.setState({ checklistHidden: true }),
+      showTeamGate,
+      teamWaitingLabel: this.notesIn('team').length + ' pages are waiting for your team',
+      teamInputOpen: S.teamInput, teamInputClosed: !S.teamInput,
+      teamCreateOpen: () => me.setState({ teamInput: true, teamDraft: '' }),
+      teamCreateClose: () => me.setState({ teamInput: false }),
+      teamDraft: S.teamDraft, setTeamDraft: (e) => me.setState({ teamDraft: e.target.value }),
+      teamDraftKey: (e) => { if (e.key === 'Enter') { const v = S.teamDraft.trim(); if (v) { me.setState({ inTeam: true, teamName: v, teamInput: false }); me.flash('Team â€œ' + v + 'â€ created â€” invite people from the avatar menu'); } } if (e.key === 'Escape') me.setState({ teamInput: false }); },
+      teamCreate: () => { const v = S.teamDraft.trim(); if (v) { me.setState({ inTeam: true, teamName: v, teamInput: false }); me.flash('Team â€œ' + v + 'â€ created â€” invite people from the avatar menu'); } },
+      teamJoin: () => me.flash('Invites arrive by email â€” accepting one unlocks this space'),
+
+      showGrid: !showTeamGate && !S.openId, gridEmpty: gridCards.length === 0, gridCards,
+      gridTitle: S.sectionFilter === 'all' ? pm.name : S.sectionFilter,
+      gridSub: gridCards.length + (gridCards.length === 1 ? ' page' : ' pages'),
+      emptyIcon: emptyMetas[S.place].icon, emptyTitle: emptyMetas[S.place].title, emptyBody: emptyMetas[S.place].body,
+      newPage: () => me.flash('New pages start in My Notes â€” private until you move them'),
+
+      showPage: !showTeamGate && !!S.openId, closePage: () => me.setState({ openId: null, mode: 'read' }),
+      noteBlocks,
+      hasRelated: !!openNote && this.connectionsOf(openNote.id).length > 0,
+      relatedChips: openNote ? this.connectionsOf(openNote.id).map((c) => ({ label: c.label, dot: me.sectionColor(me.byId[c.id].folder), why: c.kind === 'tag' ? 'Covers the same topic' : 'Linked pages', click: () => me.openNote(c.id) })) : [],
+      isEditing: S.mode === 'edit' && !!openNote, isReading: S.mode === 'read',
+      startEdit: () => { if (openNote) me.setState((s) => ({ mode: 'edit', drafts: { ...s.drafts, [openNote.id]: s.drafts[openNote.id] != null ? s.drafts[openNote.id] : openNote.raw } })); },
+      draftRaw: openNote && S.drafts[openNote.id] != null ? S.drafts[openNote.id] : (openNote ? openNote.raw : ''),
+      setDraftRaw: (e) => { if (!openNote) return; const v = e.target.value; me.setState((s) => ({ drafts: { ...s.drafts, [openNote.id]: v } })); },
+      saveDraft: () => { if (openNote) { const v = S.drafts[openNote.id]; if (v != null) { openNote.raw = v; openNote.blocks = me.parseMd(v); } } me.setState({ mode: 'read' }); },
+      openMoveMenu: () => { if (openNote) me.setState({ moveFor: openNote.id }); },
+
+      moveOpen: !!moveNote, closeMove: () => me.setState({ moveFor: null }),
+      moveNoteName: moveNote ? moveNote.name : '',
+      moveFromName: this.placeMeta(movePlace).name, moveFromColor: this.placeMeta(movePlace).color,
+      moveTargets,
+
+      mapOpen: S.mapOpen, closeMap: () => me.setState({ mapOpen: false, gSel: null }),
+      gTransform: 'translate(' + S.gtx.toFixed(1) + ' ' + S.gty.toFixed(1) + ') scale(' + S.gk.toFixed(3) + ')',
+      gNodes, gEdges,
+      gWheel: (e) => { e.preventDefault(); me.setState((s) => { const k2 = Math.max(0.4, Math.min(4, s.gk * (e.deltaY < 0 ? 1.14 : 0.88))); const c = 600, cy = 350; return { gk: k2, gtx: c - (k2 / s.gk) * (c - s.gtx), gty: cy - (k2 / s.gk) * (cy - s.gty) }; }); },
+      gDown: (e) => { me._pan = { x: e.clientX, y: e.clientY, tx: S.gtx, ty: S.gty, w: e.currentTarget.getBoundingClientRect().width }; },
+      gMove: (e) => { if (!me._pan) return; const f = 1200 / me._pan.w; me.setState({ gtx: me._pan.tx + (e.clientX - me._pan.x) * f, gty: me._pan.ty + (e.clientY - me._pan.y) * f }); },
+      gUp: () => { me._pan = null; },
+      gSelNode: !!gSelNote, gSelLabel: gSelNote ? gSelNote.name : '',
+      gSelPlace: gSelMeta ? gSelMeta.name : '', gSelColor: gSelMeta ? gSelMeta.color : '#d6d8de',
+      gSelLinks: gSelNote ? this.connectionsOf(gSelNote.id).length : 0,
+      gOpenSel: () => { if (gSelNote) me.openNote(gSelNote.id); },
+
+      askOpen: S.askOpen, toggleAsk: () => me.setState((s) => ({ askOpen: !s.askOpen, askCtx: s.askOpen ? null : s.askCtx })),
+      hasMessages: S.messages.length > 0, noMessages: S.messages.length === 0,
+      msgRows, askChips: (askCtxNote ? me.ctxChipDefs : chipDefs).map((qq) => ({ q: qq, click: () => me.sendAsk(qq) })),
+      askCtxOn: !!askCtxNote, askCtxOff: !askCtxNote,
+      askCtxName: askCtxNote ? (askCtxNote.name.length > 24 ? askCtxNote.name.slice(0, 22) + 'â€¦' : askCtxNote.name) : '',
+      clearAskCtx: () => me.setState({ askCtx: null }),
+      askEmptyTitle: askCtxNote ? 'Ask about this page.' : 'Ask anything about your notes.',
+      askEmptyHint: askCtxNote ? 'Answered from \u201c' + askCtxNote.name + '\u201d:' : 'Try one of these:',
+      askPlaceholder: askCtxNote ? 'Ask about ' + askCtxNote.name + 'â€¦' : 'Ask a questionâ€¦',
+      chatAboutThis: () => { if (openNote) me.chatAbout(openNote.id); },
+      gridDraft: S.gridDraft, setGridDraft: (e) => me.setState({ gridDraft: e.target.value }),
+      gridKey: (e) => { if (e.key === 'Enter') { e.preventDefault(); const v = S.gridDraft.trim(); if (v) { me.setState({ gridDraft: '' }); me.sendAsk(v, null); } } },
+      gridAskGo: () => { const v = S.gridDraft.trim(); if (v) { me.setState({ gridDraft: '' }); me.sendAsk(v, null); } else { me.setState({ askOpen: true }); } },
+      gridChips: chipDefs.map((qq) => ({ q: qq, click: () => me.sendAsk(qq, null) })),
+      gridAskPlaceholder: 'Ask about your ' + (S.place === 'my' ? 'private pages' : S.place === 'team' ? 'team pages' : 'company pages') + 'â€¦',
+      askDraft: S.askDraft, setAskDraft: (e) => me.setState({ askDraft: e.target.value }),
+      askKey: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); me.sendAsk(); } },
+      askSend: () => me.sendAsk(), sendOp: S.askDraft.trim() && !S.asking ? 1 : 0.5,
+      newChat: () => me.setState({ messages: [], askCtx: null }),
+      askScopeLabel: askScopeMeta.label, askScopeIcon: askScopeMeta.icon, askScopeColor: askScopeMeta.color,
+      cycleAskScope: () => me.setState((s) => ({ askScope: s.askScope === 'here' ? 'all' : 'here' })),
+
+      searchOpen: S.searchOpen, openSearch: () => me.setState({ searchOpen: true, searchQ: '', searchIdx: 0 }),
+      closeSearch: () => me.setState({ searchOpen: false }),
+      searchQ: S.searchQ, setSearchQ: (e) => me.setState({ searchQ: e.target.value, searchIdx: 0 }),
+      searchResults, searchEmpty: searchResults.length === 0,
+      searchKeyDown: (e) => {
+        if (e.key === 'ArrowDown') { e.preventDefault(); me.setState((s) => ({ searchIdx: Math.min(s.searchIdx + 1, searchList.length - 1) })); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); me.setState((s) => ({ searchIdx: Math.max(s.searchIdx - 1, 0) })); }
+        else if (e.key === 'Enter') { const n = searchList[S.searchIdx]; if (n) me.openNote(n.id); }
+        else if (e.key === 'Escape') me.setState({ searchOpen: false });
+      },
+      importOpen: S.importOpen, openImport: () => me.setState({ importOpen: true }), closeImport: () => me.setState({ importOpen: false }),
+
+      wizardCards, builderOpen: S.builderOpen,
+      builderShow: () => me.setState({ builderOpen: true, builderDraft: '' }),
+      builderHide: () => me.setState({ builderOpen: false }),
+      builderDraft: S.builderDraft, setBuilderDraft: (e) => me.setState({ builderDraft: e.target.value }),
+      builderCreate: () => { const v = S.builderDraft.trim(); if (!v) return; const name = v.length > 26 ? v.slice(0, 24) + 'â€¦' : v; const w = { id: 'w' + Date.now(), name: name[0].toUpperCase() + name.slice(1), notes: 4, shared: false }; me.setState((s) => ({ wizards: [...s.wizards, w], builderOpen: false, wizChat: w, wizMsgs: [], wizDraft: '' })); },
+      wizChatOpen: !!S.wizChat, wizName: S.wizChat ? S.wizChat.name : '', wizNotes: S.wizChat ? S.wizChat.notes : 0,
+      closeWizChat: () => me.setState({ wizChat: null }),
+      wizMsgs: S.wizMsgs.map((m) => ({ isUser: m.role === 'user', isAnswer: m.role !== 'user', text: m.text })),
+      wizNoMessages: S.wizMsgs.length === 0, wizThinking: S.wizThinking,
+      wizDraft: S.wizDraft, setWizDraft: (e) => me.setState({ wizDraft: e.target.value }),
+      wizKey: (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); me.wizSendNow(); } },
+      wizSend: () => me.wizSendNow(),
+    };
+  }
+}
+</script>
+</body>
+</html>
