@@ -18,7 +18,6 @@ function flatten(tree, acc = []) {
   for (const n of tree) { if (n.kind === 'note') acc.push(n); if (n.children) flatten(n.children, acc); }
   return acc;
 }
-function firstNote(tree) { return flatten(tree)[0] || null; }
 
 // Top-bar CONTEXT switch (Private / Team / Company) — shared predicate used for BOTH
 // the file tree (below) and the graph (see filteredGraph). Private is the owner's
@@ -228,55 +227,6 @@ function SearchPalette({ notes, onPick, onClose }) {
   );
 }
 
-// Draggable divider between panels. Adjusts the CSS width vars the panels already read
-// (--sidebar-width / --context-width), so no per-component plumbing is needed.
-function PaneResizer({ side }) {
-  const ref = React.useRef(null);
-  const applyWidth = (delta) => {
-    const el = ref.current;
-    const target = side === 'sidebar' ? el?.previousElementSibling : el?.nextElementSibling;
-    if (!target) return;
-    const vName = side === 'sidebar' ? '--sidebar-width' : '--context-width';
-    const min = side === 'sidebar' ? 180 : 220, max = side === 'sidebar' ? 520 : 600;
-    const current = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(vName)) || target.getBoundingClientRect().width;
-    const next = Math.max(min, Math.min(max, current + delta));
-    document.documentElement.style.setProperty(vName, next + 'px');
-  };
-  const onDown = (e) => {
-    e.preventDefault();
-    const el = ref.current;
-    const target = side === 'sidebar' ? el.previousElementSibling : el.nextElementSibling;
-    if (!target) return;
-    const rect = target.getBoundingClientRect();
-    const anchor = side === 'sidebar' ? rect.left : rect.right;
-    const vName = side === 'sidebar' ? '--sidebar-width' : '--context-width';
-    const min = side === 'sidebar' ? 180 : 220, max = side === 'sidebar' ? 520 : 600;
-    const move = (ev) => {
-      let w = side === 'sidebar' ? (ev.clientX - anchor) : (anchor - ev.clientX);
-      w = Math.max(min, Math.min(max, w));
-      document.documentElement.style.setProperty(vName, w + 'px');
-    };
-    const up = () => {
-      window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
-      document.body.style.cursor = ''; document.body.style.userSelect = '';
-    };
-    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
-    document.body.style.cursor = 'col-resize'; document.body.style.userSelect = 'none';
-  };
-  const onKeyDown = (e) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
-    e.preventDefault();
-    const dir = e.key === 'ArrowRight' ? 1 : -1;
-    applyWidth(side === 'sidebar' ? dir * 16 : -dir * 16);
-  };
-  return <div ref={ref} onPointerDown={onDown} onKeyDown={onKeyDown} role="separator" tabIndex={0} aria-orientation="vertical" title="Drag or use arrow keys to resize"
-    style={{ width: 10, flexShrink: 0, cursor: 'col-resize', zIndex: 5, background: 'transparent', transition: 'background 120ms', outline: '2px solid transparent', outlineOffset: -2 }}
-    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--brand-bg)')}
-    onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-    onFocus={(e) => { e.currentTarget.style.background = 'var(--brand-bg)'; e.currentTarget.style.outlineColor = 'var(--brand-fg)'; }}
-    onBlur={(e) => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.outlineColor = 'transparent'; }} />;
-}
-
 // Per-view error boundary — a single view's crash must never blank the whole app.
 // Renders children directly (no wrapper DOM) so it doesn't affect the flex layout.
 class LoreErrorBoundary extends React.Component {
@@ -331,9 +281,6 @@ function App() {
   const [theme, setTheme] = React.useState('dark');
   const [view, setView] = React.useState('workspace');   // hybrid shell boots into the place grid
   const [askOpen, setAskOpen] = React.useState(false);
-  // Context pane (backlinks/outline) visibility — hidden via its header button,
-  // reopened via the tab-strip panel icon.
-  const [contextOpen, setContextOpen] = React.useState(true);
   const [askSource, setAskSource] = React.useState('all');
   const [searchOpen, setSearchOpen] = React.useState(false);
   const [treeData, setTreeData] = React.useState(null);
@@ -820,12 +767,6 @@ function App() {
     }
   };
 
-  const onNodeClick = (id) => {
-    const n = findNode(tree, id);
-    if (n && n.kind === 'folder') setTreeData((td) => ({ ...td, tree: toggleFolder(td.tree, id) }));
-    else openNote(id);
-  };
-
   // Initial/switch library load — lands on the place grid (no auto-opened note).
   const loadTree = React.useCallback(async (root) => {
     const td = await window.lore.readTree(root);
@@ -903,45 +844,9 @@ function App() {
     } finally { setMoveBusy(false); }
   }, [activeId, appConfig, treeData, reloadTree, markStep, flash, inTeam, moveBusy]);
 
-  // Library up/down switcher (sidebar header chevrons) — cycles appConfig.roots, wrapping
-  // around, and opens the target library via loadTree (its initial-load variant is correct
-  // here: switching libraries should land on that library's first note).
-  const switchLibrary = React.useCallback((dir) => {
-    const roots = (appConfig && Array.isArray(appConfig.roots)) ? appConfig.roots : [];
-    if (roots.length <= 1) return;
-    const curIdx = treeData ? roots.indexOf(treeData.root) : -1;
-    const from = curIdx === -1 ? 0 : curIdx;
-    const next = roots[(from + dir + roots.length) % roots.length];
-    if (next) loadTree(next);
-  }, [appConfig, treeData, loadTree]);
-
-  // Libraries discovered via `.lore` manifests (main scans configured roots +
-  // subfolders) — the sidebar surfaces the ones that are NOT already open/configured
-  // so a known library can be reopened with one click. Manifest reads only; cheap.
-  const [discoveredLibs, setDiscoveredLibs] = React.useState([]);
-  React.useEffect(() => {
-    if (!window.lore?.libraries?.discovered) return;
-    window.lore.libraries.discovered()
-      .then((d) => setDiscoveredLibs(Array.isArray(d) ? d : []))
-      .catch(() => { /* non-fatal */ });
-  }, [appConfig]);
-  const otherLibraries = React.useMemo(() => {
-    const norm = (p) => String(p || '').replace(/[\\/]+$/, '');
-    const known = new Set(((appConfig && Array.isArray(appConfig.roots)) ? appConfig.roots : []).map(norm));
-    if (treeData && treeData.root) known.add(norm(treeData.root));
-    return discoveredLibs.filter((d) => d && d.root && !known.has(norm(d.root)));
-  }, [discoveredLibs, appConfig, treeData]);
-  // Same switch mechanism as the roots chevrons: loadTree opens the library and
-  // lands on its first note. Config is untouched — reopening is not adopting.
-  const openDiscoveredLibrary = React.useCallback((root) => {
-    if (root) loadTree(root);
-  }, [loadTree]);
-
-  // Right-click on a sidebar row: hand off to the native Electron context menu (main process).
-  const onTreeContextMenu = React.useCallback((node) => {
-    if (!window.lore?.treeContextMenu || !treeData) return;
-    window.lore.treeContextMenu(node.id, node.kind, treeData.root);
-  }, [treeData]);
+  // (Sidebar-era library switcher / discovered-libraries popover / tree context
+  // menu removed with the old shell — the status-bar Open library button and
+  // onboarding remain the library entry points.)
 
   // Closes every note matching pred (tab + loaded state) in one pass, used when notes
   // are trashed out from under the editor. Single setTabs + functional setActiveId so
@@ -1368,7 +1273,6 @@ function App() {
   const activeNote = activeTab && activeTab.kind === 'note' ? notes[activeId] : null;
   const editorNote = activeNote && { ...activeNote, raw: drafts[activeId], onEdit: setDraft };
   const activeBucket = activeTab && activeTab.kind === 'bucket' ? activeTab.bucket : null;
-  const workspace = { name: treeData ? treeData.name : 'No library', scope: (appConfig && appConfig.scope) || null, indexedLabel: treeData ? `${treeData.indexed} things remembered` : 'open a library' };
   const progressCount = progressCountText(progressState);
 
   // The open note's connections (from the knowledge graph edges) — shown in the ContextPane.
@@ -1506,25 +1410,6 @@ function App() {
           </React.Fragment>
         )}
       </div>
-    );
-  };
-
-  const GraphEmptyState = ({ loading }) => {
-    const needsIdentity = !loading && !identityReady;
-    const hasVault = Boolean(treeData);
-    return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, background: 'var(--surface-canvas)', color: 'var(--text-subtle)' }}>
-      <img src="design/assets/sprites/node-orb.png" alt="" style={{ width: 56, height: 56, opacity: 0.7 }} onError={(e) => { e.target.style.display = 'none'; }} />
-      <div style={{ fontFamily: 'var(--font-serif)', fontSize: 17, color: 'var(--text-body)' }}>{loading ? 'Loading graph…' : needsIdentity ? 'Setup is not complete yet.' : 'No graph nodes yet.'}</div>
-      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)', maxWidth: 360, textAlign: 'center', lineHeight: 1.5 }}>{loading ? 'Fetching nodes and edges…' : needsIdentity ? 'Choose an account and purpose so Lore knows which local index to query.' : hasVault ? 'Import or index notes to build the knowledge graph.' : 'Open a library, then import or index notes.'}</div>
-      {!loading && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 2 }}>
-          {needsIdentity && <D.Button variant="primary" icon="settings" onClick={() => setShowOnboarding(true)}>Finish setup</D.Button>}
-          {!hasVault && <D.Button variant={needsIdentity ? 'secondary' : 'primary'} icon="folder-open" onClick={openVault}>Open library</D.Button>}
-          {hasVault && !needsIdentity && <D.Button variant="secondary" icon="upload" onClick={() => setShowImportModal(true)}>Import notes</D.Button>}
-        </div>
-      )}
-    </div>
     );
   };
 
