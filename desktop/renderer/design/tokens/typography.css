@@ -45,7 +45,7 @@
   --tracking-caps:    0.06em;
 
   /* ---------- Semantic roles ---------- */
-  --type-display-font:    var(--font-serif);
+  --type-display-font:    var(--font-sans);
   --type-display-weight:  var(--weight-semibold);
   --type-display-tracking: var(--tracking-tight);
 
@@ -57,8 +57,8 @@
   --type-body-weight:  var(--weight-regular);
   --type-body-leading: var(--leading-normal);
 
-  --type-reading-font:    var(--font-serif);
-  --type-reading-size:    var(--text-lg);
+  --type-reading-font:    var(--font-sans);
+  --type-reading-size:    var(--text-md);
   --type-reading-leading: var(--leading-relaxed);
 
   --type-mono-font:     var(--font-mono);

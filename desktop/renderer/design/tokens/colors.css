@@ -29,7 +29,9 @@
   --obsidian-500: #41454f;
   --obsidian-600: #32353f;
   --obsidian-700: #282a32;
+  --obsidian-720: #24262f;
   --obsidian-750: #232530;
+  --obsidian-780: #20222b;
   --obsidian-800: #1d1f27;
   --obsidian-850: #191b22;
   --obsidian-900: #15161c;
@@ -39,7 +41,8 @@
   --amber-50:  #fbf3e1;
   --amber-100: #f6e3bd;
   --amber-200: #efcb84;
-  --amber-300: #e8b14e;
+  --amber-250: #f0bd62;
+  --amber-300: #e8b04a;
   --amber-400: #df9f30;
   --amber-500: #d99a2b;   /* brand primary */
   --amber-600: #bd7f1c;
@@ -93,41 +96,41 @@
 
   /* surfaces (back -> front) */
   --surface-sunken:    var(--obsidian-950);
-  --surface-canvas:    var(--obsidian-900);
+  --surface-canvas:    var(--obsidian-950);
   --surface-base:      var(--obsidian-850);
-  --surface-panel:     var(--obsidian-800);
-  --surface-raised:    var(--obsidian-750);
-  --surface-overlay:   var(--obsidian-700);
+  --surface-panel:     var(--obsidian-900);
+  --surface-raised:    var(--obsidian-850);
+  --surface-overlay:   var(--obsidian-780);
   --surface-inset:     var(--obsidian-950);
-  --surface-hover:     rgba(255,255,255,0.04);
+  --surface-hover:     rgba(255,255,255,0.05);
   --surface-active:    rgba(255,255,255,0.07);
   --surface-selected:  rgba(217,154,43,0.14);
 
   /* text */
-  --text-strong:   #f3f1ea;
-  --text-primary:  var(--obsidian-50);
-  --text-body:     #d3d5db;
-  --text-muted:    var(--obsidian-200);
+  --text-strong:   #f6f4ee;
+  --text-primary:  #e8e9ec;
+  --text-body:     #d6d8de;
+  --text-muted:    #8b8f9a;
   --text-subtle:   var(--obsidian-300);
   --text-faint:    var(--obsidian-400);
   --text-onbrand:  #1c1408;
   --text-inverse:  var(--paper-900);
-  --text-link:     var(--azure-300);
-  --text-link-hover: var(--azure-200);
+  --text-link:     var(--amber-300);
+  --text-link-hover: var(--amber-250);
 
   /* borders */
-  --border-subtle: rgba(255,255,255,0.06);
-  --border:        rgba(255,255,255,0.10);
+  --border-subtle: rgba(255,255,255,0.07);
+  --border:        rgba(255,255,255,0.12);
   --border-strong: rgba(255,255,255,0.16);
-  --border-field:  var(--obsidian-500);
+  --border-field:  rgba(255,255,255,0.14);
   --divider:       rgba(255,255,255,0.07);
 
   /* brand surfaces */
-  --brand-fg:        var(--amber-400);
+  --brand-fg:        var(--amber-300);
   --brand-bg:        var(--amber-500);
   --brand-bg-hover:  var(--amber-400);
   --brand-bg-active: var(--amber-600);
-  --brand-soft-bg:   rgba(217,154,43,0.14);
+  --brand-soft-bg:   rgba(217,154,43,0.12);
   --brand-soft-border: rgba(217,154,43,0.32);
 
   /* citation highlight wash (the "highlighter") */
@@ -146,9 +149,26 @@
   --info-fg:    var(--azure-300); --info-bg:    rgba(47,129,224,0.16);  --info-border:    rgba(47,129,224,0.4);
 
   /* scope colors (private/team/enterprise) */
-  --scope-private-fg: var(--obsidian-100); --scope-private-bg: rgba(255,255,255,0.06);
-  --scope-team-fg:    var(--jade-300);     --scope-team-bg:    rgba(47,157,95,0.16);
-  --scope-ent-fg:     var(--azure-300);    --scope-ent-bg:     rgba(47,129,224,0.16);
+  --scope-private-fg: var(--amber-300);    --scope-private-bg: rgba(217,154,43,0.14);
+  --scope-team-fg:    var(--jade-300);     --scope-team-bg:    rgba(63,174,110,0.14);
+  --scope-ent-fg:     #7ab5f0;             --scope-ent-bg:     rgba(90,160,234,0.14);
+
+  /* places (My Notes / Team / Company) */
+  --place-my-fg:          var(--amber-300);
+  --place-my-solid:       var(--amber-500);
+  --place-my-tint:        rgba(217,154,43,0.14);
+  --place-my-border:      rgba(217,154,43,0.4);
+  --place-my-on-solid:    #1c1408;
+  --place-team-fg:        var(--jade-300);
+  --place-team-solid:     var(--jade-400);
+  --place-team-tint:      rgba(63,174,110,0.14);
+  --place-team-border:    rgba(63,174,110,0.4);
+  --place-team-on-solid:  #0c1710;
+  --place-company-fg:     #7ab5f0;
+  --place-company-solid:  var(--azure-300);
+  --place-company-tint:   rgba(90,160,234,0.14);
+  --place-company-border: rgba(90,160,234,0.4);
+  --place-company-on-solid: #0a1220;
 
   /* focus ring */
   --ring:        var(--amber-400);
@@ -181,8 +201,8 @@
   --text-faint:    var(--paper-400);
   --text-onbrand:  #1c1408;
   --text-inverse:  var(--paper-50);
-  --text-link:     var(--azure-600);
-  --text-link-hover: var(--azure-700);
+  --text-link:     var(--amber-700);
+  --text-link-hover: var(--amber-800);
 
   --border-subtle: rgba(33,31,25,0.07);
   --border:        rgba(33,31,25,0.12);
@@ -209,9 +229,26 @@
   --warning-fg: var(--amber-700); --warning-bg: rgba(217,154,43,0.16);  --warning-border: rgba(217,154,43,0.4);
   --info-fg:    var(--azure-600); --info-bg:    rgba(47,129,224,0.10);   --info-border:    rgba(47,129,224,0.3);
 
-  --scope-private-fg: var(--paper-700); --scope-private-bg: rgba(33,31,25,0.06);
-  --scope-team-fg:    var(--jade-600);  --scope-team-bg:    rgba(47,157,95,0.12);
-  --scope-ent-fg:     var(--azure-600); --scope-ent-bg:     rgba(47,129,224,0.1);
+  --scope-private-fg: var(--amber-700);  --scope-private-bg: rgba(217,154,43,0.12);
+  --scope-team-fg:    var(--jade-600);   --scope-team-bg:    rgba(63,174,110,0.12);
+  --scope-ent-fg:     var(--azure-600);  --scope-ent-bg:     rgba(90,160,234,0.12);
+
+  /* places (My Notes / Team / Company) */
+  --place-my-fg:          var(--amber-700);
+  --place-my-solid:       var(--amber-500);
+  --place-my-tint:        rgba(217,154,43,0.12);
+  --place-my-border:      rgba(217,154,43,0.35);
+  --place-my-on-solid:    #1c1408;
+  --place-team-fg:        var(--jade-600);
+  --place-team-solid:     var(--jade-400);
+  --place-team-tint:      rgba(63,174,110,0.12);
+  --place-team-border:    rgba(63,174,110,0.3);
+  --place-team-on-solid:  #0c1710;
+  --place-company-fg:     var(--azure-600);
+  --place-company-solid:  var(--azure-300);
+  --place-company-tint:   rgba(90,160,234,0.12);
+  --place-company-border: rgba(90,160,234,0.3);
+  --place-company-on-solid: #0a1220;
 
   --ring:        var(--amber-600);
   --ring-offset: var(--surface-base);

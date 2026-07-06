@@ -9,11 +9,14 @@
   --shadow-md:  0 6px 18px rgba(0,0,0,0.44);
   --shadow-lg:  0 14px 40px rgba(0,0,0,0.55);
   --shadow-xl:  0 28px 70px rgba(0,0,0,0.62);
+  --shadow-modal: var(--shadow-xl);
+  --shadow-popover: 0 14px 40px rgba(0,0,0,0.5);
+  --shadow-drawer: -20px 0 60px rgba(0,0,0,0.45);
   --shadow-raise-inset: inset 0 1px 0 rgba(255,255,255,0.05);
   --glow-brand: 0 0 0 3px rgba(217,154,43,0.30);
 
-  --backdrop:        rgba(8,8,11,0.62);
-  --backdrop-blur:   8px;
+  --backdrop:        rgba(8,8,11,0.6);
+  --backdrop-blur:   6px;
   --scrim-to-panel:  linear-gradient(to top, var(--surface-panel) 18%, transparent);
 }
 
@@ -24,6 +27,9 @@
   --shadow-md:  0 8px 22px rgba(40,34,22,0.12);
   --shadow-lg:  0 16px 44px rgba(40,34,22,0.16);
   --shadow-xl:  0 30px 76px rgba(40,34,22,0.20);
+  --shadow-modal: var(--shadow-xl);
+  --shadow-popover: 0 14px 40px rgba(40,34,22,0.18);
+  --shadow-drawer: -20px 0 60px rgba(40,34,22,0.18);
   --shadow-raise-inset: inset 0 1px 0 rgba(255,255,255,0.7);
   --glow-brand: 0 0 0 3px rgba(217,154,43,0.28);
 

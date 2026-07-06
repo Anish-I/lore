@@ -25,10 +25,15 @@
   --rail-width:        56px;
   --sidebar-width:     264px;
   --context-width:     320px;
-  --ask-width:         400px;
+  --ask-width:         392px;
   --reading-measure:   68ch;
   --topbar-height:     44px;
   --statusbar-height:  28px;
+
+  /* ---------- Hybrid shell (Redesign C) ---------- */
+  --places-height:     56px;
+  --ribbon-height:     70px;
+  --sections-width:    190px;
 
   /* ---------- Control sizing ---------- */
   --control-h-sm: 28px;
