@@ -348,11 +348,44 @@ function App() {
   const [pendingInvites, setPendingInvites] = React.useState([]); // team invites addressed to the signed-in email
   const [inviteBusy, setInviteBusy] = React.useState(null); // invite_id currently being accepted
   const [sectionProposals, setSectionProposals] = React.useState([]); // background upkeep's proposed/applied Sections
+  const [toast, setToast] = React.useState(null);          // bottom-center toast message
+  const [moveOpen, setMoveOpen] = React.useState(false);   // "Move…" place dialog
+  const [mapOpen, setMapOpen] = React.useState(false);     // full-screen knowledge map overlay
+  const [authUser, setAuthUser] = React.useState(null);    // {user_id, email, scopes} | null — avatar menu
+  const toastTimer = React.useRef(null);
   const timer = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
   const progressDoneTimerRef = React.useRef(null);
 
   React.useEffect(() => { document.documentElement.setAttribute('data-theme', theme); }, [theme]);
+
+  // Bottom-center toast — auto-dismisses after 2.6s (mockup timing).
+  const flash = React.useCallback((msg) => {
+    setToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => { setToast(null); toastTimer.current = null; }, 2600);
+  }, []);
+  React.useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current); }, []);
+
+  // Signed-in identity for the avatar menu (best-effort; offline → null).
+  const refreshAuth = React.useCallback(async () => {
+    if (!window.lore?.auth?.status) return;
+    try { setAuthUser((await window.lore.auth.status()) || null); } catch { /* signed out */ }
+  }, []);
+  React.useEffect(() => { refreshAuth(); }, [refreshAuth]);
+  const signIn = React.useCallback(async () => {
+    if (!window.lore?.auth?.login) { flash('Sign-in is unavailable in this build.'); return; }
+    try {
+      const r = await window.lore.auth.login();
+      if (r && r.ok) { await refreshAuth(); refreshInvites(); flash('Signed in.'); }
+      else flash((r && r.reason) || 'Sign-in failed.');
+    } catch { flash('Sign-in failed.'); }
+  }, [refreshAuth, flash]);
+  const signOut = React.useCallback(async () => {
+    try { if (window.lore?.auth?.logout) await window.lore.auth.logout(); } catch { /* ignore */ }
+    setAuthUser(null);
+    flash('Signed out.');
+  }, [flash]);
 
   // Pending team invites for the signed-in user — checked on launch and every few
   // minutes; silently empty when signed out or the backend is unreachable. Also
@@ -467,6 +500,25 @@ function App() {
   const tree = treeData ? treeData.tree : [];
   const allNotes = React.useMemo(() => flatten(tree), [tree]);
   const noteScopes = React.useMemo(() => uniqScopes(collectTreeScopes(tree)), [tree]);
+
+  // Places (My Notes / Team / Company) ride the existing scopeFilter state:
+  // 'my' ⇔ 'private' (everything you own), team/company pass through.
+  const place = scopeFilter === 'team' ? 'team' : scopeFilter === 'company' ? 'company' : 'my';
+  const setPlace = React.useCallback((id) => {
+    setScopeFilter(id === 'my' ? 'private' : id);
+    setView('workspace');
+  }, []);
+  // Tab count badges — notes passing each place's filter (counts match what the
+  // place shows, so "My Notes" includes pages you own that are also shared).
+  const placeCounts = React.useMemo(() => {
+    const c = { my: 0, team: 0, company: 0 };
+    for (const n of allNotes) {
+      if (passesScopeFilter('private', n.scope)) c.my += 1;
+      if (passesScopeFilter('team', n.scope)) c.team += 1;
+      if (passesScopeFilter('company', n.scope)) c.company += 1;
+    }
+    return c;
+  }, [allNotes]);
 
   // Knowledge bases = the library's top-level folders. Selecting them filters BOTH the file tree and the graph.
   const bases = React.useMemo(() => tree.filter((n) => n.kind === 'folder').map((n) => n.name), [tree]);
@@ -1115,7 +1167,9 @@ function App() {
   // Advanced mode (default OFF) gates the developer surfaces. The old
   // cfg.simpleMode flag is ignored entirely — the default experience IS simple.
   const advancedMode = !!(appConfig && appConfig.advancedMode === true);
-  const Titlebar = window.LoreTitlebar, Rail = window.LoreActivityRail, Sidebar = window.LoreSidebar,
+  const Sidebar = window.LoreSidebar,
+    PlacesBar = window.LorePlacesBar, Ribbon = window.LoreRibbon,
+    SectionRail = window.LoreSectionRail, ToastPill = window.LoreToast,
     Editor = window.LoreEditor, ContextPane = window.LoreContextPane, FloatingGraph = window.LoreFloatingGraph, AskPanel = window.LoreAskPanel,
     TeamsView = window.LoreTeamsView, GraphView = window.LoreGraphView,
     BucketsView = window.LoreBucketsView, SettingsView = window.LoreSettingsView,
@@ -1257,12 +1311,22 @@ function App() {
   return (
     <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-sunken)' }}
       onDragOver={(e) => { e.preventDefault(); }} onDrop={onDropImport}>
-      <Titlebar theme={theme} onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')} onSearch={() => setSearchOpen(true)} onAsk={() => setAskOpen(true)} onSettings={() => setView('settings')} onProfile={() => setView('settings')} onImport={onImport} scopeFilter={scopeFilter} onScopeFilter={setScopeFilter} />
+      <PlacesBar place={place} onPlace={setPlace} counts={placeCounts}
+        onSearch={() => setSearchOpen(true)} theme={theme}
+        onToggleTheme={() => setTheme((t) => t === 'dark' ? 'light' : 'dark')}
+        authUser={authUser} ownerName={(appConfig && appConfig.owner) || null}
+        onSettings={() => setView('settings')}
+        onHooks={advancedMode ? () => setView('hooks') : null}
+        onManageTeam={() => setView('projects')}
+        onSignIn={signIn} onSignOut={signOut} />
+      <Ribbon place={place} askOpen={askOpen} mapOpen={mapOpen} wizardsOpen={view === 'buckets'}
+        canMove={Boolean(activeNote)}
+        onNewPage={onCreateNote} onAddFiles={onImport}
+        onToggleAsk={() => setAskOpen((o) => !o)}
+        onMap={() => setMapOpen((o) => !o)}
+        onWizards={() => setView(view === 'buckets' ? 'workspace' : 'buckets')}
+        onMove={() => setMoveOpen(true)} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
-        <Rail view={view} askOpen={askOpen} advancedMode={advancedMode}
-          onView={(v) => { if (v === 'search') setSearchOpen(true); else setView(v); }}
-          onAsk={() => setAskOpen((o) => !o)} />
-
         <LoreErrorBoundary key={view}>
         {view === 'home' && (
           <React.Fragment>
@@ -1355,6 +1419,12 @@ function App() {
             onClose={() => setShowImportModal(false)}
             onDone={() => { setShowImportModal(false); reloadAfterImport(); }}
           />
+        )}
+
+        {ToastPill && <ToastPill toast={toast} />}
+
+        {moveOpen && window.LoreMoveDialog && activeNote && (
+          <window.LoreMoveDialog note={activeNote} place={place} onClose={() => setMoveOpen(false)} />
         )}
 
         {previewNote && (
