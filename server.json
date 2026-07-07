@@ -1,0 +1,35 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.anish-i/lore",
+  "description": "Local-first memory OS for AI agents: permissioned recall over your own notes (hybrid retrieval + rerank + knowledge graph), token-budgeted context packs, and per-agent durable memories with zero-friction self-provisioning. Human-readable storage, measured recall.",
+  "repository": {
+    "url": "https://github.com/Anish-I/lore",
+    "source": "github"
+  },
+  "version_detail": {
+    "version": "0.1.0-beta.2"
+  },
+  "packages": [
+    {
+      "registry_name": "pypi",
+      "name": "lore-core",
+      "version": "0.1.0",
+      "runtime_hint": "python",
+      "runtime_arguments": ["-m", "lore.mcp_server"],
+      "environment_variables": [
+        { "name": "LORE_TENANT", "description": "Tenant namespace (e.g. 'solo')", "is_required": true },
+        { "name": "LORE_SCOPES", "description": "Comma-separated ACL scopes the agent may read", "is_required": true },
+        { "name": "LORE_AGENT", "description": "Agent name — lore_remember writes land in agent:<name>", "is_required": false },
+        { "name": "LORE_LOCAL_TOKEN", "description": "Local API token from the Lore desktop app config", "is_required": false },
+        { "name": "LORE_BACKEND_URL", "description": "Backend URL (default http://localhost:8099)", "is_required": false }
+      ]
+    }
+  ],
+  "tools": [
+    { "name": "lore_recall", "description": "Token-budgeted, cited context pack for a task" },
+    { "name": "lore_remember", "description": "Store a durable agent memory (redacted, scoped, capped)" },
+    { "name": "lore_ask", "description": "Cited answer from the user's knowledge base" },
+    { "name": "lore_search", "description": "Ranked chunk hits" },
+    { "name": "lore_graph", "description": "Knowledge graph node/edge counts" }
+  ]
+}

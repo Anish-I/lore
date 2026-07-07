@@ -1,0 +1,38 @@
+# Smithery registry manifest — https://smithery.ai
+# Submission checklist (user action; publishing is outward-facing):
+#   1. gh repo must be public
+#   2. smithery.ai → Add Server → point at this repo
+#   3. Glama: https://glama.ai/mcp/servers — Add Server → repo URL
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    required: [tenant, scopes]
+    properties:
+      tenant:
+        type: string
+        description: Tenant namespace (e.g. "solo")
+      scopes:
+        type: string
+        description: Comma-separated ACL scopes the agent may read
+      agent:
+        type: string
+        description: Agent name — lore_remember writes land in agent:<name>
+      localToken:
+        type: string
+        description: Local API token from the Lore desktop app config
+      backendUrl:
+        type: string
+        default: http://localhost:8099
+  commandFunction: |-
+    (config) => ({
+      command: 'python',
+      args: ['-m', 'lore.mcp_server'],
+      env: {
+        LORE_TENANT: config.tenant,
+        LORE_SCOPES: config.scopes,
+        LORE_AGENT: config.agent || '',
+        LORE_LOCAL_TOKEN: config.localToken || '',
+        LORE_BACKEND_URL: config.backendUrl || 'http://localhost:8099',
+      },
+    })
