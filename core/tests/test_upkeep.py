@@ -87,6 +87,75 @@ def test_upkeep_is_idempotent():
     assert conn.execute("select id from notes where id=%s", (note_id,)).fetchone() is None
 
 
+def test_upkeep_is_add_only_across_runs():
+    """ADD-only invariant (M1-C): a later upkeep run must never rewrite what a
+    prior run put in a topic note — the first entry's bytes and position are
+    identical after run 2 appends a new entry."""
+    conn = _conn()
+    db.bootstrap_schema(conn)
+    topic_id = f"topic:{_TENANT}:addonly"
+
+    _insert_note(conn, "upkeep-ao-2026-03-01", "2026-03-01",
+                 "# 2026-03-01\n\nFirst decision about [[AddOnly]].\n")
+    run_upkeep(conn, FakeEmbedder(), _TENANT, scope=_SCOPE)
+    body1 = conn.execute("select body from notes where id=%s", (topic_id,)).fetchone()[0]
+
+    _insert_note(conn, "upkeep-ao-2026-03-05", "2026-03-05",
+                 "# 2026-03-05\n\nSecond, CONTRADICTING decision about [[AddOnly]].\n")
+    run_upkeep(conn, FakeEmbedder(), _TENANT, scope=_SCOPE)
+    body2 = conn.execute("select body from notes where id=%s", (topic_id,)).fetchone()[0]
+
+    # Everything run 1 wrote is still there, byte-for-byte, at the same offset.
+    assert body2.startswith(body1.rstrip()), "Prior topic content was rewritten — ADD-only violated"
+    assert "First decision" in body2 and "CONTRADICTING decision" in body2
+
+
+def test_upkeep_preserves_hand_edits():
+    """A user's manual edit to a topic body survives the next fold verbatim."""
+    conn = _conn()
+    db.bootstrap_schema(conn)
+    topic_id = f"topic:{_TENANT}:handedit"
+
+    _insert_note(conn, "upkeep-he-2026-04-01", "2026-04-01",
+                 "# 2026-04-01\n\nAuto entry about [[HandEdit]].\n")
+    run_upkeep(conn, FakeEmbedder(), _TENANT, scope=_SCOPE)
+
+    hand = "\n\nMY OWN NOTES: do not touch this line.\n"
+    body = conn.execute("select body from notes where id=%s", (topic_id,)).fetchone()[0]
+    conn.execute("update notes set body=%s where id=%s", (body + hand, topic_id))
+
+    _insert_note(conn, "upkeep-he-2026-04-02", "2026-04-02",
+                 "# 2026-04-02\n\nAnother auto entry about [[HandEdit]].\n")
+    run_upkeep(conn, FakeEmbedder(), _TENANT, scope=_SCOPE)
+    body2 = conn.execute("select body from notes where id=%s", (topic_id,)).fetchone()[0]
+
+    assert "MY OWN NOTES: do not touch this line." in body2
+    assert "Another auto entry" in body2
+
+
+def test_append_entries_contract():
+    """append_entries is ADD-only by construction: for any input, the output
+    starts with existing.rstrip() byte-for-byte, blocks land newest-first, and
+    the AppendOnlyViolation tripwire is exported for run_upkeep's fail-loud
+    handling of future refactors."""
+    from lore.upkeep import append_entries, AppendOnlyViolation
+
+    assert issubclass(AppendOnlyViolation, Exception)
+
+    cases = [
+        "# Topic\n\nexisting entry\n",
+        "",                      # brand-new topic
+        "# T\n\ntrailing ws \n\n\n",
+        "# Tópic — unicode ± entry\n",
+    ]
+    blocks = [("2026-01-02", "\n## older\nold block\n"), ("2026-01-05", "\n## newer\nnew block\n")]
+    for existing in cases:
+        out = append_entries(existing, list(blocks))
+        assert out.startswith(existing.rstrip()), f"contract broken for {existing!r}"
+        # Newest-first ordering of the appended blocks.
+        assert out.index("## newer") < out.index("## older")
+
+
 def test_upkeep_skips_non_ephemeral_notes():
     """Regular notes (not date-named, not session) must be left untouched — never deleted."""
     conn = _conn()

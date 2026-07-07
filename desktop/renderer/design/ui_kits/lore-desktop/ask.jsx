@@ -296,6 +296,22 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
                 {!m.streaming && (
                   <CitationSources citations={m.citations} evidence={m.evidence} onCiteScope={onCiteScope} onOpenCitation={onOpenCitation} />
                 )}
+                {!m.streaming && m.conflicts && m.conflicts.length > 0 && (
+                  <div style={{ margin: '0 0 10px 34px', display: 'flex', flexDirection: 'column', gap: 5 }}>
+                    {m.conflicts.slice(0, 3).map((cf, ci) => (
+                      <div key={ci} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '7px 10px', borderRadius: 9, border: '1px solid var(--warning-border)', background: 'var(--warning-bg)' }}>
+                        <AkIcon name="alert-triangle" size={13} style={{ color: 'var(--warning-fg)', flexShrink: 0, marginTop: 1 }} />
+                        <span style={{ fontSize: 11.5, lineHeight: 1.5, color: 'var(--text-body)', minWidth: 0 }}>
+                          Sources disagree:{' '}
+                          <span onClick={() => onOpenCitation && onOpenCitation({ note_id: cf.a_id, title: cf.a_title })} style={{ color: 'var(--warning-fg)', fontWeight: 600, cursor: onOpenCitation ? 'pointer' : 'default' }}>{cf.a_title}</span>
+                          {' '}contradicts{' '}
+                          <span onClick={() => onOpenCitation && onOpenCitation({ note_id: cf.b_id, title: cf.b_title })} style={{ color: 'var(--warning-fg)', fontWeight: 600, cursor: onOpenCitation ? 'pointer' : 'default' }}>{cf.b_title}</span>
+                          {cf.evidence ? <span style={{ color: 'var(--text-subtle)' }}> — “{cf.evidence.slice(0, 160)}”</span> : null}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )
         ))}

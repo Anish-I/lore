@@ -1285,7 +1285,7 @@ function App() {
         const c = m.slice();const last = c[c.length - 1];
         if (!last || last.role !== 'answer') return m;
         const shown = words.slice(0, i);
-        if (i >= words.length) {clearInterval(timer.current);c[c.length - 1] = { ...last, shown, streaming: false, sources, scopes: scopesLabel, evidence, citations, text: answerText };setAsking(false);} else
+        if (i >= words.length) {clearInterval(timer.current);c[c.length - 1] = { ...last, shown, streaming: false, sources, scopes: scopesLabel, evidence, citations, conflicts: trace.conflicts || [], text: answerText };setAsking(false);} else
         c[c.length - 1] = { ...last, shown };
         return c;
       });
@@ -1320,11 +1320,11 @@ function App() {
     if (!self) return [];
     const out = [],seen = new Set();
     for (const e of graphData.edges) {
-      const s = e[0],d = e[1],kind = e[2];
+      const s = e[0],d = e[1],kind = e[2],origin = e[4] || 'index';
       let other = null,dir = null;
       if (s === self.id) {other = byId[d];dir = 'out';} else
       if (d === self.id) {other = byId[s];dir = 'in';}
-      if (other && other.path && !seen.has(other.id)) {seen.add(other.id);out.push({ id: other.id, label: other.label, path: other.path, kind, dir, scope: other.scope });}
+      if (other && other.path && !seen.has(other.id)) {seen.add(other.id);out.push({ id: other.id, label: other.label, path: other.path, kind, dir, scope: other.scope, origin });}
     }
     return out;
   }, [graphData, activeId]);

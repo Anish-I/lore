@@ -78,11 +78,14 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
   const GR_EDGE_KIND_SET = React.useMemo(() => new Set(GR_EDGE_KINDS.map((e) => e.kind)), []);
   const legend = React.useMemo(() => {
     const present = new Set();
+    const origins = { index: 0, capture: 0, llm: 0 };
     for (const e of (graph.edges || [])) {
       const k = e[2] || 'link';
       present.add(GR_EDGE_KIND_SET.has(k) ? k : 'link');
+      const o = e[4] || 'index';
+      origins[o] = (origins[o] || 0) + 1;
     }
-    return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)) };
+    return { kinds: GR_EDGE_KINDS.filter((e) => present.has(e.kind)), origins };
   }, [graph, GR_EDGE_KIND_SET]);
   const [sel, setSel] = React.useState(null);
   // With many Sections the pill row would overflow the toolbar — show a capped
@@ -168,7 +171,9 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
     const links = graph.edges
       .filter(([a, b]) => byId[a] && byId[b])
       // 4th element is confidence weight; default 0.9 when absent (older data or structural).
-      .map(([a, b, kind, w]) => ({ source: a, target: b, kind: kind || 'link', weight: w != null ? w : 0.9 }));
+      // 5th element (origin ∈ index|capture|llm) is the edge's provenance tag;
+      // tolerate 4-tuples from older backends.
+      .map(([a, b, kind, w, origin]) => ({ source: a, target: b, kind: kind || 'link', weight: w != null ? w : 0.9, origin: origin || 'index' }));
     dataRef.current = { nodes, links, byId };
 
     const dpr = () => window.devicePixelRatio || 1;
@@ -482,6 +487,11 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
                 <span style={{ width: 14, height: 2.5, borderRadius: 2, background: theme === 'light' ? e.light : e.dark, flexShrink: 0 }} />{e.label}
               </div>
             ))}
+          </div>
+          {/* Provenance summary — where the edges came from (trust surface). */}
+          <div title="index = deterministic (wikilinks/folders/tags) · capture = from agent sessions · llm = inferred by enrichment"
+            style={{ marginTop: 7, paddingTop: 6, borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 9.5, color: 'var(--text-faint)' }}>
+            origins: {['index', 'capture', 'llm'].filter((o) => legend.origins[o]).map((o) => `${o} ${legend.origins[o]}`).join(' · ') || 'none'}
           </div>
         </div>
       )}

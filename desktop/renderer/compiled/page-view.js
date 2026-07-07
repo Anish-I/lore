@@ -33,7 +33,12 @@ function RelatedPages({ connections, onOpen }) {
   const conns = (connections || []).filter((c) => c.path);
   if (!conns.length) return null;
   const meta = window.LorePlaceMeta;
-  const tipOf = (c) => c.kind === 'tag' ? 'Covers the same topic' : c.kind === 'folder' ? 'Sits in the same folder' : 'Linked pages';
+  const tipOf = (c) => {
+    const base = c.kind === 'tag' ? 'Covers the same topic' : c.kind === 'folder' ? 'Sits in the same folder' :
+    c.kind === 'link' ? 'Linked pages' : `Relation: ${String(c.kind || '').replace(/_/g, ' ')}`;
+    const provenance = c.origin === 'llm' ? 'inferred by enrichment' : c.origin === 'capture' ? 'noticed in an agent session' : 'from your links/folders';
+    return `${base} — ${provenance}`;
+  };
   return (/*#__PURE__*/
     React.createElement("div", { style: { marginTop: 34, paddingTop: 18, borderTop: '1px solid var(--divider)' }, onClick: (e) => e.stopPropagation() }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 } }, /*#__PURE__*/

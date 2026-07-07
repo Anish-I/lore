@@ -449,6 +449,39 @@ def _citations_for(hits_or_rows):
     return out
 
 
+def _conflicts_for(tenant: str, note_ids: list) -> list:
+    """`contradicts` edges touching any cited note — surfaced so an answer that
+    leans on disputed sources SAYS so (ADD-only model: contradictions live in
+    the store; retrieval-time is where they're surfaced, not merged away)."""
+    ids = [n for n in {i for i in note_ids if i}]
+    if not ids:
+        return []
+    frag_a, params_a = in_clause("src_note_id", ids)
+    frag_b, params_b = in_clause("dst_note_id", ids)
+    rows = _conn.execute(
+        f"""select src_note_id, dst_note_id, evidence from edges
+            where tenant_id=%s and kind='contradicts' and ({frag_a} or {frag_b})""",
+        (tenant, *params_a, *params_b)).fetchall()
+    if not rows:
+        return []
+    all_ids = {r[0] for r in rows} | {r[1] for r in rows}
+    metas = _note_meta(list(all_ids))
+    out, seen = [], set()
+    for a, b, evidence in rows:
+        if a == b:
+            continue
+        key = tuple(sorted((a, b)))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({
+            "a_id": a, "a_title": (metas.get(a) or {}).get("title") or a,
+            "b_id": b, "b_title": (metas.get(b) or {}).get("title") or b,
+            "evidence": (evidence or "")[:200],
+        })
+    return out
+
+
 @app.post("/ask")
 def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
         sparse=Depends(get_sparse_embedder),
@@ -459,9 +492,11 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
     text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history, provider=req.provider)
     _audit("ask", tenant, _uid, scopes, req.question, len(hits))
+    citations = _citations_for(hits)
     return {"answer": text, "engine": engine,
             "scopes_used": list(scopes),
-            "citations": _citations_for(hits)}
+            "citations": citations,
+            "conflicts": _conflicts_for(tenant, [c["note_id"] for c in citations])}
 
 @app.post("/trace")
 def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
@@ -514,6 +549,7 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
         _, tr = retrieve_traced(req.question, embedder, reranker, sparse,
                                 scopes, tenant)
     tr["citations"] = _citations_for(tr["final"])
+    tr["conflicts"] = _conflicts_for(tenant, [c["note_id"] for c in tr["citations"]])
     # Stamp the NOTE-level scope back onto the final rows so the evidence trail
     # shows the same source label as the citation chips.
     note_scope = {c["note_id"]: c["scope"] for c in tr["citations"]}
@@ -620,19 +656,19 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None,
     # Fetch all edges for this tenant (cheap — edges table is small relative to notes).
     # We then filter to only edges where both endpoints are in the visible node set.
     edge_rows = _conn.execute(
-        "select src_note_id, dst_note_id, kind, weight from edges where tenant_id=%s",
+        "select src_note_id, dst_note_id, kind, weight, origin from edges where tenant_id=%s",
         (active_tenant,),
     ).fetchall()
 
     # ACL edge filter: both endpoints must be visible.
     filtered_edges = [
-        (src, dst, kind, weight) for src, dst, kind, weight in edge_rows
+        (src, dst, kind, weight, origin) for src, dst, kind, weight, origin in edge_rows
         if src in node_ids and dst in node_ids
     ]
 
     # Compute per-node degree in the filtered graph (used for cap ordering and UI).
     degree = {nid: 0 for nid in node_ids}
-    for src, dst, _, _w in filtered_edges:
+    for src, dst, *_rest in filtered_edges:
         degree[src] = degree.get(src, 0) + 1
         degree[dst] = degree.get(dst, 0) + 1
 
@@ -640,11 +676,10 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None,
     MAX_NODES = 1500
     if len(node_ids) > MAX_NODES:
         top_ids = set(sorted(node_ids, key=lambda nid: degree.get(nid, 0), reverse=True)[:MAX_NODES])
-        filtered_edges = [(src, dst, kind, w) for src, dst, kind, w in filtered_edges
-                         if src in top_ids and dst in top_ids]
+        filtered_edges = [e for e in filtered_edges if e[0] in top_ids and e[1] in top_ids]
         # Recompute degree after cap so `links` field is accurate.
         degree = {nid: 0 for nid in top_ids}
-        for src, dst, _, _w in filtered_edges:
+        for src, dst, *_rest in filtered_edges:
             degree[src] = degree.get(src, 0) + 1
             degree[dst] = degree.get(dst, 0) + 1
     else:
@@ -671,7 +706,10 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None,
 
     return {
         "nodes": nodes,
-        "edges": [[src, dst, kind, round(weight or 0, 2)] for src, dst, kind, weight in filtered_edges],
+        # 5-tuple: origin ∈ index|capture|llm is the edge's provenance tag —
+        # deterministic indexing vs session capture vs LLM enrichment.
+        "edges": [[src, dst, kind, round(weight or 0, 2), origin or "index"]
+                  for src, dst, kind, weight, origin in filtered_edges],
     }
 
 @app.get("/query-log")
@@ -1033,12 +1071,39 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
     if not row:
         raise HTTPException(status_code=404, detail="Note not found")
     id_, title, scope, body, updated = row
+
+    # Typed relations with provenance — ACL-safe: the other endpoint of every
+    # edge must itself pass the caller's scope filter or the edge is omitted.
+    allowed = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
+
+    def _edge_rows(where_col, other_col):
+        rows = _conn.execute(
+            f"""select e.{other_col}, n.title, n.scope_id, e.kind, e.weight, e.origin, e.evidence
+                from edges e join notes n on n.id = e.{other_col} and n.tenant_id = e.tenant_id
+                where e.tenant_id=%s and e.{where_col}=%s""",
+            (active_tenant, note_id)).fetchall()
+        out = []
+        for other_id, other_title, other_scope, kind, weight, origin, evidence in rows:
+            if allowed and other_scope not in allowed:
+                continue
+            out.append({
+                "other_id": other_id, "other_title": other_title or other_id,
+                "kind": kind, "weight": round(weight or 0, 2),
+                "origin": origin or "index",
+                "evidence": (evidence or "")[:200] or None,
+            })
+        return out
+
     return {
         "id": id_,
         "title": title,
         "scope": scope,
         "body": body,
         "updated": updated.isoformat() if updated else None,
+        "edges": {
+            "out": _edge_rows("src_note_id", "dst_note_id"),
+            "in": _edge_rows("dst_note_id", "src_note_id"),
+        },
     }
 
 

@@ -60,6 +60,30 @@ def _slug(name: str) -> str:
     return re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
 
 
+class AppendOnlyViolation(Exception):
+    """Raised when topic-body assembly would rewrite existing content."""
+
+
+def append_entries(existing: str, new_blocks: list) -> str:
+    """ADD-only topic-body assembly (Mem0-style accumulation).
+
+    The invariant this function GUARANTEES — and that a test pins — is that
+    the returned body starts with `existing.rstrip()` byte-for-byte: upkeep
+    only ever appends dated entries; it never rewrites, merges, or reorders
+    what a prior run (or the user, by hand) put in a topic note. Conflict
+    resolution is a retrieval-time ranking concern, not a write-time merge.
+
+    new_blocks: [(date_key, block_text)] — appended newest-first.
+    """
+    base = (existing or "").rstrip()
+    blocks = sorted(new_blocks, key=lambda b: b[0], reverse=True)
+    out = base + "\n" + "".join(b for _, b in blocks)
+    if not out.startswith(base):
+        raise AppendOnlyViolation(
+            f"append_entries would mutate existing content (base {len(base)} chars)")
+    return out
+
+
 def _entry_date(title: str) -> str:
     """Extract an ISO date (YYYY-MM-DD) from an ephemeral note title, for entry headings
     and chronological sorting.  Falls back to a low sentinel when no date is present."""
@@ -311,6 +335,7 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
     # --- Steps 3+4: build & index each topic note ONCE, appending only new entries ---
     folded_anchors: set[str] = set()
     topics_written = 0
+    append_violations = 0
     for slug, acc in topics_acc.items():
         topic_note_id = f"topic:{tenant}:{slug}"
         existing = _existing_topic_body(conn, topic_note_id)
@@ -328,8 +353,11 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
             new_blocks.append((date_key, block))
 
         if new_blocks or is_new:
-            new_blocks.sort(key=lambda b: b[0], reverse=True)
-            body_out = existing.rstrip() + "\n" + "".join(b for _, b in new_blocks)
+            try:
+                body_out = append_entries(existing, new_blocks)
+            except AppendOnlyViolation:
+                append_violations += 1
+                continue  # fail loud in stats; never write a mutated body
             index_document(
                 source_id=topic_note_id,
                 title=acc["name"],
@@ -382,6 +410,7 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
         "purgedNoise": purged,
         "relations": rel_edges,
         "captureRelations": capture_count,
+        "appendViolations": append_violations,
     }
 
     # --- Step 8 (opt-in): auto-classify tags/topics + propose Sections ---

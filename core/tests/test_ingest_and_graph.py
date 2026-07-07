@@ -162,3 +162,95 @@ def test_wikilink_produces_link_edge():
         "but none was found in the edges table."
     )
     assert row[0] == "link"
+
+
+# ---------------------------------------------------------------------------
+# M1-C: edge provenance in /graph + note edges + Ask conflict surfacing
+# ---------------------------------------------------------------------------
+
+def _ingest_origin_pair(tenant):
+    """Two linked notes with realistic bodies (too-short bodies produce zero
+    chunks and the no-chunk path creates no edges)."""
+    client.post("/ingest", json={
+        "source_id": "origin-b", "title": "Origin Target",
+        "text": "# Origin Target\n\nI am the origin target note with enough body text to chunk properly.\n",
+        "scope": "eng-team", "owner": "alice", "tenant": tenant,
+    })
+    client.post("/ingest", json={
+        "source_id": "origin-a", "title": "Origin Source",
+        "text": "# Origin Source\n\nSee [[Origin Target]] for the full details of this decision record.\n",
+        "scope": "eng-team", "owner": "alice", "tenant": tenant,
+    })
+
+
+def test_graph_edges_are_five_tuples_with_origin():
+    tenant = "origin-tenant"
+    _ingest_origin_pair(tenant)
+    r = client.get("/graph", params={"tenant": tenant, "scopes": "eng-team"})
+    assert r.status_code == 200
+    edges = r.json()["edges"]
+    assert edges, "expected at least the wikilink edge"
+    for e in edges:
+        assert len(e) == 5, f"edge is not a 5-tuple: {e}"
+        assert e[4] in ("index", "capture", "llm"), f"bad origin: {e[4]}"
+
+
+def test_note_detail_includes_typed_edges_with_provenance():
+    tenant = "origin-tenant"
+    _ingest_origin_pair(tenant)
+    r = client.get("/notes/origin-a", params={"tenant": tenant, "scopes": "eng-team"})
+    assert r.status_code == 200
+    body = r.json()
+    assert "edges" in body
+    out = body["edges"]["out"]
+    assert any(e["other_id"] == "origin-b" and e["kind"] == "link" and e["origin"] == "index"
+               for e in out), f"missing provenanced link edge: {out}"
+
+
+def test_note_detail_edges_respect_acl():
+    tenant = "origin-tenant"
+    _ingest_origin_pair(tenant)
+    # Target moved out of the caller's scopes -> its edge must disappear.
+    client.post("/ingest", json={
+        "source_id": "origin-b", "title": "Origin Target",
+        "text": "# Origin Target\n\nI am the origin target note with enough body text to chunk properly.\n",
+        "scope": "hidden-scope", "owner": "alice", "tenant": tenant,
+    })
+    r = client.get("/notes/origin-a", params={"tenant": tenant, "scopes": "eng-team"})
+    assert r.status_code == 200
+    out = r.json()["edges"]["out"]
+    assert not any(e["other_id"] == "origin-b" for e in out), "ACL leak: hidden note in edges"
+
+
+def test_ask_surfaces_contradiction_conflicts():
+    from lore import db
+    tenant = "conflict-tenant"
+    client.post("/ingest", json={
+        "source_id": "cfl-b", "title": "Rate Policy Old",
+        "text": "# Rate Policy Old\n\nThe LORE-9911 limit is five percent according to the original policy document.\n",
+        "scope": "eng-team", "owner": "alice", "tenant": tenant,
+    })
+    client.post("/ingest", json={
+        "source_id": "cfl-a", "title": "Rate Policy New",
+        "text": "# Rate Policy New\n\nAbout LORE-9911: this contradicts [[Rate Policy Old]] because the limit is now nine percent.\n",
+        "scope": "eng-team", "owner": "alice", "tenant": tenant,
+    })
+    conn = db.connect()
+    edge = conn.execute(
+        "select kind, origin from edges where tenant_id=%s and src_note_id=%s and kind=%s",
+        (tenant, "cfl-a", "contradicts")).fetchone()
+    assert edge is not None, "contradicts cue did not produce an edge"
+
+    r = client.post("/ask", json={
+        "question": "What is the LORE-9911 limit?",
+        "principal_scopes": ["eng-team"],
+        "tenant_id": tenant,
+    })
+    assert r.status_code == 200
+    body = r.json()
+    assert "conflicts" in body
+    cited = {c["note_id"] for c in body["citations"]}
+    if "cfl-a" in cited or "cfl-b" in cited:
+        pairs = {(c["a_id"], c["b_id"]) for c in body["conflicts"]}
+        assert any({"cfl-a", "cfl-b"} == {a, b} for a, b in pairs), (
+            f"conflict pair not surfaced: {body['conflicts']} (cited={cited})")
