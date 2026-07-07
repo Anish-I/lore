@@ -53,10 +53,94 @@ function RelatedPages({ connections, onOpen }) {
 
 }
 
-function PageView({ note, editor, place, mode, connections, onBack, onChatAbout, onMove }) {
+// Per-note git history popover — commits from the vault-git autocommit repo,
+// with a line diff view and one-click restore.
+function HistoryPanel({ relPath, onRestored, onClose }) {
+  const [commits, setCommits] = React.useState(null);
+  const [sel, setSel] = React.useState(null); // oid being viewed
+  const [diff, setDiff] = React.useState(null);
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  React.useEffect(() => {
+    let live = true;
+    window.lore.vaultGit.history(relPath).then((r) => {
+      if (!live) return;
+      if (r && r.ok) setCommits(r.commits || []);else
+      {setCommits([]);setError(r && r.error || 'history unavailable');}
+    }).catch((e) => {if (live) {setCommits([]);setError(String(e));}});
+    return () => {live = false;};
+  }, [relPath]);
+  const view = async (oid) => {
+    setSel(oid);setDiff(null);
+    try {const r = await window.lore.vaultGit.diff(relPath, oid);setDiff(r && r.ok ? r.diff : [{ t: 'info', s: r && r.error || 'diff failed' }]);}
+    catch (e) {setDiff([{ t: 'info', s: String(e) }]);}
+  };
+  const doRestore = async (oid) => {
+    if (!window.confirm('Restore this page to the selected version? The current content is kept in history.')) return;
+    setBusy(true);
+    try {
+      const r = await window.lore.vaultGit.restore(relPath, oid);
+      if (r && r.ok) {onRestored();onClose();} else
+      setError(r && r.error || 'restore failed');
+    } catch (e) {setError(String(e));}
+    setBusy(false);
+  };
+  const ago = (ms) => {
+    if (!ms) return '';
+    const s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m ago`;
+    if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+    return `${Math.round(s / 86400)}d ago`;
+  };
+  const diffColor = { add: 'var(--success-fg)', del: 'var(--danger-fg)', ctx: 'var(--text-subtle)', info: 'var(--text-faint)' };
+  const diffPrefix = { add: '+ ', del: '- ', ctx: '  ', info: '' };
+  return (/*#__PURE__*/
+    React.createElement(React.Fragment, null, /*#__PURE__*/
+    React.createElement("div", { style: { position: 'fixed', inset: 0, zIndex: 40 }, onClick: onClose }), /*#__PURE__*/
+    React.createElement("div", { style: { position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 41, width: sel ? 560 : 340, maxHeight: 420, display: 'flex', flexDirection: 'column', background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 12, boxShadow: 'var(--shadow-modal)', overflow: 'hidden' } }, /*#__PURE__*/
+    React.createElement("div", { style: { padding: '9px 12px', borderBottom: '1px solid var(--divider)', fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 } }, /*#__PURE__*/
+    React.createElement(PvIcon, { name: "history", size: 14, style: { color: 'var(--brand-fg)' } }), "Page history",
+
+    sel && /*#__PURE__*/React.createElement("button", { onClick: () => {setSel(null);setDiff(null);}, style: { marginLeft: 'auto', background: 'none', border: 'none', color: 'var(--brand-fg)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'var(--font-sans)' } }, "back to list")
+    ), /*#__PURE__*/
+    React.createElement("div", { style: { flex: 1, overflowY: 'auto' } },
+    error && /*#__PURE__*/React.createElement("div", { style: { padding: 12, fontSize: 12, color: 'var(--danger-fg)' } }, error),
+    !sel && commits === null && /*#__PURE__*/React.createElement("div", { style: { padding: 12, fontSize: 12, color: 'var(--text-faint)' } }, "loading\u2026"),
+    !sel && commits && commits.length === 0 && !error && /*#__PURE__*/
+    React.createElement("div", { style: { padding: 14, fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 } }, "No snapshots yet \u2014 edits are snapshotted automatically about a minute after you save."),
+
+    !sel && (commits || []).map((c) => /*#__PURE__*/
+    React.createElement("div", { key: c.oid, style: { display: 'flex', alignItems: 'center', gap: 9, padding: '8px 12px', borderBottom: '1px solid var(--divider)' } }, /*#__PURE__*/
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', flexShrink: 0 } }, c.short), /*#__PURE__*/
+    React.createElement("span", { style: { flex: 1, minWidth: 0, fontSize: 12, color: 'var(--text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, c.message), /*#__PURE__*/
+    React.createElement("span", { style: { fontSize: 10.5, color: 'var(--text-faint)', flexShrink: 0 } }, ago(c.when)), /*#__PURE__*/
+    React.createElement("button", { onClick: () => view(c.oid), style: { background: 'none', border: 'none', color: 'var(--brand-fg)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'var(--font-sans)', flexShrink: 0 } }, "View"), /*#__PURE__*/
+    React.createElement("button", { onClick: () => doRestore(c.oid), disabled: busy, style: { background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer', fontSize: 11.5, fontFamily: 'var(--font-sans)', flexShrink: 0 } }, "Restore")
+    )
+    ),
+    sel && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '10px 12px' } }, /*#__PURE__*/
+    React.createElement("pre", { style: { margin: 0, fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55, whiteSpace: 'pre-wrap', wordBreak: 'break-word' } },
+    (diff || [{ t: 'info', s: 'loading…' }]).map((row, i) => /*#__PURE__*/
+    React.createElement("div", { key: i, style: { color: diffColor[row.t] || 'var(--text-body)' } }, diffPrefix[row.t], row.s)
+    )
+    ), /*#__PURE__*/
+    React.createElement("button", { onClick: () => doRestore(sel), disabled: busy, style: { marginTop: 10, height: 28, padding: '0 12px', borderRadius: 8, border: '1px solid var(--brand-soft-border)', background: 'var(--brand-soft-bg)', color: 'var(--brand-fg)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 600 } },
+    busy ? 'Restoring…' : 'Restore this version'
+    )
+    )
+
+    )
+    )
+    ));
+
+}
+
+function PageView({ note, editor, place, mode, connections, onBack, onChatAbout, onMove, relPath, onRestored }) {
   const meta = window.LorePlaceMeta[pvScopePlace(note && note.scope)] || window.LorePlaceMeta.my;
   const placeMeta = window.LorePlaceMeta[place] || meta;
   const [hoverBack, setHoverBack] = React.useState(false);
+  const [historyOpen, setHistoryOpen] = React.useState(false);
   return (/*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-canvas)' } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '12px 26px', borderBottom: '1px solid var(--divider)', flexShrink: 0 } }, /*#__PURE__*/
@@ -91,7 +175,21 @@ function PageView({ note, editor, place, mode, connections, onBack, onChatAbout,
         color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: 500
       } }, /*#__PURE__*/
     React.createElement(PvIcon, { name: "corner-up-right", size: 13 }), "Move\u2026"
+    ),
+    relPath && window.lore && window.lore.vaultGit && /*#__PURE__*/
+    React.createElement("span", { style: { position: 'relative', display: 'inline-flex' } }, /*#__PURE__*/
+    React.createElement("button", { onClick: () => setHistoryOpen((o) => !o), title: "Page history (automatic snapshots)", style: {
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8,
+        border: '1px solid var(--border)', background: historyOpen ? 'var(--surface-hover)' : 'transparent',
+        cursor: 'pointer', color: 'var(--text-primary)'
+      } }, /*#__PURE__*/
+    React.createElement(PvIcon, { name: "history", size: 14 })
+    ),
+    historyOpen && /*#__PURE__*/
+    React.createElement(HistoryPanel, { relPath: relPath, onRestored: onRestored || (() => {}), onClose: () => setHistoryOpen(false) })
+
     )
+
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minHeight: 0, display: 'flex' } },
     editor

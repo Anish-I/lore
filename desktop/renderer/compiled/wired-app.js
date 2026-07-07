@@ -1486,6 +1486,23 @@ function App() {
       onBack: () => setActiveId(null),
       onChatAbout: () => {setAskCtx({ id: activeId, title: editorNote.title });setAskOpen(true);},
       onMove: () => setMoveOpen(true),
+      relPath: (() => {
+        if (!treeData || !treeData.root || !activeId) return null;
+        const norm = (s) => String(s).replace(/\\/g, '/');
+        const root = norm(treeData.root).replace(/\/+$/, '');
+        const p = norm(activeId);
+        return p.toLowerCase().startsWith(root.toLowerCase()) ? p.slice(root.length).replace(/^\/+/, '') : null;
+      })(),
+      onRestored: async () => {
+        try {
+          const rr = await window.lore.readNote(activeId);
+          const parsed = parseNote(rr.raw, activeId, rr.mtime);
+          setNotes((m) => ({ ...m, [activeId]: parsed }));
+          setDrafts((m) => ({ ...m, [activeId]: rr.raw }));
+          setScope(parsed.scope);
+          flash('Restored — the previous version is kept in history.');
+        } catch {/* watcher refresh will catch up */}
+      },
       editor: /*#__PURE__*/
       React.createElement(Editor, { note: editorNote, mode: mode, onMode: onMode, onOpen: openByRef,
         hideTabs: true, hideToolbar: true,

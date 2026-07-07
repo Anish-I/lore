@@ -402,9 +402,62 @@ function scheduleBackup() {
   backupTimer = setTimeout(() => { backupTimer = null; runBackup('change'); }, 60_000);
 }
 
+// ---------- vault git history (M1-A) ----------
+// Debounced autocommit of .md changes into a Lore-managed repo at the library
+// root. If the root already has a user-owned .git, autocommit is OPT-IN
+// (cfg.vaultGitEnabled) — never commit into someone's repo uninvited; when
+// Lore creates the repo itself, it defaults ON.
+const vaultGit = require('./lib/vault-git');
+let vaultGitTimer = null;
+
+function vaultGitActive(cfg) {
+  const c = cfg || loadConfig() || {};
+  if (c.vaultGitEnabled === false) return false;           // explicit off
+  const root = (Array.isArray(c.roots) && c.roots[0]) || null;
+  if (!root) return false;
+  if (vaultGit.hasRepo(root)) {
+    // Lore-created repos are marked in config; foreign repos need the opt-in.
+    return c.vaultGitEnabled === true || c.vaultGitOwned === true;
+  }
+  return true; // no repo yet — Lore will create one (default ON)
+}
+
+async function ensureVaultRepo(root) {
+  const cfg = loadConfig() || {};
+  if (cfg.vaultGitEnabled === false) return;
+  try {
+    if (!vaultGit.hasRepo(root)) {
+      await vaultGit.ensureRepo(root);
+      const next = loadConfig() || {};
+      next.vaultGitOwned = true;
+      saveConfig(next);
+      console.log('[vault-git] initialized history repo at', root);
+    }
+  } catch (e) { console.warn('[vault-git] init failed (non-fatal):', e.message); }
+}
+
+function scheduleAutocommit() {
+  const cfg = loadConfig() || {};
+  if (!vaultGitActive(cfg)) return;
+  if (vaultGitTimer) clearTimeout(vaultGitTimer);
+  vaultGitTimer = setTimeout(async () => {
+    vaultGitTimer = null;
+    const c = loadConfig() || {};
+    const root = (Array.isArray(c.roots) && c.roots[0]) || null;
+    if (!root || !vaultGitActive(c)) return;
+    try {
+      const r = await vaultGit.autocommit(root, 'lore: snapshot');
+      if (r.committed && win && !win.isDestroyed()) {
+        win.webContents.send('vault:git-committed', { sha: r.sha, files: r.files });
+      }
+    } catch (e) { console.warn('[vault-git] autocommit failed (non-fatal):', e.message); }
+  }, 60_000);
+}
+
 function maybeAutoIndex(event, p) {
   if (event !== 'add' && event !== 'change') return;
   scheduleBackup();  // any file change also refreshes the backup (debounced)
+  scheduleAutocommit(); // and a vault-git snapshot (debounced, .md only)
   const cfg = loadConfig() || {};
   if (cfg.autoIndexOnSave === false) return;
   if (!cfg.owner || !cfg.scope || !cfg.tenant) return; // identity not configured yet
@@ -437,7 +490,9 @@ function startWatch(root) {
       if (!p || !p.toLowerCase().endsWith('.md')) return;
       if (win) win.webContents.send('vault:changed', { event, path: p });
       maybeAutoIndex(event, p);
+      if (event === 'unlink') scheduleAutocommit(); // deletions snapshot too
     };
+    ensureVaultRepo(root);
     watcher.on('add', (p) => notify('add', p)).on('change', (p) => notify('change', p)).on('unlink', (p) => notify('unlink', p));
   } catch (e) { console.error('watch error', e); }
 }
@@ -1426,6 +1481,57 @@ ipcMain.handle('search', async (_e, { query, scopes, k }) => {
 });
 
 // ---------- IPC: upkeep ----------
+
+// ---------- vault git IPC (M1-A) ----------
+// All handlers path-guard the root and delegate to lib/vault-git (which
+// re-checks that relPath stays inside the root).
+function _vaultRootChecked() {
+  const cfg = loadConfig() || {};
+  const root = (Array.isArray(cfg.roots) && cfg.roots[0]) || null;
+  if (!root) throw new Error('No library root configured');
+  pathGuard(root);
+  return root;
+}
+
+ipcMain.handle('vault:git-status', async () => {
+  try {
+    const root = _vaultRootChecked();
+    const cfg = loadConfig() || {};
+    const st = await vaultGit.status(root);
+    return { ok: true, enabled: vaultGitActive(cfg), owned: cfg.vaultGitOwned === true, ...st };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
+ipcMain.handle('vault:git-history', async (_e, relPath) => {
+  try {
+    const root = _vaultRootChecked();
+    return { ok: true, commits: await vaultGit.history(root, relPath) };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
+ipcMain.handle('vault:git-diff', async (_e, { relPath, oid }) => {
+  try {
+    const root = _vaultRootChecked();
+    return { ok: true, diff: await vaultGit.diff(root, relPath, oid) };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
+ipcMain.handle('vault:git-restore', async (_e, { relPath, oid }) => {
+  try {
+    const root = _vaultRootChecked();
+    const r = await vaultGit.restore(root, relPath, oid);
+    // The watcher sees the restored write and auto-reindexes it.
+    return { ok: true, ...r };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
+ipcMain.handle('vault:git-set-enabled', async (_e, enabled) => {
+  const cfg = loadConfig() || {};
+  cfg.vaultGitEnabled = enabled === true;
+  saveConfig(cfg);
+  if (enabled) { try { await ensureVaultRepo((cfg.roots || [])[0]); } catch { /* non-fatal */ } }
+  return { ok: true, enabled: cfg.vaultGitEnabled };
+});
 
 ipcMain.handle('upkeep:run', async (_e, opts) => {
   const { tenant, scope } = opts || {};

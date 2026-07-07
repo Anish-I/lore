@@ -36,6 +36,20 @@ contextBridge.exposeInMainWorld('lore', {
     },
   },
 
+  // --- vault git history (autocommit snapshots; per-note history/diff/restore) ---
+  vaultGit: {
+    status:     ()               => ipcRenderer.invoke('vault:git-status'),
+    history:    (relPath)        => ipcRenderer.invoke('vault:git-history', relPath),
+    diff:       (relPath, oid)   => ipcRenderer.invoke('vault:git-diff', { relPath, oid }),
+    restore:    (relPath, oid)   => ipcRenderer.invoke('vault:git-restore', { relPath, oid }),
+    setEnabled: (enabled)        => ipcRenderer.invoke('vault:git-set-enabled', enabled),
+    onCommitted: (cb) => {
+      const h = (_e, payload) => cb(payload);
+      ipcRenderer.on('vault:git-committed', h);
+      return () => ipcRenderer.removeListener('vault:git-committed', h);
+    },
+  },
+
   // --- backup mirror (SharePoint/OneDrive assurance) ---
   backup: {
     pickDir: () => ipcRenderer.invoke('backup:pick-dir'),
