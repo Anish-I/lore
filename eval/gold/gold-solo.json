@@ -1,0 +1,279 @@
+{
+  "generated_at": "2026-07-06T22:22:40.941501",
+  "tenant": "solo",
+  "scopes": [
+    "research"
+  ],
+  "queries": [
+    {
+      "q": "What must you unset before spawning worker instances from Bash?",
+      "expect_note_id": "6e71f696160d2cc0",
+      "expect_title_sub": "feedback_nested_claude",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about adversarial-2026?",
+      "expect_note_id": "1ca8d1eb0bf1c051",
+      "expect_title_sub": "Vault \u2014 per-scope adversarial ACL audit ",
+      "kind": "exact"
+    },
+    {
+      "q": "Where did the security risk surface according to the findings?",
+      "expect_note_id": "1ca8d1eb0bf1c051",
+      "expect_title_sub": "Vault \u2014 per-scope adversarial ACL audit ",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "How often does the weather data get archived?",
+      "expect_note_id": "55c7ac78b2ad7e00",
+      "expect_title_sub": "Infrastructure Overhaul (2026-03-28)",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What must change on the server side to enable multi-conversation viewing?",
+      "expect_note_id": "26f90cdb0a91fc94",
+      "expect_title_sub": "Chat history sheet added \u2014 2026-06-12",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What are the four main areas/sections included in this project's screens?",
+      "expect_note_id": "a6d7a92359124686",
+      "expect_title_sub": "MobileApp",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What format do font files use when they are single variable assets?",
+      "expect_note_id": "0308b79a29deddf4",
+      "expect_title_sub": "Google Fonts repo restructure \u2014 static d",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "How many predefined style options are available for generation?",
+      "expect_note_id": "87555ab262b1e71f",
+      "expect_title_sub": "Project: tiktok-captions",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about eval-2026?",
+      "expect_note_id": "c180e15c8d71b00c",
+      "expect_title_sub": "Vault \u2014 BM25 proven at scale + the reran",
+      "kind": "exact"
+    },
+    {
+      "q": "What happens when the semantic model processes queries looking for exact identifiers?",
+      "expect_note_id": "c180e15c8d71b00c",
+      "expect_title_sub": "Vault \u2014 BM25 proven at scale + the reran",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "How can the maximum number of plan-endpoint requests be configured for E2E testing?",
+      "expect_note_id": "004cbcfea189b3f6",
+      "expect_title_sub": "Gemma4 step-field fallback in workflow p",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What is the git remote URL listed in this document?",
+      "expect_note_id": "8ef993db12d2f6d1",
+      "expect_title_sub": "DevOps",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What setting must be used for tool calls to fire?",
+      "expect_note_id": "1c82ef06b270eb37",
+      "expect_title_sub": "LLM",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Which user actions currently do not have proper security measures?",
+      "expect_note_id": "4ba662d22fcdcd31",
+      "expect_title_sub": "Frontend forms lack CSRF tokens and retu",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What function accepts large limit and page values without proper input checking?",
+      "expect_note_id": "adc8fa33b5894e4a",
+      "expect_title_sub": "Unvalidated pagination parameters enable",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "How long are the temporary links active for data transfer?",
+      "expect_note_id": "602de508288b1d43",
+      "expect_title_sub": "Presigned S3 upload URLs generated witho",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What process normalizes the security findings?",
+      "expect_note_id": "e7305cb222dc9612",
+      "expect_title_sub": "Scanner runs Gitleaks and Semgrep",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What versions of the compiler and package manager were installed?",
+      "expect_note_id": "04b3630f0282b17e",
+      "expect_title_sub": "Rust",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What scopes must the admin token possess to gather sales data?",
+      "expect_note_id": "9b1dd57668ee5bbe",
+      "expect_title_sub": "Xtrait prod analytics access (2026-06-13",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about Sep-2025?",
+      "expect_note_id": "cb6d675b9c28193f",
+      "expect_title_sub": "2025 Ioniq 6 SEL AWD Lease Hunt \u2014 CT/MA",
+      "kind": "exact"
+    },
+    {
+      "q": "What percentage discount was offered on stock S00425?",
+      "expect_note_id": "cb6d675b9c28193f",
+      "expect_title_sub": "2025 Ioniq 6 SEL AWD Lease Hunt \u2014 CT/MA",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What limitation was noted regarding process termination when using Git Bash on Windows?",
+      "expect_note_id": "af4f672dff3bb706",
+      "expect_title_sub": "Bugs & Fixes",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What file should be checked using `git ls-files | grep lock` to determine the package manager?",
+      "expect_note_id": "e1cd2676c286122f",
+      "expect_title_sub": "wingman-expo uses npm, NOT pnpm (correct",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Can the raw access token be used as an API key for external tools?",
+      "expect_note_id": "eeb3e5d324872a0a",
+      "expect_title_sub": "Codex OAuth Token Scopes Are Limited",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do the highest bids for YES and NO usually add up to?",
+      "expect_note_id": "8f9a2cb4d128d83c",
+      "expect_title_sub": "CRITICAL: Orderbook Interpretation Bug",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Which JavaScript file runs every time a prompt is submitted?",
+      "expect_note_id": "c8304ea7319cb383",
+      "expect_title_sub": "DynamicMemory",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What is the current balance shown in the document?",
+      "expect_note_id": "e4b2a60d48a44fcb",
+      "expect_title_sub": "Fed Goes Live (2026-03-30)",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "On Windows bash, what command sequence can locate a process ID given a port number?",
+      "expect_note_id": "282bef099bd9245f",
+      "expect_title_sub": "Never blanket-kill Node processes",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "For collaborative spaces, what authentication method is required for sharing content?",
+      "expect_note_id": "6e3ca6f52e0c1dda",
+      "expect_title_sub": "Lore \u2014 Phase 2 & near-term roadmap (capt",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Which object does the actual renderer read from for styling instructions?",
+      "expect_note_id": "eb704eb103499f81",
+      "expect_title_sub": "Preset preview hints pattern \u2014 separatin",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What was the win rate for the crypto single-model exploration?",
+      "expect_note_id": "38f71ca21effa742",
+      "expect_title_sub": "Session 2026-03-28",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about baseline-2026?",
+      "expect_note_id": "79e2ee4a4a3a1e69",
+      "expect_title_sub": "Lore \u2014 embedder A/B: BGE-base did NOT be",
+      "kind": "exact"
+    },
+    {
+      "q": "What limits performance when dealing with specialized industry terminology?",
+      "expect_note_id": "79e2ee4a4a3a1e69",
+      "expect_title_sub": "Lore \u2014 embedder A/B: BGE-base did NOT be",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "How long does the automated audit run compared to a manual professional review?",
+      "expect_note_id": "bac8d04b1ef36a2c",
+      "expect_title_sub": "claude-ads skill installed (2026-06-12)",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "When should detailed structures like tables or headings be used?",
+      "expect_note_id": "114fd7465c7ba89e",
+      "expect_title_sub": "feedback_response_length",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What port does the Express.js backend run on?",
+      "expect_note_id": "34edeed9143cc3c4",
+      "expect_title_sub": "Server",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What must be achieved by day 30 for the effort to count as a success?",
+      "expect_note_id": "c1463740621938b5",
+      "expect_title_sub": "Lore: 90-day plan to start winning (2026",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What error message indicates insufficient funds for accessing the LLM?",
+      "expect_note_id": "3bc08d9b4dae54b8",
+      "expect_title_sub": "OpenClaw Anthropic provider needs API cr",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What information is now included in the `signToken` payload at all callsites?",
+      "expect_note_id": "4ff4964291a44d42",
+      "expect_title_sub": "Phase 8 complete \u2014 Admin + Apple + Tour ",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What function accepts keys without confirming ownership?",
+      "expect_note_id": "2c501ae7182447a9",
+      "expect_title_sub": "S3 download URL generation allows path t",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about tools-2026?",
+      "expect_note_id": "c83cd061ebb422b9",
+      "expect_title_sub": "OpenClaw",
+      "kind": "exact"
+    },
+    {
+      "q": "Which model serves as the fallback option for the gateway?",
+      "expect_note_id": "c83cd061ebb422b9",
+      "expect_title_sub": "OpenClaw",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "On which hook does this script run?",
+      "expect_note_id": "6f9edba035e7b50f",
+      "expect_title_sub": "Obsidian Orphan Auto-Connector",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What command is used to start the Weather Trader?",
+      "expect_note_id": "5890064b9a861c66",
+      "expect_title_sub": "project_kalshi_bot",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What port is used for the job queue backing?",
+      "expect_note_id": "a76c4d63297acf3a",
+      "expect_title_sub": "Agent Hub uses BullMQ on Redis",
+      "kind": "paraphrase"
+    }
+  ]
+}
