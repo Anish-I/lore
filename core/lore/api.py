@@ -481,6 +481,11 @@ def _note_signals_provider(tenant: str, query: str):
             f"""select distinct dst_note_id from edges
                 where tenant_id=%s and kind='supersedes' and {frag2}""",
             (tenant, *params2)).fetchall()}
+        frag3, params3 = in_clause("note_id", ids)
+        fb = dict(_conn.execute(
+            f"""select note_id, coalesce(sum(vote),0) from feedback
+                where tenant_id=%s and {frag3} group by note_id""",
+            (tenant, *params3)).fetchall())
         out = {}
         for nid, importance, created_at, memory_type, source_type in rows:
             age_days = None
@@ -502,6 +507,7 @@ def _note_signals_provider(tenant: str, query: str):
                 "memory_type": memory_type,
                 "superseded": nid in superseded,
                 "entity_hit": nid in entity_ids,
+                "feedback_net": int(fb.get(nid) or 0),
             }
         return out
 
@@ -1002,6 +1008,113 @@ def capture(req: CaptureReq, authorization: Optional[str] = Header(default=None)
     )
     return {"ok": True, "note_id": note_id, "chunks": n}
 
+# --- Agent memory bus (M3) ---------------------------------------------------
+# Agents write scoped memories with ZERO pre-registration: the first write to
+# `agent:<name>` self-provisions the agent (Mem0-style zero-friction signup —
+# a human can claim/inspect it later via /memory/agents). Isolation is the
+# existing scope ACL; the local token still gates the port.
+_AGENT_NAME_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
+_AGENT_WRITE_CAP = int(os.environ.get("LORE_AGENT_WRITE_CAP", "120"))  # writes/hour/agent
+
+
+class MemoryReq(BaseModel):
+    agent: str
+    text: str
+    tenant: str
+    title: Optional[str] = None
+    session_id: Optional[str] = None   # stable id -> upsert (one memory per key)
+
+
+@app.post("/memory")
+def memory_write(req: MemoryReq, authorization: Optional[str] = Header(default=None)):
+    """Write an agent memory (redacted, chunked, embedded) into the agent's own
+    scope. Returns the scope so the caller knows where to recall from.
+
+    Local-first v1: refused in server mode — hosted deployments need real
+    per-agent authn (M4 backlog item I3) before agents write cross-network.
+    """
+    if _server_mode():
+        raise HTTPException(403, "agent memory writes are local-mode only for now")
+    agent = (req.agent or "").strip().lower()
+    if not _AGENT_NAME_RE.match(agent):
+        raise HTTPException(422, "agent must match ^[a-z0-9][a-z0-9_-]{0,39}$")
+    if not (req.text or "").strip():
+        raise HTTPException(422, "text is required")
+    tenant = req.tenant
+    scope = f"agent:{agent}"
+
+    # Write cap: runaway loops can't flood the store.
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(hours=1)).isoformat(sep=" ")
+    recent = _conn.execute(
+        "select count(*) from notes where tenant_id=%s and scope_id=%s and updated_at > %s",
+        (tenant, scope, cutoff)).fetchone()[0]
+    if recent >= _AGENT_WRITE_CAP:
+        raise HTTPException(429, f"agent write cap reached ({_AGENT_WRITE_CAP}/hour)")
+
+    # Self-provision / bump the agent registry row.
+    _conn.execute(
+        """insert into agents(tenant_id, name, last_write, writes) values(%s,%s,now(),1)
+           on conflict (tenant_id, name)
+           do update set last_write=now(), writes=agents.writes+1""",
+        (tenant, agent))
+
+    safe_text = redact(req.text)
+    key = req.session_id or hashlib.sha1(safe_text.encode()).hexdigest()[:12]
+    note_id = f"agent:{agent}:{key}"
+    title = req.title or f"{agent}: {safe_text.strip().splitlines()[0][:60]}"
+    n = index_document(
+        source_id=note_id, title=title, text=safe_text,
+        scope_id=scope, owner_id=f"agent:{agent}", tenant_id=tenant,
+        embedder=_local_embedder(), conn=_conn, sparse_embedder=_local_sparse(),
+        source_type="agent-memory",
+    )
+    _audit("memory-write", tenant, f"agent:{agent}", [scope], title, n)
+    return {"ok": True, "note_id": note_id, "scope": scope, "chunks": n}
+
+
+@app.get("/memory/agents")
+def memory_agents(tenant: Optional[str] = None):
+    """The agent registry: who has self-provisioned, how much they write.
+    The 'human claims it later' surface."""
+    if not tenant:
+        return {"agents": []}
+    rows = _conn.execute(
+        """select name, first_seen, last_write, writes, claimed_by
+           from agents where tenant_id=%s
+           order by coalesce(last_write, first_seen) desc""",
+        (tenant,)).fetchall()
+    return {"agents": [{
+        "name": r[0],
+        "first_seen": r[1].isoformat() if r[1] else None,
+        "last_write": r[2].isoformat() if r[2] else None,
+        "writes": r[3] or 0,
+        "claimed_by": r[4],
+        "scope": f"agent:{r[0]}",
+    } for r in rows]}
+
+
+class FeedbackReq(BaseModel):
+    tenant: str
+    note_id: str
+    vote: int                      # +1 / -1
+    query_hash: Optional[str] = None
+
+
+@app.post("/feedback")
+def feedback(req: FeedbackReq):
+    """Thumbs on an answer's citation — feeds the personal ranking layer
+    (net votes per note become a bounded recall boost/demotion)."""
+    vote = 1 if req.vote > 0 else -1
+    _conn.execute(
+        "insert into feedback(tenant_id, note_id, vote, query_hash) values(%s,%s,%s,%s)",
+        (req.tenant, req.note_id, vote, req.query_hash))
+    net = _conn.execute(
+        "select coalesce(sum(vote),0) from feedback where tenant_id=%s and note_id=%s",
+        (req.tenant, req.note_id)).fetchone()[0]
+    return {"ok": True, "note_id": req.note_id, "net": int(net)}
+
+
 @app.get("/capture/status")
 def capture_status(session_id: str):
     """Check whether a session has been indexed.
@@ -1302,6 +1415,7 @@ class UpkeepRunReq(BaseModel):
     section_threshold: int = 5       # notes on one topic before a Section is proposed
     auto_file: bool = False          # opt-in (cfg.autoFileObvious): record unambiguous notes
                                      # into existing applied sections (state only; desktop moves)
+    auto_journal: bool = False       # opt-in (cfg.autoJournal): materialize a daily journal note
 
 @app.post("/upkeep/run")
 def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
@@ -1322,7 +1436,8 @@ def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     stats = run_upkeep(_conn, embedder, req.tenant, scope=req.scope, use_llm=req.use_llm,
                        auto_classify=req.auto_classify,
                        section_threshold=req.section_threshold,
-                       auto_file=req.auto_file)
+                       auto_file=req.auto_file,
+                       auto_journal=req.auto_journal)
     # Opportunistic backfill: any note still missing created_at (e.g. indexed before
     # the column existed) gets it derived now from its source file, so the graph
     # date-scrubber keeps improving as upkeep runs without a separate user action.

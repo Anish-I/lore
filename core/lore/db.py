@@ -215,6 +215,21 @@ create table if not exists note_tags(
   constraint note_tags_unique unique (tenant_id, note_id, tag, kind));
 create index if not exists note_tags_note on note_tags(note_id);
 create index if not exists note_tags_tenant on note_tags(tenant_id, kind, tag);
+create table if not exists agents(
+  tenant_id text not null,
+  name text not null,
+  first_seen timestamptz default now(),
+  last_write timestamptz,
+  writes integer default 0,
+  claimed_by text,
+  primary key (tenant_id, name));
+create table if not exists feedback(
+  tenant_id text not null,
+  note_id text not null,
+  vote integer not null,
+  query_hash text,
+  ts timestamptz default now());
+create index if not exists feedback_note on feedback(tenant_id, note_id);
 create table if not exists section_proposals(
   id text primary key,
   tenant_id text not null,
@@ -393,6 +408,21 @@ create table if not exists note_tags(
   constraint note_tags_unique unique (tenant_id, note_id, tag, kind));
 create index if not exists note_tags_note on note_tags(note_id);
 create index if not exists note_tags_tenant on note_tags(tenant_id, kind, tag);
+create table if not exists agents(
+  tenant_id text not null,
+  name text not null,
+  first_seen timestamp default current_timestamp,
+  last_write timestamp,
+  writes integer default 0,
+  claimed_by text,
+  primary key (tenant_id, name));
+create table if not exists feedback(
+  tenant_id text not null,
+  note_id text not null,
+  vote integer not null,
+  query_hash text,
+  ts timestamp default current_timestamp);
+create index if not exists feedback_note on feedback(tenant_id, note_id);
 create table if not exists section_proposals(
   id text primary key,
   tenant_id text not null,

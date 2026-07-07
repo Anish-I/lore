@@ -126,6 +126,7 @@ RECENCY_HALF_LIFE_DAYS = float(os.environ.get("LORE_RECENCY_HALF_LIFE", "30"))
 ENTITY_BOOST = float(os.environ.get("LORE_ENTITY_BOOST", "0.15"))
 SUPERSEDED_WEIGHT = float(os.environ.get("LORE_SUPERSEDED_WEIGHT", "0.80"))
 AGENT_WEIGHT = float(os.environ.get("LORE_AGENT_WEIGHT", "0.90"))
+FEEDBACK_WEIGHT = float(os.environ.get("LORE_FEEDBACK_WEIGHT", "0.15"))
 
 # Memory-type axis (durable knowledge > agent memory > raw session scratch).
 MEMORY_TYPE_WEIGHTS = {
@@ -185,6 +186,12 @@ def _apply_note_signals(final, by_id, query, signals):
             # ADD-only model: superseded notes stay in the store; ranking is
             # where the newer claim wins.
             f *= SUPERSEDED_WEIGHT
+        net = s.get("feedback_net")
+        if net:
+            # Personal ranking: thumbs on citations. tanh bounds runaway votes;
+            # ±3 net votes ≈ full effect.
+            import math
+            f *= 1.0 + FEEDBACK_WEIGHT * math.tanh(net / 3.0)
         final[cid] = f
 
 

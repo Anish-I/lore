@@ -206,8 +206,11 @@ _SESSION_SOURCE_TYPES = frozenset(("claude-session", "codex-session", "claude-hi
 
 
 def memory_type_of(source_type: str) -> str:
-    if (source_type or "") in _SESSION_SOURCE_TYPES:
+    st = source_type or ""
+    if st in _SESSION_SOURCE_TYPES:
         return "session"
+    if st == "agent-memory":
+        return "agent"
     return "durable"
 
 

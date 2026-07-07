@@ -75,6 +75,7 @@ function startUpkeepInterval(tenant) {
           auto_classify: c.autoClassify === true,
           section_threshold: c.sectionThreshold || 5,
           auto_file: c.autoFileObvious === true,
+          auto_journal: c.autoJournal === true,
         }),
       });
       if (r.ok) { try { await executeAutoFileMoves(await r.json()); } catch { /* moves retry next run */ } }
@@ -1550,6 +1551,7 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
         auto_classify: cfg.autoClassify === true,
         section_threshold: cfg.sectionThreshold || 5,
         auto_file: cfg.autoFileObvious === true,
+        auto_journal: cfg.autoJournal === true,
       }),
     });
     const result = await r.json();

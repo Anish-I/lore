@@ -14,6 +14,7 @@ Why deletion is safe and idempotent:
     so re-ingested date notes never duplicate content.  Steady state: date `.md` files
     live on disk; their content lives, de-duplicated and dated, inside topic nodes.
 """
+import datetime
 import re
 from .index import index_document, _parse_wikilinks, _upsert_edges
 from . import qdrant_store
@@ -188,10 +189,54 @@ def _delete_note(conn, tenant: str, note_id: str) -> None:
     conn.execute("delete from notes where id=%s", (note_id,))  # chunks cascade
 
 
+def _write_journal(conn, embedder, tenant: str, scope: str) -> int:
+    """Materialize today's auto-journal note (M3): a deterministic 'what happened
+    today' rollup of notes touched today, grouped by section. No LLM required —
+    searchable, graph-linked, and durable (source_type='journal' is NOT
+    ephemeral: the title starts with 'Journal', not a bare date)."""
+    today = datetime.date.today().isoformat()
+    rows = conn.execute(
+        """select title, source_path from notes
+           where tenant_id=%s and updated_at >= %s
+             and (source_type is null or source_type not in ('journal','topic'))
+           order by updated_at desc limit 60""",
+        (tenant, f"{today} 00:00:00")).fetchall()
+    if len(rows) < 3:
+        return 0
+    by_section: dict = {}
+    for title, source_path in rows:
+        section = "Library"
+        if source_path:
+            parts = re.split(r"[\\/]+", source_path)
+            if len(parts) >= 2:
+                section = parts[-2]
+        by_section.setdefault(section, []).append(title or "(untitled)")
+    lines = [f"# Journal {today}", "",
+             "_Auto-generated daily rollup of pages touched today._", ""]
+    for section in sorted(by_section):
+        titles = by_section[section]
+        lines.append(f"## {section}")
+        for t in titles[:10]:
+            lines.append(f"- [[{t}]]")
+        if len(titles) > 10:
+            lines.append(f"- … and {len(titles) - 10} more")
+        lines.append("")
+    from .index import index_document
+    index_document(
+        source_id=f"journal:{tenant}:{today}",
+        title=f"Journal {today}",
+        text="\n".join(lines),
+        scope_id=scope or "private", owner_id="upkeep", tenant_id=tenant,
+        embedder=embedder, conn=conn, source_type="journal",
+    )
+    return 1
+
+
 def run_upkeep(conn, embedder, tenant: str, scope: str = None,
                use_llm: bool = False, delete_source: bool = True,
                auto_classify: bool = False, classify_llm=None,
-               section_threshold: int = 5, auto_file: bool = False) -> dict:
+               section_threshold: int = 5, auto_file: bool = False,
+               auto_journal: bool = False) -> dict:
     """Convert ephemeral date/session notes into durable topic nodes.
 
     Algorithm (idempotent — safe to re-run; re-ingested date notes never duplicate):
@@ -430,5 +475,12 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
         from . import sections as sections_mod
         result["sections"] = sections_mod.propose_sections(
             conn, tenant, threshold=section_threshold)
+
+    # --- Step 9 (opt-in): materialize today's auto-journal note ---
+    if auto_journal:
+        try:
+            result["journal"] = _write_journal(conn, embedder, tenant, scope)
+        except Exception:
+            result["journal"] = 0  # never let the journal break the fold
 
     return result

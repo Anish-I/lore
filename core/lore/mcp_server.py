@@ -266,6 +266,82 @@ try:
         edges = len(data.get("edges", []))
         return f"Graph: {nodes} nodes, {edges} edges."
 
+    @_mcp.tool()
+    def lore_remember(text: str, agent: str | None = None, title: str | None = None,
+                      key: str | None = None, tenant: str | None = None) -> str:
+        """Store a memory in the user's Lore knowledge base (the shared memory bus).
+
+        Call this when you learn something durable worth keeping across sessions:
+        a decision, a fix, a preference, project state. The memory lands in YOUR
+        agent scope (isolated by ACL) and is redacted server-side before storage.
+
+        Args:
+            text: The memory content (markdown ok). Keep it a distilled fact or
+                decision, not a transcript dump.
+            agent: Your agent name (lowercase, e.g. 'claude-code', 'wingman').
+                Falls back to the LORE_AGENT env var. First write self-provisions
+                the agent — no registration needed.
+            title: Optional short title; derived from the first line if omitted.
+            key: Optional stable key — rewriting the same key UPDATES that memory
+                instead of creating a new one.
+            tenant: Tenant namespace (falls back to LORE_TENANT).
+        """
+        agent = (agent or os.environ.get("LORE_AGENT") or "").strip().lower()
+        if not agent:
+            return "Error: agent is required (or set the LORE_AGENT env var)."
+        _, tenant = _apply_env_defaults(["x"], tenant)
+        err = _check_tenant(tenant)
+        if err:
+            return err
+        if not _backend_up():
+            return _BACKEND_DOWN_MSG
+        data, err = _safe_post("/memory", {
+            "agent": agent, "text": text, "title": title,
+            "session_id": key, "tenant": tenant.strip(),
+        })
+        if err:
+            return f"Error calling Lore: {err}"
+        return f"Remembered as {data.get('note_id')} in scope {data.get('scope')} ({data.get('chunks')} chunk(s))."
+
+    @_mcp.tool()
+    def lore_recall(task: str, budget: int = 4000, scopes: list[str] | None = None,
+                    agent: str | None = None, tenant: str | None = None) -> str:
+        """Recall a token-budgeted context pack for a task from the user's Lore
+        knowledge base — retrieval + rerank + greedy fill to budget, every item
+        cited. PREFER this over lore_search when you want ready-to-use context
+        rather than a hit list.
+
+        Args:
+            task: What you're working on, in a sentence.
+            budget: Token budget for the pack (default 4000).
+            scopes: ACL scopes to read (falls back to LORE_SCOPES). Your own
+                agent scope is added automatically when `agent`/LORE_AGENT is set.
+            agent: Your agent name — adds agent:<name> to the readable scopes.
+            tenant: Tenant namespace (falls back to LORE_TENANT).
+        """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
+        agent = (agent or os.environ.get("LORE_AGENT") or "").strip().lower()
+        scopes = _clean_scopes(scopes or [])
+        if agent:
+            ascope = f"agent:{agent}"
+            if ascope not in scopes:
+                scopes = scopes + [ascope]
+        err = _check_scopes(scopes)
+        if err:
+            return err
+        err = _check_tenant(tenant)
+        if err:
+            return err
+        if not _backend_up():
+            return _BACKEND_DOWN_MSG
+        data, err = _safe_post("/context-pack", {
+            "task": task, "scopes": scopes, "tenant_id": tenant.strip(), "budget": budget,
+        })
+        if err:
+            return f"Error calling Lore: {err}"
+        pack = data.get("pack") or "No relevant context found."
+        return f"{pack}\n\n_(context pack: {data.get('tokens_total')} tokens over {len(data.get('items') or [])} sources)_"
+
     def main() -> None:
         _mcp.run()
 
@@ -333,21 +409,84 @@ except ImportError:
                     "required": [],
                 },
             ),
+            _types.Tool(
+                name="lore_remember",
+                description="Store a durable memory (decision, fix, preference, project state) in the user's Lore knowledge base under YOUR agent scope. First write self-provisions the agent.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Distilled memory content (markdown ok)."},
+                        "agent": {"type": "string", "description": "Agent name (lowercase). Falls back to LORE_AGENT."},
+                        "title": {"type": "string"},
+                        "key": {"type": "string", "description": "Stable key — same key updates the memory."},
+                        "tenant": {"type": "string", "description": "Falls back to LORE_TENANT."},
+                    },
+                    "required": ["text"],
+                },
+            ),
+            _types.Tool(
+                name="lore_recall",
+                description="Recall a token-budgeted, cited context pack for a task from the user's Lore knowledge base. Prefer over lore_search when you want ready-to-use context.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string"},
+                        "budget": {"type": "integer", "default": 4000},
+                        "scopes": {"type": "array", "items": {"type": "string"},
+                                   "description": "Falls back to LORE_SCOPES; agent:<name> auto-added when agent/LORE_AGENT set."},
+                        "agent": {"type": "string"},
+                        "tenant": {"type": "string", "description": "Falls back to LORE_TENANT."},
+                    },
+                    "required": ["task"],
+                },
+            ),
         ]
 
     @_server.call_tool()
     async def _call_tool(name: str, arguments: dict) -> list[_types.TextContent]:
         scopes, tenant = _apply_env_defaults(arguments.get("scopes"), arguments.get("tenant"))
-        err = _check_scopes(scopes)
-        if err:
-            return [_types.TextContent(type="text", text=err)]
+        _agent = (arguments.get("agent") or os.environ.get("LORE_AGENT") or "").strip().lower()
+        if name == "lore_recall" and _agent:
+            ascope = f"agent:{_agent}"
+            scopes = list(scopes or [])
+            if ascope not in scopes:
+                scopes.append(ascope)
+        if name != "lore_remember":
+            err = _check_scopes(scopes)
+            if err:
+                return [_types.TextContent(type="text", text=err)]
         err = _check_tenant(tenant)
         if err:
             return [_types.TextContent(type="text", text=err)]
-        clean_scopes = _clean_scopes(scopes)
+        clean_scopes = _clean_scopes(scopes or [])
         tenant = tenant.strip()
         if not _backend_up():
             return [_types.TextContent(type="text", text=_BACKEND_DOWN_MSG)]
+        if name == "lore_remember":
+            if not _agent:
+                return [_types.TextContent(type="text", text="Error: agent is required (or set LORE_AGENT).")]
+            data, err = _safe_post("/memory", {
+                "agent": _agent, "text": arguments.get("text") or "",
+                "title": arguments.get("title"), "session_id": arguments.get("key"),
+                "tenant": tenant,
+            })
+            if err:
+                return [_types.TextContent(type="text", text=f"Error: {err}")]
+            return [_types.TextContent(
+                type="text",
+                text=f"Remembered as {data.get('note_id')} in scope {data.get('scope')}.")]
+        if name == "lore_recall":
+            data, err = _safe_post("/context-pack", {
+                "task": arguments.get("task") or "",
+                "scopes": clean_scopes, "tenant_id": tenant,
+                "budget": arguments.get("budget", 4000),
+            })
+            if err:
+                return [_types.TextContent(type="text", text=f"Error: {err}")]
+            pack = data.get("pack") or "No relevant context found."
+            return [_types.TextContent(
+                type="text",
+                text=f"{pack}\n\n_(context pack: {data.get('tokens_total')} tokens)_")]
         if name == "lore_ask":
             data, err = _safe_post("/ask", {
                 "question": arguments["question"],
