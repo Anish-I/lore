@@ -181,6 +181,7 @@ SCHEMA = """
 create table if not exists notes(
   id text primary key, tenant_id text, owner_id text, scope_id text,
   source_path text, title text, source_type text,
+  memory_type text default 'durable',
   body text, body_sha256 text, content_hash text,
   created_at timestamptz,
   updated_at timestamptz default now());
@@ -293,6 +294,8 @@ _WIZARD_SCOPE_MIGRATION = [
 # new columns even though CREATE TABLE IF NOT EXISTS won't re-create an existing table.
 _NOTES_MIGRATION = [
     "alter table notes add column if not exists source_type text",
+    # M2: the User/Session/Agent memory-type axis (orthogonal to the scope ACL).
+    "alter table notes add column if not exists memory_type text default 'durable'",
 ]
 
 _EDGES_MIGRATION = [
@@ -355,6 +358,7 @@ SCHEMA_SQLITE = """
 create table if not exists notes(
   id text primary key, tenant_id text, owner_id text, scope_id text,
   source_path text, title text, source_type text,
+  memory_type text default 'durable',
   body text, body_sha256 text, content_hash text,
   importance real default 0,
   created_at timestamp,
@@ -477,6 +481,11 @@ def bootstrap_schema(conn):
         try:
             conn.execute(
                 "alter table personal_wizards add column share_scope text not null default 'private'")
+        except Exception:
+            pass  # column already exists
+        # M2: memory-type axis for stores created before the column shipped.
+        try:
+            conn.execute("alter table notes add column memory_type text default 'durable'")
         except Exception:
             pass  # column already exists
         return

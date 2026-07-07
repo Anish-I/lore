@@ -116,8 +116,80 @@ def _downweight_sessions(final, by_id):
             final[cid] *= SESSION_WEIGHT
 
 
+# --- M2: note-level ranking signals -----------------------------------------
+# All bounded multiplicative adjustments applied AFTER the rerank/hybrid blend.
+# Every knob is env-tunable for ablation; changes are gated by
+# eval/run_nightly.py --gate (recall@5 must not drop >10pp under the median).
+IMPORTANCE_WEIGHT = float(os.environ.get("LORE_IMPORTANCE_WEIGHT", "0.10"))
+RECENCY_WEIGHT = float(os.environ.get("LORE_RECENCY_WEIGHT", "0.20"))
+RECENCY_HALF_LIFE_DAYS = float(os.environ.get("LORE_RECENCY_HALF_LIFE", "30"))
+ENTITY_BOOST = float(os.environ.get("LORE_ENTITY_BOOST", "0.15"))
+SUPERSEDED_WEIGHT = float(os.environ.get("LORE_SUPERSEDED_WEIGHT", "0.80"))
+AGENT_WEIGHT = float(os.environ.get("LORE_AGENT_WEIGHT", "0.90"))
+
+# Memory-type axis (durable knowledge > agent memory > raw session scratch).
+MEMORY_TYPE_WEIGHTS = {
+    "durable": 1.0,
+    "agent": AGENT_WEIGHT,
+    "session": SESSION_WEIGHT,
+}
+
+# Temporal INTENT of the query, used as a ranking signal (Mem0 insight: temporal
+# awareness belongs in the fusion function, not just an as-of filter).
+#   'current' → boost recent notes;  'past' → no recency boost (history queries
+#   must not drown older decisions);  'none' → mild default recency.
+_INTENT_CURRENT_RE = re.compile(
+    r"\b(current(ly)?|now|latest|newest|today|this week|these days|status|"
+    r"what am i|what are we|in progress|right now)\b", re.I)
+_INTENT_PAST_RE = re.compile(
+    r"\b(did i|did we|originally|used to|back (then|in)|previously|history of|"
+    r"at the time|in (january|february|march|april|may|june|july|august|"
+    r"september|october|november|december|\d{4}))\b", re.I)
+
+
+def temporal_intent(q: str) -> str:
+    if _INTENT_PAST_RE.search(q or ""):
+        return "past"
+    if _INTENT_CURRENT_RE.search(q or ""):
+        return "current"
+    return "none"
+
+
+def _apply_note_signals(final, by_id, query, signals):
+    """Blend note-level signals into chunk scores (in place).
+
+    signals: {note_id: {"importance": float[0,1], "age_days": float|None,
+                        "memory_type": str, "superseded": bool,
+                        "entity_hit": bool}}
+    Replaces _downweight_sessions when provided (memory_type covers it —
+    applying both would double-penalize sessions).
+    """
+    if not signals:
+        return
+    intent = temporal_intent(query)
+    rec_w = 0.0 if intent == "past" else (RECENCY_WEIGHT if intent == "current" else RECENCY_WEIGHT * 0.3)
+    for cid in list(final):
+        c = by_id.get(cid) or {}
+        s = signals.get(c.get("note_id"))
+        if not s:
+            continue
+        f = final[cid]
+        f *= MEMORY_TYPE_WEIGHTS.get(s.get("memory_type") or "durable", 1.0)
+        f *= 1.0 + IMPORTANCE_WEIGHT * float(s.get("importance") or 0.0)
+        age = s.get("age_days")
+        if rec_w and age is not None:
+            f *= 1.0 + rec_w * (0.5 ** (max(age, 0.0) / RECENCY_HALF_LIFE_DAYS))
+        if s.get("entity_hit"):
+            f *= 1.0 + ENTITY_BOOST
+        if s.get("superseded"):
+            # ADD-only model: superseded notes stay in the store; ranking is
+            # where the newer claim wins.
+            f *= SUPERSEDED_WEIGHT
+        final[cid] = f
+
+
 def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
-             sparse_embedder=None):
+             sparse_embedder=None, note_signals=None):
     """Retrieve relevant chunks for a query.
 
     When sparse_embedder is provided the hybrid path is used: Qdrant performs a
@@ -127,6 +199,10 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
 
     When sparse_embedder is None (default) the original dense + lexical RRF +
     rerank path is used, keeping all existing tests green.
+
+    note_signals: optional callable(note_ids) -> {note_id: signal dict} (see
+    _apply_note_signals). Provided by the API layer, which has the DB; when
+    given it REPLACES the payload-based session down-weighting.
     """
     eq = expand_query(query)
     qvec = embedder.embed([eq])[0]
@@ -151,7 +227,11 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
         rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
         fused_norm = _minmax({cid: qdrant_scores.get(cid, 0.0) for cid in top_ids})
         final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
-        _downweight_sessions(final, by_id)
+        if note_signals is not None:
+            _apply_note_signals(final, by_id, query,
+                                note_signals({by_id[c]["note_id"] for c in top_ids}))
+        else:
+            _downweight_sessions(final, by_id)
         ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
         exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
         for cid in exact_ids:
@@ -183,7 +263,11 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
     rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
     fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
     final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
-    _downweight_sessions(final, by_id)
+    if note_signals is not None:
+        _apply_note_signals(final, by_id, query,
+                            note_signals({by_id[c]["note_id"] for c in top_ids}))
+    else:
+        _downweight_sessions(final, by_id)
     ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
     exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
     for cid in exact_ids:
@@ -202,7 +286,7 @@ def _scope_of(c):
     return s[0] if s else "?"
 
 def retrieve_traced(query, embedder, reranker, sparse_embedder,
-                    allowed_scope_ids, tenant_id, limit=8):
+                    allowed_scope_ids, tenant_id, limit=8, note_signals=None):
     """Like retrieve(), but runs the dense and sparse lanes SEPARATELY and returns
     (final_chunks, trace) where trace exposes every pipeline stage for visualization."""
     cls = classify_query(query)
@@ -234,6 +318,9 @@ def retrieve_traced(query, embedder, reranker, sparse_embedder,
     fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
     final_score = {cid: w * rr_norm.get(cid, 0.0) + (1 - w) * fused_norm.get(cid, 0.0)
                    for cid in top_ids}
+    if note_signals is not None:
+        _apply_note_signals(final_score, by_id, query,
+                            note_signals({by_id[c]["note_id"] for c in top_ids}))
     ranked = sorted(top_ids, key=lambda c: final_score[c], reverse=True)
     # Exact-identifier lane: literal-token matches jump to the front.
     exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
@@ -251,6 +338,7 @@ def retrieve_traced(query, embedder, reranker, sparse_embedder,
 
     trace = {
         "query": query, "classification": cls, "rerank_weight": round(w, 2),
+        "temporal_intent": temporal_intent(query),
         "models": {"dense": "BGE-small-en-v1.5", "sparse": "Qdrant/bm25",
                    "rerank": "ms-marco-MiniLM-L-6-v2"},
         "timings_ms": {"embed": round(t_embed), "retrieve": round(t_ret), "rerank": round(t_rr)},

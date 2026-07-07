@@ -247,6 +247,24 @@ def _is_distinctive(title: str) -> bool:
     return (" " in title) or bool(re.search(r"[a-z][A-Z]", title)) or len(title) >= 8
 
 
+# Read-time inverse labels for typed edges (SoloMD-style auto inverses, v1):
+# an incoming `supersedes` edge reads as `superseded_by` from the note's side.
+# Virtual — nothing extra is stored; /notes and UIs label with this map.
+INVERSE_KINDS = {
+    "supersedes": "superseded_by",
+    "causes": "caused_by",
+    "implements": "implemented_by",
+    "depends_on": "required_by",
+    "supports": "supported_by",
+    "contradicts": "contradicts",   # symmetric
+    "relates_to": "relates_to",     # symmetric
+    "link": "linked_from",
+    "tag": "tag",                    # symmetric
+    "folder": "folder",              # symmetric
+    "topic": "topic",
+}
+
+
 def build_title_index(conn, tenant: str, exclude_id: str = None):
     """Build a co-mention vocabulary: DISTINCTIVE note titles in the tenant, as whole-word
     case-insensitive patterns, for recognizing entities named in prose. Skips titles shorter

@@ -449,6 +449,65 @@ def _citations_for(hits_or_rows):
     return out
 
 
+def _note_signals_provider(tenant: str, query: str):
+    """Callable handed to recall.retrieve — resolves note-level ranking signals
+    (importance, age, memory type, superseded, entity match) for the candidate
+    set in two cheap queries. The entity lane matches DISTINCTIVE note titles
+    named in the query (relations.build_title_index) and boosts their chunks."""
+    from . import relations as _relations
+
+    # Query-side entity detection happens once per request, not per candidate.
+    entity_ids: set = set()
+    try:
+        for _title, nid, pat in _relations.build_title_index(_conn, tenant):
+            if pat.search(query or ""):
+                entity_ids.add(nid)
+    except Exception:
+        entity_ids = set()
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    def provider(note_ids):
+        ids = [n for n in set(note_ids) if n]
+        if not ids:
+            return {}
+        frag, params = in_clause("id", ids)
+        rows = _conn.execute(
+            f"""select id, importance, created_at, memory_type, source_type
+                from notes where tenant_id=%s and {frag}""",
+            (tenant, *params)).fetchall()
+        frag2, params2 = in_clause("dst_note_id", ids)
+        superseded = {r[0] for r in _conn.execute(
+            f"""select distinct dst_note_id from edges
+                where tenant_id=%s and kind='supersedes' and {frag2}""",
+            (tenant, *params2)).fetchall()}
+        out = {}
+        for nid, importance, created_at, memory_type, source_type in rows:
+            age_days = None
+            if created_at is not None:
+                try:
+                    dt = created_at
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=datetime.timezone.utc)
+                    age_days = max(0.0, (now - dt).total_seconds() / 86400.0)
+                except Exception:
+                    age_days = None
+            if not memory_type:
+                # Stores indexed before the memory_type column: derive on the fly.
+                from .index import memory_type_of
+                memory_type = memory_type_of(source_type)
+            out[nid] = {
+                "importance": float(importance or 0.0),
+                "age_days": age_days,
+                "memory_type": memory_type,
+                "superseded": nid in superseded,
+                "entity_hit": nid in entity_ids,
+            }
+        return out
+
+    return provider
+
+
 def _conflicts_for(tenant: str, note_ids: list) -> list:
     """`contradicts` edges touching any cited note — surfaced so an answer that
     leans on disputed sources SAYS so (ADD-only model: contradictions live in
@@ -488,7 +547,8 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
         authorization: Optional[str] = Header(default=None)):
     _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
     hits = retrieve(req.question, embedder, reranker, scopes, tenant,
-                    sparse_embedder=sparse)
+                    sparse_embedder=sparse,
+                    note_signals=_note_signals_provider(tenant, req.question))
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
     text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history, provider=req.provider)
     _audit("ask", tenant, _uid, scopes, req.question, len(hits))
@@ -547,7 +607,8 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
         }
     else:
         _, tr = retrieve_traced(req.question, embedder, reranker, sparse,
-                                scopes, tenant)
+                                scopes, tenant,
+                                note_signals=_note_signals_provider(tenant, req.question))
     tr["citations"] = _citations_for(tr["final"])
     tr["conflicts"] = _conflicts_for(tenant, [c["note_id"] for c in tr["citations"]])
     # Stamp the NOTE-level scope back onto the final rows so the evidence trail
@@ -1076,7 +1137,9 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
     # edge must itself pass the caller's scope filter or the edge is omitted.
     allowed = [s.strip() for s in scopes.split(",") if s.strip()] if scopes else None
 
-    def _edge_rows(where_col, other_col):
+    from .relations import INVERSE_KINDS
+
+    def _edge_rows(where_col, other_col, inverse=False):
         rows = _conn.execute(
             f"""select e.{other_col}, n.title, n.scope_id, e.kind, e.weight, e.origin, e.evidence
                 from edges e join notes n on n.id = e.{other_col} and n.tenant_id = e.tenant_id
@@ -1088,7 +1151,11 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
                 continue
             out.append({
                 "other_id": other_id, "other_title": other_title or other_id,
-                "kind": kind, "weight": round(weight or 0, 2),
+                "kind": kind,
+                # Incoming edges read from THIS note's side: `supersedes` in
+                # reads as `superseded_by` (virtual inverse, nothing stored).
+                "kind_label": INVERSE_KINDS.get(kind, kind) if inverse else kind,
+                "weight": round(weight or 0, 2),
                 "origin": origin or "index",
                 "evidence": (evidence or "")[:200] or None,
             })
@@ -1102,8 +1169,72 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
         "updated": updated.isoformat() if updated else None,
         "edges": {
             "out": _edge_rows("src_note_id", "dst_note_id"),
-            "in": _edge_rows("dst_note_id", "src_note_id"),
+            "in": _edge_rows("dst_note_id", "src_note_id", inverse=True),
         },
+    }
+
+
+def _count_tokens(text: str) -> int:
+    try:
+        import tiktoken
+        return len(tiktoken.get_encoding("cl100k_base").encode(text or ""))
+    except Exception:
+        return int(len((text or "").split()) * 1.3)
+
+
+class ContextPackReq(BaseModel):
+    task: str
+    scopes: list[str]
+    tenant_id: str
+    budget: int = 4000          # token budget for the pack body
+    max_per_note: int = 2       # chunk dedupe cap per note
+
+
+@app.post("/context-pack")
+def context_pack(req: ContextPackReq, embedder=Depends(get_embedder),
+                 reranker=Depends(get_reranker), sparse=Depends(get_sparse_embedder),
+                 authorization: Optional[str] = Header(default=None)):
+    """Token-budgeted context pack for agents: retrieve → rerank → greedy fill
+    by final score until the budget is spent, deduped per note, every item
+    cited. The output is designed to be pasted straight into an agent prompt
+    (Hooks' lore-inject becomes budget-aware by calling this)."""
+    _uid, scopes, tenant = _authorize_read(authorization, req.scopes, req.tenant_id)
+    budget = max(200, min(req.budget, 32000))
+    hits = retrieve(req.task, embedder, reranker, scopes, tenant,
+                    limit=24, sparse_embedder=sparse,
+                    note_signals=_note_signals_provider(tenant, req.task))
+    metas = _note_meta([h.note_id for h in hits])
+
+    items, parts = [], []
+    used = 0
+    per_note: dict = {}
+    for h in hits:
+        if per_note.get(h.note_id, 0) >= max(1, req.max_per_note):
+            continue
+        title = (metas.get(h.note_id) or {}).get("title") or h.heading_path or h.note_id
+        block = f"### {title} — {h.heading_path}\n{h.text.strip()}\n"
+        t = _count_tokens(block)
+        if used + t > budget:
+            if items:
+                continue  # keep trying smaller chunks that might still fit
+            block = block[: max(200, int(len(block) * budget / max(t, 1)))]
+            t = _count_tokens(block)
+        per_note[h.note_id] = per_note.get(h.note_id, 0) + 1
+        used += t
+        parts.append(block)
+        items.append({
+            "note_id": h.note_id, "title": title, "heading_path": h.heading_path,
+            "score": round(h.score, 4), "tokens": t,
+        })
+        if used >= budget:
+            break
+    _audit("context-pack", tenant, _uid, scopes, req.task, len(items))
+    return {
+        "pack": "\n".join(parts),
+        "items": items,
+        "tokens_total": used,
+        "budget": budget,
+        "scopes_used": list(scopes),
     }
 
 
@@ -1132,7 +1263,8 @@ def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_
     _uid, scopes, tenant = _authorize_read(authorization, req.scopes, req.tenant_id)
     k = max(1, min(req.k, 50))
     hits = retrieve(req.query, embedder, reranker, scopes, tenant,
-                    limit=k, sparse_embedder=sparse)
+                    limit=k, sparse_embedder=sparse,
+                    note_signals=_note_signals_provider(tenant, req.query))
     # Fetch note metadata (title, scope) for the returned hits in one query.
     note_ids = list(dict.fromkeys(h.note_id for h in hits))
     note_meta = {}

@@ -198,6 +198,19 @@ def _upsert_edges(conn, tenant_id, src_id, kind, targets, origin="index"):
 # Indexing spine
 # ---------------------------------------------------------------------------
 
+# The User/Session/Agent memory-type axis (M2): WHAT KIND of memory a note is,
+# orthogonal to the scope ACL (who can see it). Retrieval weights durable
+# knowledge above session scratch; 'agent' is reserved for agent-written
+# memories (M3 memory bus).
+_SESSION_SOURCE_TYPES = frozenset(("claude-session", "codex-session", "claude-history"))
+
+
+def memory_type_of(source_type: str) -> str:
+    if (source_type or "") in _SESSION_SOURCE_TYPES:
+        return "session"
+    return "durable"
+
+
 def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                    embedder, conn, sparse_embedder=None, path=None,
                    source_type="note", content_hash=None, mtime=None):
@@ -239,18 +252,20 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     # created_at is write-once: COALESCE keeps the existing value on every re-ingest.
     conn.execute(
         """insert into notes(id, tenant_id, owner_id, scope_id, source_path, title,
-                             source_type, body, body_sha256, content_hash,
+                             source_type, memory_type, body, body_sha256, content_hash,
                              created_at, updated_at)
-           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
            on conflict (id) do update
            set title=excluded.title, scope_id=excluded.scope_id,
                owner_id=excluded.owner_id, source_path=excluded.source_path,
                tenant_id=excluded.tenant_id, source_type=excluded.source_type,
+               memory_type=excluded.memory_type,
                body=excluded.body, body_sha256=excluded.body_sha256,
                content_hash=excluded.content_hash,
                created_at=coalesce(notes.created_at, excluded.created_at),
                updated_at=now()""",
         (source_id, tenant_id, owner_id, scope_id, path, title, source_type,
+         memory_type_of(source_type),
          text, body_sha256, content_hash, created_at),
     )
 
