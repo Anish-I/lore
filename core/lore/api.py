@@ -734,6 +734,20 @@ def stats(tenant: Optional[str] = None):
     ).fetchone()[0]
     return {"notes": notes, "chunks": chunks, "edges": edges, "foldedPaths": folded}
 
+
+@app.get("/doctor")
+def doctor_endpoint(tenant: Optional[str] = None):
+    """Local health diagnostics (`lore doctor` backend half): model cache,
+    vector store, index counts, upkeep backlog, LLM availability, auth mode.
+
+    Refused in server mode — this surface reveals deployment internals and is
+    meant for the on-device install only.
+    """
+    if _server_mode():
+        raise HTTPException(403, "doctor is a local-mode diagnostic surface")
+    from . import doctor as _doctor
+    return _doctor.run_checks(_conn, tenant or "local")
+
 @app.get("/digest")
 def digest(tenant: Optional[str] = None, days: int = 7):
     """The Home tab's this-week digest: notes grouped by day × section.

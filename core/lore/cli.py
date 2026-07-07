@@ -18,18 +18,46 @@ Examples:
     lore search "RAG pipeline" --scope <scope> --tenant <tenant>
     lore graph --scope <scope> --tenant <tenant>
 """
-import argparse, json, sys
+import argparse, json, os, sys, time
 import urllib.request, urllib.error
 
 DEFAULT_URL = "http://localhost:8099"
 _HTTP_TIMEOUT = 15   # seconds; applied to every real API call
+
+# Local API token — the desktop-spawned backend rejects tokenless requests
+# with 401 (the scraper silently hit this for weeks). Resolution order:
+# explicit --token, LORE_LOCAL_TOKEN env, then the desktop app's config file.
+_TOKEN: str = ""
+
+
+def _discover_token() -> str:
+    if os.environ.get("LORE_LOCAL_TOKEN"):
+        return os.environ["LORE_LOCAL_TOKEN"]
+    appdata = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
+    for app_name in ("lore-desktop", "Lore"):
+        cfg_path = os.path.join(appdata, app_name, "lore-config.json")
+        try:
+            with open(cfg_path, encoding="utf-8") as f:
+                tok = (json.load(f) or {}).get("localToken")
+                if tok:
+                    return tok
+        except Exception:
+            continue
+    return ""
+
+
+def _headers(extra: dict = None) -> dict:
+    h = dict(extra or {})
+    if _TOKEN:
+        h["X-Lore-Token"] = _TOKEN
+    return h
 
 
 def _post_json(url: str, payload: dict) -> dict:
     data = json.dumps(payload).encode()
     req = urllib.request.Request(
         url, data=data,
-        headers={"Content-Type": "application/json"},
+        headers=_headers({"Content-Type": "application/json"}),
         method="POST",
     )
     with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
@@ -37,7 +65,8 @@ def _post_json(url: str, payload: dict) -> dict:
 
 
 def _get_json(url: str) -> dict:
-    with urllib.request.urlopen(url, timeout=_HTTP_TIMEOUT) as resp:
+    req = urllib.request.Request(url, headers=_headers())
+    with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
         return json.loads(resp.read())
 
 
@@ -149,6 +178,137 @@ def _cmd_graph(args: argparse.Namespace) -> int:
         return 1
 
 
+# ---------------------------------------------------------------------------
+# doctor / next
+# ---------------------------------------------------------------------------
+
+def _count_md(root: str) -> int:
+    """Recursive *.md count, skipping dot-dirs — mirrors the desktop scanner."""
+    total = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        total += sum(1 for f in filenames if f.lower().endswith(".md"))
+    return total
+
+
+def _status_get(url: str, with_token: bool):
+    """GET returning (status_code, parsed_json_or_None) without raising."""
+    headers = _headers() if with_token else {}
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except Exception:
+        return 0, None
+
+
+def _collect_doctor(args) -> list:
+    """All doctor rows: client-side checks + the backend's /doctor checks."""
+    rows = []
+
+    up = ensure_backend(args.url)
+    rows.append({
+        "name": "backend", "ok": up,
+        "detail": f"reachable at {args.url}" if up else f"NOT reachable at {args.url}",
+        "fix": None if up else "start the Lore app (or uvicorn lore.api:app --port 8099)",
+    })
+    if not up:
+        return rows
+
+    # Token round-trip: tokenless must 401 when enforcement is on; with the
+    # discovered token it must 200. This is the silent-401 failure mode that
+    # once left the index empty while every scan reported success.
+    stats_url = f"{args.url}/stats?tenant={args.tenant}"
+    code_no, _ = _status_get(stats_url, with_token=False)
+    code_yes, stats = _status_get(stats_url, with_token=True)
+    if code_no == 401 and code_yes == 200:
+        rows.append({"name": "token", "ok": True,
+                     "detail": "enforcement ON and the local token works", "fix": None})
+    elif code_no == 200:
+        rows.append({"name": "token", "ok": True,
+                     "detail": "enforcement OFF (raw backend — fine for dev/CI)", "fix": None})
+    elif code_yes != 200:
+        rows.append({"name": "token", "ok": False,
+                     "detail": f"requests with the discovered token get HTTP {code_yes or 'no response'}",
+                     "fix": "pass --token, or check %APPDATA%/lore-desktop/lore-config.json localToken"})
+    else:
+        rows.append({"name": "token", "ok": True,
+                     "detail": f"tokenless={code_no}, with-token={code_yes}", "fix": None})
+
+    # Disk vs index gap (the reconcile's own math, exposed for humans).
+    if args.root and stats:
+        disk = sum(_count_md(r) for r in args.root)
+        indexed = int(stats.get("notes") or 0)
+        folded = int(stats.get("foldedPaths") or 0)
+        gap = disk - folded - indexed
+        ok = disk == 0 or gap <= max(10, disk * 0.10)
+        rows.append({
+            "name": "coverage", "ok": ok,
+            "detail": f"{disk} .md on disk · {indexed} indexed · {folded} folded · gap {gap}",
+            "fix": None if ok else "run a reindex/scan (desktop reconcile does this on boot)",
+        })
+
+    code, body = _status_get(f"{args.url}/doctor?tenant={args.tenant}", with_token=True)
+    if code == 200 and body:
+        rows.extend(body.get("checks", []))
+    else:
+        rows.append({"name": "doctor-endpoint", "ok": False,
+                     "detail": f"GET /doctor returned HTTP {code or 'no response'}",
+                     "fix": "backend predates /doctor — update Lore" if code == 404 else None})
+    return rows
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    rows = _collect_doctor(args)
+    if args.json:
+        print(json.dumps({"ok": all(r["ok"] for r in rows), "checks": rows}, indent=2))
+    else:
+        width = max(len(r["name"]) for r in rows)
+        for r in rows:
+            mark = "OK  " if r["ok"] else "FAIL"
+            print(f"  {mark}  {r['name']:<{width}}  {r['detail']}")
+            if r.get("fix") and not r["ok"]:
+                print(f"        {'':<{width}}  fix: {r['fix']}")
+        hints = [r for r in rows if r["ok"] and r.get("fix")]
+        for r in hints:
+            print(f"  hint  {r['name']:<{width}}  {r['fix']}")
+    return 0 if all(r["ok"] for r in rows) else 1
+
+
+def _cmd_next(args: argparse.Namespace) -> int:
+    rows = _collect_doctor(args)
+    actions = []
+    by = {r["name"]: r for r in rows}
+    if not by.get("backend", {}).get("ok"):
+        actions.append("Start the Lore app — nothing else can run until the backend is up.")
+    else:
+        if not by.get("index", {}).get("ok", True):
+            actions.append("Reindex your library — the index is empty.")
+        if not by.get("coverage", {}).get("ok", True):
+            actions.append("Reindex — files on disk aren't in the index yet.")
+        if not by.get("model-cache", {}).get("ok", True):
+            actions.append(f"Repair the model cache: {by['model-cache'].get('fix')}")
+        if not by.get("upkeep", {}).get("ok", True):
+            actions.append("Run upkeep — captured session notes are piling up.")
+        llm_row = by.get("llm", {})
+        if llm_row.get("fix"):
+            actions.append(llm_row["fix"])
+        hist = os.environ.get("LORE_EVAL_HISTORY") or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "..", "eval", "history", "nightly.jsonl")
+        hist = os.path.normpath(hist)
+        if os.path.exists(os.path.dirname(hist)):
+            if not os.path.exists(hist) or (time.time() - os.path.getmtime(hist)) > 48 * 3600:
+                actions.append("Run the nightly recall eval (eval/run_nightly.py) — no fresh history.")
+    if not actions:
+        print("All clear — nothing needs attention.")
+    else:
+        for i, a in enumerate(actions, 1):
+            print(f"{i}. {a}")
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="lore",
@@ -204,12 +364,38 @@ def main() -> None:
     grph.add_argument("--url", default=DEFAULT_URL,
                       help=f"Lore API base URL (default: {DEFAULT_URL})")
 
+    # --- doctor ---
+    doc = sub.add_parser("doctor", help="Health-check the local Lore install")
+    doc.add_argument("--tenant", default="local", help="Tenant namespace (default: local)")
+    doc.add_argument("--root", action="append", default=[],
+                     help="Library root for the disk-vs-index coverage check (repeatable)")
+    doc.add_argument("--url", default=DEFAULT_URL,
+                     help=f"Lore API base URL (default: {DEFAULT_URL})")
+    doc.add_argument("--token", default=None, help="Local API token (else env/desktop config)")
+    doc.add_argument("--json", action="store_true", help="Machine-readable output")
+
+    # --- next ---
+    nxt = sub.add_parser("next", help="What should I do next? (read-only status)")
+    nxt.add_argument("--tenant", default="local", help="Tenant namespace (default: local)")
+    nxt.add_argument("--root", action="append", default=[],
+                     help="Library root for the coverage check (repeatable)")
+    nxt.add_argument("--url", default=DEFAULT_URL,
+                     help=f"Lore API base URL (default: {DEFAULT_URL})")
+    nxt.add_argument("--token", default=None, help="Local API token (else env/desktop config)")
+
     args = parser.parse_args()
+
+    # Resolve the local API token once for every command.
+    global _TOKEN
+    _TOKEN = getattr(args, "token", None) or _discover_token()
+
     dispatch = {
         "capture": _cmd_capture,
         "ask": _cmd_ask,
         "search": _cmd_search,
         "graph": _cmd_graph,
+        "doctor": _cmd_doctor,
+        "next": _cmd_next,
     }
     handler = dispatch.get(args.cmd)
     sys.exit(handler(args) if handler else 1)
