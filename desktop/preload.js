@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('lore', {
       return () => ipcRenderer.removeListener('backup:changed', h);
     },
   },
+  importUrl:      (url)        => ipcRenderer.invoke('import:url', url),
   onVaultChanged: (cb)         => ipcRenderer.on('vault:changed', (_e, payload) => cb(payload)),
 
   // --- sidebar context menu (native, main-process) ---

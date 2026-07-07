@@ -1008,6 +1008,67 @@ def capture(req: CaptureReq, authorization: Optional[str] = Header(default=None)
     )
     return {"ok": True, "note_id": note_id, "chunks": n}
 
+# --- URL ingestion (M4) -------------------------------------------------------
+class IngestUrlReq(BaseModel):
+    url: str
+    scope: str
+    owner: str
+    tenant: str
+
+
+_PRIVATE_HOST_RE = __import__("re").compile(
+    r"^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)", __import__("re").I)
+
+
+@app.post("/ingest-url")
+def ingest_url(req: IngestUrlReq, authorization: Optional[str] = Header(default=None)):
+    """Fetch a web page and index its readable text as a note (source_type='url').
+
+    Guards: http/https only, private/loopback hosts refused (SSRF hygiene),
+    2 MB cap, 15 s timeout. Extraction: bs4 — drops script/style/nav chrome,
+    prefers <article>/<main>, falls back to body paragraphs.
+    """
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant)
+    import urllib.parse as _up
+    import urllib.request as _ur
+    parsed = _up.urlparse(req.url)
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(422, "only http(s) URLs are supported")
+    if not parsed.hostname or _PRIVATE_HOST_RE.match(parsed.hostname):
+        raise HTTPException(422, "private/loopback hosts are not fetchable")
+    try:
+        r = _ur.urlopen(_ur.Request(req.url, headers={"User-Agent": "Lore/1.0 (+local knowledge OS)"}),
+                        timeout=15)
+        raw = r.read(2 * 1024 * 1024)
+    except Exception as e:
+        raise HTTPException(502, f"fetch failed: {e}")
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(raw, "html.parser")
+        for t in soup(["script", "style", "nav", "footer", "header", "aside", "noscript", "form"]):
+            t.decompose()
+        title = (soup.title.string or "").strip() if soup.title else ""
+        main = soup.find("article") or soup.find("main") or soup.body or soup
+        lines = [ln.strip() for ln in main.get_text("\n").splitlines()]
+        text = "\n".join(ln for ln in lines if ln)
+        text = __import__("re").sub(r"\n{3,}", "\n\n", text)
+    except Exception as e:
+        raise HTTPException(422, f"could not extract readable text: {e}")
+    if len(text) < 80:
+        raise HTTPException(422, "page had no readable text worth indexing")
+    title = title or parsed.hostname
+    body = f"# {title}\n\nSource: {req.url}\n\n{text[:200_000]}\n"
+    note_id = "url:" + hashlib.sha1(req.url.encode()).hexdigest()[:16]
+    n = index_document(
+        source_id=note_id, title=title, text=body,
+        scope_id=scope, owner_id=owner, tenant_id=tenant,
+        embedder=_local_embedder(), conn=_conn, sparse_embedder=_local_sparse(),
+        source_type="url",
+    )
+    _audit("ingest-url", tenant, owner, [scope], req.url, n)
+    return {"ok": True, "note_id": note_id, "title": title, "chunks": n}
+
+
 # --- Agent memory bus (M3) ---------------------------------------------------
 # Agents write scoped memories with ZERO pre-registration: the first write to
 # `agent:<name>` self-provisions the agent (Mem0-style zero-friction signup —

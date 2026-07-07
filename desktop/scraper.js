@@ -17,7 +17,8 @@ function BACKEND_URL() { return runtime.backendUrl(); }
 
 // Extensions routed to /reindex in Lite/Standard mode (backend owns frontmatter + chunking).
 // In Full mode ALL text files go to /ingest so redaction is applied before embedding.
-const REINDEX_EXTS = new Set(['.md', '.markdown', '.txt']);
+// .pdf/.docx: the backend extracts text server-side (core/lore/extract.py).
+const REINDEX_EXTS = new Set(['.md', '.markdown', '.txt', '.pdf', '.docx']);
 // Other whitelisted text extensions.
 const INGEST_EXTS  = new Set(['.js', '.ts', '.py', '.json', '.yaml', '.yml', '.csv']);
 const ALL_WHITELISTED = new Set([...REINDEX_EXTS, ...INGEST_EXTS]);

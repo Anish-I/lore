@@ -990,7 +990,7 @@ ipcMain.handle('scrape:start', (_e, scrapeConfig) => {
 });
 
 // ---------- IPC: import (drop files/folders/zip → nodes) ----------
-const IMPORT_TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.js', '.ts', '.py', '.json', '.yaml', '.yml', '.csv', '.html', '.css', '.rst', '.org', '.log']);
+const IMPORT_TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.js', '.ts', '.py', '.json', '.yaml', '.yml', '.csv', '.html', '.css', '.rst', '.org', '.log', '.pdf', '.docx']);
 
 function importRoot() {
   const cfg = loadConfig() || {};
@@ -1062,6 +1062,22 @@ async function runImport(paths) {
 }
 
 ipcMain.handle('import:files', (_e, paths) => runImport(paths));
+
+// URL → note: backend fetches + extracts readable text (/ingest-url, SSRF-guarded).
+ipcMain.handle('import:url', async (_e, url) => {
+  const cfg = loadConfig() || {};
+  if (!cfg.scope || !cfg.owner || !cfg.tenant) return { error: 'Configure scope, owner, and tenant before importing.' };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/ingest-url`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ url, scope: cfg.scope, owner: cfg.owner, tenant: cfg.tenant }),
+    });
+    const body = await r.json();
+    if (!r.ok) return { error: body.detail || `HTTP ${r.status}` };
+    return body;
+  } catch (e) { return { error: String(e.message || e) }; }
+});
 ipcMain.handle('import:pick', async () => {
   const r = await dialog.showOpenDialog(win, { title: 'Import into Lore', properties: ['openFile', 'openDirectory', 'multiSelections'] });
   if (r.canceled || !r.filePaths.length) return { ok: true, copied: 0, skipped: 0, errors: 0 };

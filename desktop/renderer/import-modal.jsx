@@ -7,6 +7,27 @@ function IM_ImportModal({ onClose, onDone }) {
   const [dragging, setDragging] = React.useState(false);
   const [status, setStatus] = React.useState('');
   const [busy, setBusy] = React.useState(false);
+  const [urlDraft, setUrlDraft] = React.useState('');
+
+  const IM_importUrl = async () => {
+    const url = urlDraft.trim();
+    if (!url || !window.lore || !window.lore.importUrl) return;
+    setBusy(true);
+    setStatus('Fetching page…');
+    try {
+      const r = await window.lore.importUrl(url);
+      if (r && r.ok) {
+        setUrlDraft('');
+        setStatus(`Added “${(r.title || url).slice(0, 60)}” (${r.chunks} chunk${r.chunks === 1 ? '' : 's'}).`);
+        if (onDone) setTimeout(onDone, 900);
+      } else {
+        setStatus('Page import failed: ' + ((r && r.error) || 'unknown error'));
+      }
+    } catch (e) {
+      setStatus('Page import failed: ' + String((e && e.message) || e));
+    }
+    setBusy(false);
+  };
 
   const IM_handleFiles = async (files) => {
     const paths = Array.from(files).map((f) => f.path).filter(Boolean);
@@ -93,6 +114,20 @@ function IM_ImportModal({ onClose, onDone }) {
               Browse files / folders…
             </IM_Button>
           </div>
+        </div>
+
+        {/* URL → note (backend fetch + readable-text extraction) */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 24px 16px' }}>
+          <IM_Icon name="link-2" size={14} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />
+          <input
+            value={urlDraft}
+            onChange={(e) => setUrlDraft(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') IM_importUrl(); }}
+            placeholder="…or paste a web page URL"
+            disabled={busy}
+            style={{ flex: 1, minWidth: 0, height: 32, padding: '0 11px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-inset)', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 12.5, outline: 'none' }}
+          />
+          <IM_Button variant="secondary" onClick={IM_importUrl} disabled={busy || !urlDraft.trim()}>Add page</IM_Button>
         </div>
 
         {/* Footer: progress + close */}
