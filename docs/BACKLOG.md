@@ -1,5 +1,16 @@
 # Lore Backlog
 
+## Milestone status (2026-07-07)
+
+Shipped: **M1** (doctor/next, vault git history, ADD-only + provenance surfacing, nightly recall self-test — baseline recall@5 0.822) · **M2** (memory-type axis, importance/temporal-intent/entity fusion signals, supersedes demotion, inverse edge labels, /context-pack — gate held 0.822) · **M3** (agent memory bus: /memory + lore_remember/lore_recall MCP, zero-friction agent self-provisioning + registry + write caps, /feedback→ranking, budget-aware lore-inject, auto-journal) · **M4** (PDF/DOCX extraction, /ingest-url + import-modal URL row) · **M5 partial** (lore-integrate skill, MCP registry manifests).
+
+Open items with their blockers:
+- **M5 remainder**: Glama/Smithery submission (user action — repo must be public; checklist in smithery.yaml) · E2EE multi-machine sync (design: encrypted git remote over the M1 vault-git substrate) · share cards + graph exports.
+- **M6 B2B connectors + hosted** — deliberately NOT stubbed: blocked on (1) the 90-day plan's own gate — lock the warm-door insurance/regulated vertical first, (2) Google/Slack OAuth app credentials to build+test against, (3) server-mode agent/principal authn (item I3 below) before anything writes cross-network.
+- **M3 remainder**: entity dossiers (needs NER/entity-extraction design) · agent-write FILE sandbox on git branches (current sandbox = caps+audit+scope isolation; branches become relevant when agents write vault files, not just DB memories).
+- Deferred from M4: audio/YouTube ingestion (whisper), tree-sitter code chunking, declarative YAML upkeep recipes.
+- Perf: /search p50 ~2.4s on the live vault (rerank dominates) — worth profiling before the memory bus gets heavy agent traffic.
+
 ## Product roadmap (2026-07-06 — post "Redesign C" UI)
 
 1. **Memory bus** — one memory across all agents: Wingman, h-cli, Agent Hub, Claude Code deposit/recall through Lore via `lore_remember`/`lore_recall` MCP tools, scope per agent. Hooks already captures from agent sessions; this closes the loop. Nobody in the field is aiming here.
