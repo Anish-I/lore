@@ -72,7 +72,7 @@ def load(n):
                 + (f"The {topic} pipeline processes stage {i % 7}. " * 12))
         st, _, dt = call("POST", "/ingest", {
             "source_id": f"load-{i}", "title": f"Load Note {i} about {topic}",
-            "text": body, "scope": SCOPE, "owner": "loadtest", "tenant": TENANT})
+            "text": body, "scope": SCOPE, "owner": "loadtest", "tenant": TENANT, "source_type": "smoke-load"})
         if st == 200:
             ok += 1
             ingest_ms.append(dt)
@@ -149,7 +149,7 @@ def opendata():
                 title = "Pride and Prejudice (Gutenberg)"
             st, b, dt = call("POST", "/ingest", {
                 "source_id": f"open-{kind}", "title": title, "text": text[:400_000],
-                "scope": SCOPE, "owner": "opendata", "tenant": TENANT}, timeout=180)
+                "scope": SCOPE, "owner": "opendata", "tenant": TENANT, "source_type": "smoke-open"}, timeout=180)
             ok = st == 200 and isinstance(b, dict) and b.get("chunks", 0) > 0
             print(f"  {'OK' if ok else 'FAIL'} {kind.upper():5} {title[:40]} -> {b.get('chunks') if isinstance(b, dict) else b} chunks ({len(text)} chars, {dt:.0f}ms)")
             results.append(ok)
@@ -163,12 +163,14 @@ def opendata():
 
 
 def cleanup():
-    print(f"== cleanup: forget tenant={TENANT} ==")
-    # /forget by path prefix won't catch DB-only notes; delete via the notes we know.
-    for pref in ["load-", "open-", "agent:", "url:", "smoke"]:
-        pass
-    st, b, _ = call("POST", "/forget", {"tenant": TENANT, "path_prefix": ""})
-    print(f"  forget(all paths): {st} {b}")
+    # DB-only notes have no source_path, so /forget can't reach them. Purge by
+    # source_type via DELETE /capture — every writer in this harness tags its
+    # notes (smoke-load, smoke-open, url, agent-memory).
+    print(f"== cleanup: purge tenant={TENANT} ==")
+    for stype in ("smoke-load", "smoke-open", "url", "agent-memory", "claude-session"):
+        st, b, _ = call("DELETE", f"/capture?source_type={stype}&tenant={TENANT}")
+        deleted = b.get("deleted") if isinstance(b, dict) else b
+        print(f"  delete source_type={stype}: {st} deleted={deleted}")
     st, b, _ = call("GET", f"/stats?tenant={TENANT}")
     print(f"  stats after: {b}")
 

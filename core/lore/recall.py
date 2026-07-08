@@ -234,19 +234,19 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
         rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
         fused_norm = _minmax({cid: qdrant_scores.get(cid, 0.0) for cid in top_ids})
         final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
-        # Seed exact-lane candidates BEFORE signals so a superseded/downvoted
-        # exact match is still weighted (it stays ahead of the blend via
-        # _prepend_unique, but is ordered against OTHER exact matches by signal).
+        # Signals weight the BLEND. The exact-ID lane deliberately bypasses them
+        # and leads verbatim — measured: signal-reordering exact matches costs
+        # identifier r@1 (the exact lane's whole purpose is literal precision).
+        if note_signals is not None:
+            _apply_note_signals(final, by_id, query,
+                                note_signals({by_id[c]["note_id"] for c in top_ids}))
+        else:
+            _downweight_sessions(final, by_id)
+        ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
         exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
         for cid in exact_ids:
             final.setdefault(cid, 1.0)
-        if note_signals is not None:
-            _apply_note_signals(final, by_id, query,
-                                note_signals({by_id[c]["note_id"] for c in final}))
-        else:
-            _downweight_sessions(final, by_id)
-        ranked = sorted(top_ids, key=lambda c: final.get(c, 0), reverse=True)
-        ranked = _prepend_unique(sorted(exact_ids, key=lambda c: final.get(c, 0), reverse=True), ranked)[:limit]
+        ranked = _prepend_unique(exact_ids, ranked)[:limit]
         out = []
         for cid in ranked:
             c = by_id[cid]
@@ -273,16 +273,16 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
     rr_norm = _minmax({cid: s for cid, s in zip(top_ids, rr)})
     fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
     final = {cid: w * rr_norm[cid] + (1 - w) * fused_norm[cid] for cid in top_ids}
+    if note_signals is not None:
+        _apply_note_signals(final, by_id, query,
+                            note_signals({by_id[c]["note_id"] for c in top_ids}))
+    else:
+        _downweight_sessions(final, by_id)
+    ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
     exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
     for cid in exact_ids:
         final.setdefault(cid, 1.0)
-    if note_signals is not None:
-        _apply_note_signals(final, by_id, query,
-                            note_signals({by_id[c]["note_id"] for c in final}))
-    else:
-        _downweight_sessions(final, by_id)
-    ranked = sorted(top_ids, key=lambda c: final.get(c, 0), reverse=True)
-    ranked = _prepend_unique(sorted(exact_ids, key=lambda c: final.get(c, 0), reverse=True), ranked)[:limit]
+    ranked = _prepend_unique(exact_ids, ranked)[:limit]
     out = []
     for cid in ranked:
         c = by_id[cid]
@@ -328,17 +328,15 @@ def retrieve_traced(query, embedder, reranker, sparse_embedder,
     fused_norm = _minmax({cid: fused[cid] for cid in top_ids})
     final_score = {cid: w * rr_norm.get(cid, 0.0) + (1 - w) * fused_norm.get(cid, 0.0)
                    for cid in top_ids}
-    # Exact-identifier lane: literal-token matches jump to the front, but are
-    # still signal-weighted so a superseded/downvoted exact match orders behind
-    # a cleaner one.
+    if note_signals is not None:
+        _apply_note_signals(final_score, by_id, query,
+                            note_signals({by_id[c]["note_id"] for c in top_ids}))
+    ranked = sorted(top_ids, key=lambda c: final_score[c], reverse=True)
+    # Exact-identifier lane: literal-token matches jump to the front, verbatim.
     exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
     for cid in exact_ids:
         final_score.setdefault(cid, 1.0)
-    if note_signals is not None:
-        _apply_note_signals(final_score, by_id, query,
-                            note_signals({by_id[c]["note_id"] for c in final_score}))
-    ranked = sorted(top_ids, key=lambda c: final_score.get(c, 0), reverse=True)
-    ranked = _prepend_unique(sorted(exact_ids, key=lambda c: final_score.get(c, 0), reverse=True), ranked)[:limit]
+    ranked = _prepend_unique(exact_ids, ranked)[:limit]
 
     final = [RetrievedChunk(cid, by_id[cid]["note_id"], by_id[cid]["text"],
                             by_id[cid]["heading_path"], final_score[cid],

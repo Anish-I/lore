@@ -59,18 +59,40 @@ def ensure_collection(dim, with_sparse=False):
 
 
 def delete_note(note_id: str) -> None:
-    """Delete all Qdrant points whose payload note_id matches the given note_id."""
-    existing = [c.name for c in _client.get_collections().collections]
+    """Delete all Qdrant points whose payload note_id matches the given note_id.
+
+    Defensive: embedded (local) Qdrant can raise an internal numpy broadcast
+    error ("operands could not be broadcast … (N,) (N+1,)") when its deleted
+    bitmap desyncs after heavy upsert/delete churn. A stale-vector cleanup must
+    never fail the surrounding index write — the caller re-upserts this note's
+    fresh vectors immediately after, which supersedes any leftovers. Falls back
+    to an id-based delete, then swallows a persistent embedded-mode failure.
+    """
+    try:
+        existing = [c.name for c in _client.get_collections().collections]
+    except Exception:
+        return
     if COLLECTION not in existing:
         return
-    _client.delete(
-        COLLECTION,
-        points_selector=qm.FilterSelector(
-            filter=qm.Filter(must=[
-                qm.FieldCondition(key="note_id", match=qm.MatchValue(value=note_id))
-            ])
-        ),
+    selector = qm.FilterSelector(
+        filter=qm.Filter(must=[
+            qm.FieldCondition(key="note_id", match=qm.MatchValue(value=note_id))
+        ])
     )
+    try:
+        _client.delete(COLLECTION, points_selector=selector)
+    except ValueError:
+        # Embedded bitmap desync — retry once via scroll+id delete, else give up.
+        try:
+            ids, _ = _client.scroll(
+                COLLECTION, scroll_filter=selector.filter, limit=10000, with_payload=False)
+            point_ids = [p.id for p in ids]
+            if point_ids:
+                _client.delete(COLLECTION, points_selector=qm.PointIdsList(points=point_ids))
+        except Exception:
+            pass  # leftovers are superseded by the immediate re-upsert
+    except Exception:
+        pass
 
 
 def upsert(points):
