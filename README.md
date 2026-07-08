@@ -70,7 +70,7 @@ Everything ships self-contained — no Python, no database, no API keys required
 
 **For teams & IT (simplicity, Okta/AD, the security story):** [docs/ENTERPRISE.md](docs/ENTERPRISE.md)
 
-**Pipeline:** hybrid dense + BM25 → RRF → 1-hop graph expand → cross-encoder rerank → cited answer.
+**Pipeline:** hybrid dense + BM25 → RRF → cross-encoder rerank → graph, recency &amp; feedback ranking signals → cited answer. *(The graph informs ranking — note importance via in-degree, entity-title matches — it is not a candidate-expansion hop.)*
 **Models:** BGE-small-en-v1.5 (dense) · Qdrant/bm25 (sparse) · ms-marco-MiniLM-L-6-v2 (rerank) · Ollama (answers).
 
 ## 🚀 Quick start
