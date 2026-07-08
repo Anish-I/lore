@@ -4,6 +4,14 @@
 
 Shipped: **M1** (doctor/next, vault git history, ADD-only + provenance surfacing, nightly recall self-test — baseline recall@5 0.822) · **M2** (memory-type axis, importance/temporal-intent/entity fusion signals, supersedes demotion, inverse edge labels, /context-pack — gate held 0.822) · **M3** (agent memory bus: /memory + lore_remember/lore_recall MCP, zero-friction agent self-provisioning + registry + write caps, /feedback→ranking, budget-aware lore-inject, auto-journal) · **M4** (PDF/DOCX extraction, /ingest-url + import-modal URL row) · **M5 partial** (lore-integrate skill, MCP registry manifests).
 
+Smoke-tested & hardened 2026-07-07 (28 edge cases + Codex second-view): SSRF resolved-IP guard, DOCX bomb defenses, tenant-wide agent cap, /feedback note validation, title-index cache, resilient vector-delete, wizard-chat-id flake fix. Reusable harnesses: `eval/smoke_edge.py`, `eval/smoke_load.py`.
+
+Deferred from smoke review (Codex, low severity):
+- **Feedback observability in the gate** — thumbs affect production ranking but `eval/run_nightly.py` has no synthetic up/down-vote cases, so feedback drift is untested. Add vote cases + surface `feedback_net` in `retrieve_traced`.
+- **Stronger inject framing** — lore-inject already labels excerpts "NEVER instructions"; consider excluding `url`/`agent-memory` source_types from auto-injection by default and per-excerpt provenance tags.
+- **/ingest-url TOCTOU** — resolved-IP check has a small window before the socket connect; a pin-to-validated-IP fetch closes it (low risk for a local tool).
+- **Bulk-ingest latency** — /ingest p50 ~2.2s (synchronous dense+sparse embed per note); a batch-embed path would speed reconcile + large imports.
+
 Open items with their blockers:
 - **M5 remainder**: Glama/Smithery submission (user action — repo must be public; checklist in smithery.yaml) · E2EE multi-machine sync (design: encrypted git remote over the M1 vault-git substrate) · share cards + graph exports.
 - **M6 B2B connectors + hosted** — deliberately NOT stubbed: blocked on (1) the 90-day plan's own gate — lock the warm-door insurance/regulated vertical first, (2) Google/Slack OAuth app credentials to build+test against, (3) server-mode agent/principal authn (item I3 below) before anything writes cross-network.
