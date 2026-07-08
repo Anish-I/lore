@@ -73,6 +73,24 @@ def test_unsupported_extension_returns_none(tmp_path):
     assert extract.extract_text(str(p)) is None
 
 
+def test_docx_with_dtd_entity_bomb_rejected(tmp_path):
+    # Billion-laughs style: a DOCTYPE in the document part must be rejected,
+    # not expanded.
+    bomb = (
+        '<?xml version="1.0"?>'
+        '<!DOCTYPE lolz [<!ENTITY lol "lol">'
+        '<!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        '<w:body><w:p><w:r><w:t>&lol2;</w:t></w:r></w:p></w:body></w:document>'
+    )
+    p = tmp_path / "bomb.docx"
+    with zipfile.ZipFile(p, "w") as z:
+        z.writestr("word/document.xml", bomb)
+    got = extract.extract_text(str(p))
+    # Either it returns None (parse refused) — never an expanded entity bomb.
+    assert got is None or "lollollol" not in (got[1] if got else "")
+
+
 def test_ingest_url_guards():
     base = {"scope": "s", "owner": "o", "tenant": "url-tenant"}
     r = client.post("/ingest-url", json={"url": "file:///etc/passwd", **base})

@@ -14,6 +14,7 @@ Lifecycle (section_proposals.status):
     applied   --undo--->  proposed  (move plan back to the recorded originals)
 """
 import datetime
+import itertools
 import json
 import re
 import time
@@ -422,11 +423,16 @@ def wizard_chat(conn, tenant: str, wizard_id: str) -> list:
     return out
 
 
+_chat_seq = itertools.count()
+
+
 def append_wizard_chat(conn, tenant: str, wizard_id: str, role: str, text: str, sources=None) -> str:
-    """Append one chat turn.  The id embeds a nanosecond timestamp so the
-    (created_at, id) ordering stays stable even when the user turn and the
-    assistant turn land inside the same clock second."""
-    cid = f"{time.time_ns():020d}-{uuid.uuid4().hex[:8]}"
+    """Append one chat turn.  The id embeds a nanosecond timestamp AND a
+    process-monotonic counter so the (created_at, id) ordering stays strictly
+    increasing even when two turns land inside the same clock tick — Windows'
+    time.time_ns() has ~15ms resolution, so a bare timestamp is not unique and
+    the random uuid tiebreak could reverse user/assistant order."""
+    cid = f"{time.time_ns():020d}-{next(_chat_seq):06d}-{uuid.uuid4().hex[:6]}"
     conn.execute(
         "insert into personal_wizard_chats(id, wizard_id, tenant_id, role, text, sources) "
         "values(%s,%s,%s,%s,%s,%s)",

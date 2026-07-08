@@ -96,6 +96,9 @@ def test_feedback_feeds_ranking_signals(conn):
         "text": "# Feedback Note\n\nA note that the user finds consistently useful in answers.\n",
         "scope": "s", "owner": "o", "tenant": TENANT,
     })
+    # A vote on a note that doesn't exist in the tenant is refused.
+    assert client.post("/feedback", json={
+        "tenant": TENANT, "note_id": "no-such-note", "vote": 1}).status_code == 404
     for _ in range(3):
         assert client.post("/feedback", json={
             "tenant": TENANT, "note_id": "fb-note", "vote": 1}).status_code == 200

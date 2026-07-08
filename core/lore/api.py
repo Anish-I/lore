@@ -449,17 +449,39 @@ def _citations_for(hits_or_rows):
     return out
 
 
+# Title-index cache: build_title_index compiles one regex per note title over
+# ALL titles in the tenant — too expensive to rebuild on every /search. Cache
+# per tenant with a short TTL + note-count signature so new notes still land in
+# the entity lane within the TTL (or immediately when the count changes).
+_TITLE_INDEX_CACHE: dict = {}
+_TITLE_INDEX_TTL = 60.0  # seconds
+
+
+def _title_index_cached(tenant: str):
+    from . import relations as _relations
+    now = time.time()
+    try:
+        count = _conn.execute(
+            "select count(*) from notes where tenant_id=%s", (tenant,)).fetchone()[0]
+    except Exception:
+        count = -1
+    hit = _TITLE_INDEX_CACHE.get(tenant)
+    if hit and hit["count"] == count and (now - hit["t"]) < _TITLE_INDEX_TTL:
+        return hit["index"]
+    index = _relations.build_title_index(_conn, tenant)
+    _TITLE_INDEX_CACHE[tenant] = {"index": index, "count": count, "t": now}
+    return index
+
+
 def _note_signals_provider(tenant: str, query: str):
     """Callable handed to recall.retrieve — resolves note-level ranking signals
     (importance, age, memory type, superseded, entity match) for the candidate
     set in two cheap queries. The entity lane matches DISTINCTIVE note titles
-    named in the query (relations.build_title_index) and boosts their chunks."""
-    from . import relations as _relations
-
+    named in the query (cached title index) and boosts their chunks."""
     # Query-side entity detection happens once per request, not per candidate.
     entity_ids: set = set()
     try:
-        for _title, nid, pat in _relations.build_title_index(_conn, tenant):
+        for _title, nid, pat in _title_index_cached(tenant):
             if pat.search(query or ""):
                 entity_ids.add(nid)
     except Exception:
@@ -1016,16 +1038,42 @@ class IngestUrlReq(BaseModel):
     tenant: str
 
 
-_PRIVATE_HOST_RE = __import__("re").compile(
-    r"^(localhost|127\.|0\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)", __import__("re").I)
+def _host_is_private(hostname: str) -> bool:
+    """True if the host resolves to any non-public address — closes decimal/
+    octal/hex IP encodings, IPv6, and DNS-rebinding that a hostname-regex misses,
+    by resolving and inspecting every returned address. (A TOCTOU window remains
+    between this check and the fetch; acceptable for a local, token-gated tool.)"""
+    import ipaddress
+    import socket
+    if not hostname:
+        return True
+    # A literal IP in any encoding (2130706433, 0x7f.1, [::1]) parses here.
+    try:
+        ip = ipaddress.ip_address(hostname.strip("[]"))
+        return not ip.is_global
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except Exception:
+        return True  # unresolvable → refuse
+    for _f, _t, _p, _c, sockaddr in infos:
+        try:
+            ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            return True
+        if not ip.is_global:
+            return True
+    return False
 
 
 @app.post("/ingest-url")
 def ingest_url(req: IngestUrlReq, authorization: Optional[str] = Header(default=None)):
     """Fetch a web page and index its readable text as a note (source_type='url').
 
-    Guards: http/https only, private/loopback hosts refused (SSRF hygiene),
-    2 MB cap, 15 s timeout. Extraction: bs4 — drops script/style/nav chrome,
+    Guards: http/https only, non-public hosts refused via resolved-IP check
+    (SSRF hygiene — decimal/hex/IPv6/DNS-rebinding), 2 MB cap, 15 s timeout,
+    server-side redaction. Extraction: bs4 — drops script/style/nav chrome,
     prefers <article>/<main>, falls back to body paragraphs.
     """
     owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant)
@@ -1034,12 +1082,21 @@ def ingest_url(req: IngestUrlReq, authorization: Optional[str] = Header(default=
     parsed = _up.urlparse(req.url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(422, "only http(s) URLs are supported")
-    if not parsed.hostname or _PRIVATE_HOST_RE.match(parsed.hostname):
-        raise HTTPException(422, "private/loopback hosts are not fetchable")
+    if _host_is_private(parsed.hostname or ""):
+        raise HTTPException(422, "private/loopback/unresolvable hosts are not fetchable")
     try:
-        r = _ur.urlopen(_ur.Request(req.url, headers={"User-Agent": "Lore/1.0 (+local knowledge OS)"}),
+        # No-redirect opener: a 30x to a private host would bypass the pre-check.
+        class _NoRedirect(_ur.HTTPRedirectHandler):
+            def redirect_request(self, *a, **k):
+                return None
+        opener = _ur.build_opener(_NoRedirect)
+        r = opener.open(_ur.Request(req.url, headers={"User-Agent": "Lore/1.0 (+local knowledge OS)"}),
                         timeout=15)
         raw = r.read(2 * 1024 * 1024)
+    except _ur.HTTPError as e:
+        if e.code in (301, 302, 303, 307, 308):
+            raise HTTPException(422, "redirects are not followed (SSRF guard)")
+        raise HTTPException(502, f"fetch failed: HTTP {e.code}")
     except Exception as e:
         raise HTTPException(502, f"fetch failed: {e}")
     try:
@@ -1056,6 +1113,9 @@ def ingest_url(req: IngestUrlReq, authorization: Optional[str] = Header(default=
         raise HTTPException(422, f"could not extract readable text: {e}")
     if len(text) < 80:
         raise HTTPException(422, "page had no readable text worth indexing")
+    # Redact server-side, same as /memory and /capture — a fetched page can
+    # carry a leaked key/token in its body.
+    text = redact(text)
     title = title or parsed.hostname
     body = f"# {title}\n\nSource: {req.url}\n\n{text[:200_000]}\n"
     note_id = "url:" + hashlib.sha1(req.url.encode()).hexdigest()[:16]
@@ -1076,6 +1136,9 @@ def ingest_url(req: IngestUrlReq, authorization: Optional[str] = Header(default=
 # existing scope ACL; the local token still gates the port.
 _AGENT_NAME_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 _AGENT_WRITE_CAP = int(os.environ.get("LORE_AGENT_WRITE_CAP", "120"))  # writes/hour/agent
+# Tenant-wide cap across ALL agents — closes the name-rotation bypass where a
+# runaway process cycles agent names to dodge the per-agent cap.
+_AGENT_WRITE_CAP_TENANT = int(os.environ.get("LORE_AGENT_WRITE_CAP_TENANT", "600"))
 
 
 class MemoryReq(BaseModel):
@@ -1104,7 +1167,8 @@ def memory_write(req: MemoryReq, authorization: Optional[str] = Header(default=N
     tenant = req.tenant
     scope = f"agent:{agent}"
 
-    # Write cap: runaway loops can't flood the store.
+    # Write caps: per-agent AND tenant-wide (the latter can't be dodged by
+    # cycling agent names). Both count the last hour of agent-memory writes.
     cutoff = (datetime.datetime.now(datetime.timezone.utc)
               - datetime.timedelta(hours=1)).isoformat(sep=" ")
     recent = _conn.execute(
@@ -1112,6 +1176,11 @@ def memory_write(req: MemoryReq, authorization: Optional[str] = Header(default=N
         (tenant, scope, cutoff)).fetchone()[0]
     if recent >= _AGENT_WRITE_CAP:
         raise HTTPException(429, f"agent write cap reached ({_AGENT_WRITE_CAP}/hour)")
+    tenant_recent = _conn.execute(
+        "select count(*) from notes where tenant_id=%s and source_type='agent-memory' and updated_at > %s",
+        (tenant, cutoff)).fetchone()[0]
+    if tenant_recent >= _AGENT_WRITE_CAP_TENANT:
+        raise HTTPException(429, f"tenant agent-memory write cap reached ({_AGENT_WRITE_CAP_TENANT}/hour)")
 
     # Self-provision / bump the agent registry row.
     _conn.execute(
@@ -1165,7 +1234,16 @@ class FeedbackReq(BaseModel):
 @app.post("/feedback")
 def feedback(req: FeedbackReq):
     """Thumbs on an answer's citation — feeds the personal ranking layer
-    (net votes per note become a bounded recall boost/demotion)."""
+    (net votes per note become a bounded recall boost/demotion).
+
+    The note must exist in the tenant — refuses votes on arbitrary ids so a
+    caller can't seed ranking rows for notes it never retrieved. (feedback_net
+    only ever affects ranking within a scoped retrieval, so a stray vote could
+    not cross the ACL anyway, but validating keeps the table clean.)"""
+    exists = _conn.execute(
+        "select 1 from notes where id=%s and tenant_id=%s", (req.note_id, req.tenant)).fetchone()
+    if not exists:
+        raise HTTPException(404, "note not found in this tenant")
     vote = 1 if req.vote > 0 else -1
     _conn.execute(
         "insert into feedback(tenant_id, note_id, vote, query_hash) values(%s,%s,%s,%s)",
