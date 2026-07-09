@@ -266,7 +266,7 @@ function SectionRail({ sections, allCount, active, onSelect, place, theme }) {
       padding: '14px 8px 10px',
     }}>
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <RailRow icon="layout-grid" label="All pages" count={allCount}
+        <RailRow icon="house" label="Home" count={allCount}
           active={!active || active === 'all'} onClick={() => onSelect('all')} />
         {(sections || []).map((s) => (
           <RailRow key={s.name} chipColor={window.LoreSectionColor ? window.LoreSectionColor(s.name, theme) : null}

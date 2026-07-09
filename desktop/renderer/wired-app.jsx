@@ -280,6 +280,10 @@ function progressCountText(p) {
 function App() {
   const [theme, setTheme] = React.useState('dark');
   const [view, setView] = React.useState('workspace');   // hybrid shell boots into the place grid
+  // The Map is a workspace-only overlay (mapOpen). Leaving the workspace (Wizards,
+  // Settings, Hooks, Projects…) must close it — otherwise it stays open, stays
+  // highlighted in the ribbon, AND covers the view you navigated to.
+  React.useEffect(() => { if (view !== 'workspace') setMapOpen(false); }, [view]);
   const [askOpen, setAskOpen] = React.useState(false);
   const [askSource, setAskSource] = React.useState('all');
   const [searchOpen, setSearchOpen] = React.useState(false);
@@ -1464,8 +1468,8 @@ function App() {
         canMove={Boolean(activeNote)}
         onNewPage={onCreateNote} onAddFiles={onImport}
         onToggleAsk={() => setAskOpen((o) => !o)}
-        onMap={() => setMapOpen((o) => !o)}
-        onWizards={() => setView(view === 'wizards' ? 'workspace' : 'wizards')}
+        onMap={() => { setView('workspace'); setMapOpen((o) => !o); }}
+        onWizards={() => { setMapOpen(false); setView(view === 'wizards' ? 'workspace' : 'wizards'); }}
         onMove={() => setMoveOpen(true)} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         <LoreErrorBoundary key={view}>

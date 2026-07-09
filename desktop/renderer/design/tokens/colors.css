@@ -182,31 +182,35 @@
 [data-theme="paper"] {
   color-scheme: light;
 
-  --surface-sunken:    var(--paper-200);
-  --surface-canvas:    var(--paper-100);
-  --surface-base:      var(--paper-50);
-  --surface-panel:     #ffffff;
-  --surface-raised:    #ffffff;
-  --surface-overlay:   #ffffff;
-  --surface-inset:     var(--paper-100);
-  --surface-hover:     rgba(33,31,25,0.04);
-  --surface-active:    rgba(33,31,25,0.07);
-  --surface-selected:  rgba(217,154,43,0.16);
+  /* Softened light theme: no pure #ffffff (it glared against the warm canvas
+     and read as "too bright"). Backdrop steps down to a gentle warm gray; cards
+     are a warm near-white a notch above it, so surfaces read by contrast, not by
+     blinding brightness. Secondary text darkened a step for readability. */
+  --surface-sunken:    var(--paper-300);
+  --surface-canvas:    var(--paper-200);
+  --surface-base:      var(--paper-100);
+  --surface-panel:     var(--paper-50);
+  --surface-raised:    var(--paper-50);
+  --surface-overlay:   var(--paper-50);
+  --surface-inset:     var(--paper-200);
+  --surface-hover:     rgba(33,31,25,0.05);
+  --surface-active:    rgba(33,31,25,0.08);
+  --surface-selected:  rgba(217,154,43,0.18);
 
-  --text-strong:   #1a1814;
+  --text-strong:   #17150f;
   --text-primary:  var(--paper-900);
   --text-body:     var(--paper-800);
-  --text-muted:    var(--paper-600);
-  --text-subtle:   var(--paper-500);
-  --text-faint:    var(--paper-400);
+  --text-muted:    var(--paper-700);
+  --text-subtle:   var(--paper-600);
+  --text-faint:    var(--paper-500);
   --text-onbrand:  #1c1408;
   --text-inverse:  var(--paper-50);
   --text-link:     var(--amber-700);
   --text-link-hover: var(--amber-800);
 
-  --border-subtle: rgba(33,31,25,0.07);
-  --border:        rgba(33,31,25,0.12);
-  --border-strong: rgba(33,31,25,0.20);
+  --border-subtle: rgba(33,31,25,0.09);
+  --border:        rgba(33,31,25,0.15);
+  --border-strong: rgba(33,31,25,0.24);
   --border-field:  var(--paper-300);
   --divider:       rgba(33,31,25,0.09);
 

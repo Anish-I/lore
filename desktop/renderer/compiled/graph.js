@@ -61,6 +61,7 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
   const dragRef = React.useRef(null);
   const drawRef = React.useRef(null);
   const selRef = React.useRef(null);
+  const prevCountRef = React.useRef(null); // node count last time the sim rebuilt — a change means a filter, not a live refresh
 
   // Content signature: the heavy simulation effect below rebuilds only when the
   // actual node/edge SET changes, not on every new `graph` object reference — so
@@ -372,13 +373,19 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
     const mo = new MutationObserver(() => {readPalette();render();});
     mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
-    // Auto-fit ONLY on first entry: fitting at 420ms mid-simulation zoomed to a
-    // still-moving cluster then visibly bounced out; and re-fitting on every
-    // live data refresh yanked the viewport away from wherever the user had
-    // panned. 900ms lets the layout mostly settle first. (This used to check
-    // tRef.current AFTER assigning zoomIdentity above — always truthy, so the
-    // first fit never ran and the Map opened at 1:1 in a corner.)
-    const fitTimer = firstEntry ? setTimeout(fitView, 900) : null;
+    // Auto-fit on first entry AND whenever the node SET changes (a Section pill
+    // toggle filters the graph to a subset that re-lays-out around the origin —
+    // without a re-fit the camera stays framed on the OLD full graph, so the
+    // filtered subset renders off-screen/at the wrong zoom and reads as "glitchy,
+    // zoomed-in, nodes not showing"). A pure live refresh (same node count, e.g.
+    // a scope Move that only recolors) does NOT re-fit, so the viewport isn't
+    // yanked from wherever the user panned. 900ms on first entry lets the layout
+    // settle; 650ms is enough for a filtered subset to mostly settle.
+    const nodeCount = nodes.length;
+    const setChanged = prevCountRef.current !== null && prevCountRef.current !== nodeCount;
+    prevCountRef.current = nodeCount;
+    const shouldFit = firstEntry || setChanged;
+    const fitTimer = shouldFit ? setTimeout(fitView, firstEntry ? 900 : 650) : null;
 
     return () => {
       if (fitTimer) clearTimeout(fitTimer);
