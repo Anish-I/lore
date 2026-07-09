@@ -456,6 +456,7 @@ function scheduleAutocommit() {
 }
 
 function maybeAutoIndex(event, p) {
+  if (event === 'unlink') { maybeDeindex(p); return; }
   if (event !== 'add' && event !== 'change') return;
   scheduleBackup();  // any file change also refreshes the backup (debounced)
   scheduleAutocommit(); // and a vault-git snapshot (debounced, .md only)
@@ -469,6 +470,22 @@ function maybeAutoIndex(event, p) {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ path: p, owner_id: cfg.owner, scope_id: cfg.scope, tenant_id: cfg.tenant }),
+  }).catch(() => { /* fail soft — backend may be down */ });
+}
+
+// A file deleted (or renamed — chokidar reports rename as unlink+add) from a
+// watched vault stays orphaned in Postgres/Qdrant forever unless de-indexed:
+// the note keeps surfacing in search/Ask results for content that no longer
+// exists on disk. /forget already implements exactly this delete+cascade
+// (same pattern /capture's privacy purge uses) — this just wires it to unlink.
+function maybeDeindex(p) {
+  const cfg = loadConfig() || {};
+  if (cfg.autoIndexOnSave === false) return; // same automation gate as indexing
+  if (!cfg.tenant) return; // identity not configured yet
+  fetch(`${BACKEND_URL()}/forget`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ tenant: cfg.tenant, path_prefix: p }),
   }).catch(() => { /* fail soft — backend may be down */ });
 }
 
