@@ -20,6 +20,17 @@ const { execFileSync } = require('child_process');
 // checkout) .venv/ at the repo root.
 const CORE_DIR = path.join(__dirname, '..', 'core');
 
+// Packaged builds ship no `core/` source and no Python — only the PyInstaller
+// `lore-backend` binary in the app's Resources (see mcp-installer.js, which does
+// the same for MCP). When that binary is present, the CLI wrapper must call
+// `lore-backend cli …` instead of `python -m lore.cli` (whose PYTHONPATH would
+// point at a non-existent core/). Returns the absolute path or null in dev.
+function frozenBackend() {
+  const exeName = process.platform === 'win32' ? 'lore-backend.exe' : 'lore-backend';
+  const p = process.resourcesPath ? path.join(process.resourcesPath, 'lore-backend', exeName) : null;
+  return (p && fs.existsSync(p)) ? p : null;
+}
+
 function venvLoreScript() {
   const p = process.platform === 'win32'
     ? path.join(__dirname, '..', '.venv', 'Scripts', 'lore.exe')
@@ -77,18 +88,35 @@ function resolvePython() {
 }
 
 function wrapperBody() {
+  const frozen = frozenBackend();
   if (process.platform === 'win32') {
+    if (frozen) {
+      return [
+        '@echo off',
+        'rem Lore CLI launcher (packaged) — runs the frozen backend in cli mode.',
+        `"${frozen}" cli %*`,
+        '',
+      ].join('\r\n');
+    }
     return [
       '@echo off',
-      'rem Lore CLI launcher (installed by Lore desktop). lore.cli is stdlib-only.',
+      'rem Lore CLI launcher (dev). lore.cli is stdlib-only.',
       `set "PYTHONPATH=${CORE_DIR};%PYTHONPATH%"`,
       `"${resolvePython()}" -m lore.cli %*`,
       '',
     ].join('\r\n');
   }
+  if (frozen) {
+    return [
+      '#!/bin/sh',
+      '# Lore CLI launcher (packaged) — runs the frozen backend in cli mode.',
+      `exec "${frozen}" cli "$@"`,
+      '',
+    ].join('\n');
+  }
   return [
     '#!/bin/sh',
-    '# Lore CLI launcher (installed by Lore desktop). lore.cli is stdlib-only,',
+    '# Lore CLI launcher (dev). lore.cli is stdlib-only,',
     '# so any python3 works; PYTHONPATH points at the Lore source tree.',
     `export PYTHONPATH="${CORE_DIR}\${PYTHONPATH:+:$PYTHONPATH}"`,
     `exec "${resolvePython()}" -m lore.cli "$@"`,

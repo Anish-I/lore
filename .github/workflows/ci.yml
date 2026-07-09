@@ -119,6 +119,17 @@ jobs:
       - name: vitest
         working-directory: desktop
         run: npm test
+      # Standalone installer flow tests — exercise the full install wrappers that
+      # vitest's unit tests don't, and each exits non-zero on failure. Run in an
+      # isolated HOME so they can't touch the runner. (MCP resolution is already
+      # covered by vitest packaged-paths.test.js; its Codex-TOML flow test stays
+      # a manual check for now.)
+      - name: Installer flow tests
+        working-directory: desktop
+        run: |
+          export HOME="$(mktemp -d)"
+          node test-cli-installer.js
+          node test-hooks-installer.js
 
   desktop-parse:
     name: Renderer JSX parse (Babel)
