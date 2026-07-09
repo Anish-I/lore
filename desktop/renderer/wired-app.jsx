@@ -3,6 +3,24 @@
 // + multi-tab editor (notes & buckets), quick-switcher search, Ask source scopes.
 const M = window.LoreMock;
 
+// Consistent back bar for every non-workspace view (Settings, Hooks, Team). The
+// page view and Wizards have their own inline back affordances; this covers the
+// rest so there is always a way home.
+function BackBar({ label, onBack }) {
+  const D = window.VaultDesignSystem_ffbf58;
+  const [hover, setHover] = React.useState(false);
+  return (
+    <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', borderBottom: '1px solid var(--border-subtle)', background: 'var(--surface-panel)' }}>
+      <button onClick={onBack}
+        onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid var(--border)', cursor: 'pointer', background: hover ? 'var(--surface-hover)' : 'transparent', color: hover ? 'var(--text-strong)' : 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: 500 }}>
+        <D.Icon name="arrow-left" size={14} />
+        Back to {label || 'your pages'}
+      </button>
+    </div>
+  );
+}
+
 function toggleFolder(tree, id) {
   return tree.map((n) => n.id === id ? { ...n, open: !n.open }
     : (n.children ? { ...n, children: toggleFolder(n.children, id) } : n));
@@ -328,6 +346,7 @@ function App() {
   const [toast, setToast] = React.useState(null);          // bottom-center toast message
   const [moveOpen, setMoveOpen] = React.useState(false);   // "Move…" place dialog
   const [mapOpen, setMapOpen] = React.useState(false);     // full-screen knowledge map overlay
+  const [refreshing, setRefreshing] = React.useState(false); // ribbon "Refresh" (upkeep re-scan) in flight
   const [authUser, setAuthUser] = React.useState(null);    // {user_id, email, scopes} | null — avatar menu
   const [askCtx, setAskCtx] = React.useState(null);        // {id, title} — "About: {page}" chat context chip
   const [noteMeta, setNoteMeta] = React.useState({});      // id -> {snippet} card-snippet cache
@@ -1466,6 +1485,17 @@ function App() {
         onSignIn={signIn} onSignOut={signOut} />
       <Ribbon place={place} askOpen={askOpen} mapOpen={mapOpen} wizardsOpen={view === 'wizards'}
         canMove={Boolean(activeNote)}
+        onHome={() => { setMapOpen(false); setView('workspace'); setActiveId(null); setKbFilter([]); }}
+        onSearch={() => setSearchOpen(true)}
+        onSettings={() => setView('settings')}
+        onRefresh={async () => {
+          if (refreshing || !window.lore?.upkeep?.run) return;
+          setRefreshing(true);
+          try { await window.lore.upkeep.run({}); flash('Library refreshed.'); }
+          catch { flash('Refresh failed — is the backend running?'); }
+          finally { setRefreshing(false); }
+        }}
+        refreshing={refreshing}
         onNewPage={onCreateNote} onAddFiles={onImport}
         onToggleAsk={() => setAskOpen((o) => !o)}
         onMap={() => { setView('workspace'); setMapOpen((o) => !o); }}
@@ -1481,7 +1511,10 @@ function App() {
               <React.Fragment>
                 {!(place === 'team' && !inTeam && placeCounts.team === 0) && (
                   <SectionRail sections={railSections} allCount={placeCounts[place]}
-                    active={railActive} onSelect={onRailSelect} place={place} theme={theme} />
+                    active={railActive} onSelect={onRailSelect} place={place} theme={theme}
+                    view={view} wizardCount={wizardIds.size}
+                    onPages={() => { setMapOpen(false); setView('workspace'); }}
+                    onWizards={() => { setMapOpen(false); setView('wizards'); }} />
                 )}
                 {activeBucket ? (
                   <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} hideTabs onOpen={() => setAskOpen(true)} />
@@ -1550,22 +1583,43 @@ function App() {
         )}
 
         {view === 'projects' && (
-          <React.Fragment>
-            <TeamsView config={appConfig} onConfig={setAppConfig} buckets={M.buckets} onOpenWizard={(b) => openBucket(b)}
-              pendingInvites={pendingInvites} inviteBusy={inviteBusy} onAcceptInvite={acceptInvite} onRefreshInvites={refreshInvites} />
-            {askOpen && askPanel}
-          </React.Fragment>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <BackBar label={(window.LorePlaceMeta[place] || {}).label} onBack={() => setView('workspace')} />
+            <div style={{ flex: 1, display: 'flex', minWidth: 0, minHeight: 0 }}>
+              <TeamsView config={appConfig} onConfig={setAppConfig} buckets={M.buckets} onOpenWizard={(b) => openBucket(b)}
+                pendingInvites={pendingInvites} inviteBusy={inviteBusy} onAcceptInvite={acceptInvite} onRefreshInvites={refreshInvites} />
+              {askOpen && askPanel}
+            </div>
+          </div>
         )}
         {view === 'wizards' && window.LoreWizardsView && (
           <React.Fragment>
+            {!(place === 'team' && !inTeam && placeCounts.team === 0) && (
+              <SectionRail sections={railSections} allCount={placeCounts[place]}
+                active={railActive} onSelect={onRailSelect} place={place} theme={theme}
+                view={view} wizardCount={wizardIds.size}
+                onPages={() => { setMapOpen(false); setView('workspace'); }}
+                onWizards={() => { setMapOpen(false); setView('wizards'); }} />
+            )}
             <window.LoreWizardsView onBack={() => setView('workspace')}
               backLabel={(window.LorePlaceMeta[place] || {}).label}
+              place={place} teamName={(appConfig && appConfig.team && appConfig.team.name) || null}
               scopes={persona.scopes} onChanged={reloadAfterImport} />
             {askOpen && askPanel}
           </React.Fragment>
         )}
-        {view === 'settings' && <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onConfig={setAppConfig} onOpenSetup={() => setShowOnboarding(true)} />}
-        {view === 'hooks' && advancedMode && HooksView && <HooksView scopeOptions={scopeOptions} identityReady={identityReady} tenant={tenant} scope={persona.scopes && persona.scopes[0]} onOpenSetup={() => setShowOnboarding(true)} />}
+        {view === 'settings' && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <BackBar label={(window.LorePlaceMeta[place] || {}).label} onBack={() => setView('workspace')} />
+            <SettingsView settings={M.settings} config={appConfig} scopeOptions={scopeOptions} onConfig={setAppConfig} onOpenSetup={() => setShowOnboarding(true)} />
+          </div>
+        )}
+        {view === 'hooks' && advancedMode && HooksView && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <BackBar label={(window.LorePlaceMeta[place] || {}).label} onBack={() => setView('workspace')} />
+            <HooksView scopeOptions={scopeOptions} identityReady={identityReady} tenant={tenant} scope={persona.scopes && persona.scopes[0]} onOpenSetup={() => setShowOnboarding(true)} />
+          </div>
+        )}
         </LoreErrorBoundary>
 
         {searchOpen && <SearchPalette notes={allNotes} onPick={openNote} onClose={() => setSearchOpen(false)} />}

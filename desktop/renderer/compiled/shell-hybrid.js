@@ -193,8 +193,9 @@ function RibbonTile({ icon, label, onClick, active, disabled, activeColor, title
 
 }
 
-// Office-style ribbon: Create | Understand | Share groups + contextual place hint.
-function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onNewPage, onAddFiles, onToggleAsk, onMap, onWizards, onMove }) {
+// Office-style ribbon: Go | Create | Understand | Share groups + contextual place hint.
+function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onHome, onSearch, onSettings, onRefresh, refreshing,
+  onNewPage, onAddFiles, onToggleAsk, onMap, onWizards, onMove }) {
   const meta = sh2Places[place] || sh2Places.my;
   const group = (caption, tiles, last) => /*#__PURE__*/
   React.createElement("div", { style: {
@@ -210,6 +211,10 @@ function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onNewPage, onAd
         flexShrink: 0, display: 'flex', alignItems: 'center', padding: '8px 16px',
         background: 'var(--surface-panel)', borderBottom: '1px solid var(--border-subtle)'
       } },
+    group('Go', [/*#__PURE__*/
+    React.createElement(RibbonTile, { key: "home", icon: "house", label: "Home", onClick: onHome, title: "Back to your pages" }), /*#__PURE__*/
+    React.createElement(RibbonTile, { key: "search", icon: "search", label: "Search", onClick: onSearch, title: "Search pages (Ctrl/\u2318K)" })]
+    ),
     group('Create', [/*#__PURE__*/
     React.createElement(RibbonTile, { key: "new", icon: "file-plus-2", label: "New page", onClick: onNewPage }), /*#__PURE__*/
     React.createElement(RibbonTile, { key: "add", icon: "upload", label: "Add files", onClick: onAddFiles })]
@@ -221,7 +226,12 @@ function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onNewPage, onAd
     ),
     group('Share', [/*#__PURE__*/
     React.createElement(RibbonTile, { key: "move", icon: "corner-up-right", label: "Move\u2026", onClick: onMove, disabled: !canMove,
-      title: canMove ? 'Move this page to another place' : 'Open a page first' })],
+      title: canMove ? 'Move this page to another place' : 'Open a page first' })]
+    ),
+    group('Library', [/*#__PURE__*/
+    React.createElement(RibbonTile, { key: "refresh", icon: "refresh-cw", label: refreshing ? 'Syncing…' : 'Refresh', onClick: onRefresh,
+      disabled: refreshing, title: "Re-scan your library for new/changed pages" }), /*#__PURE__*/
+    React.createElement(RibbonTile, { key: "set", icon: "settings", label: "Settings", onClick: onSettings, title: "Open settings" })],
     true), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2, minWidth: 0 } }, /*#__PURE__*/
@@ -256,22 +266,64 @@ function RailRow({ icon, chipColor, label, count, active, onClick }) {
 
 }
 
-// Left section rail — "All pages" + one row per top-level folder in this place.
-function SectionRail({ sections, allCount, active, onSelect, place, theme }) {
+// One of the two top-level sidebar tabs (Pages / Wizards). Greys out + blocks
+// clicks when disabled (e.g. Wizards with zero wizards).
+function SidebarTab({ icon, label, count, active, disabled, onClick }) {
+  const [hover, setHover] = React.useState(false);
+  return (/*#__PURE__*/
+    React.createElement("button", { onClick: disabled ? undefined : onClick, disabled: disabled,
+      title: disabled ? 'No wizards yet — create one to enable this' : label,
+      onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false),
+      style: {
+        flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        height: 32, borderRadius: 8, cursor: disabled ? 'default' : 'pointer',
+        border: `1px solid ${active ? 'var(--brand-soft-border)' : 'transparent'}`,
+        background: active ? 'var(--brand-soft-bg)' : hover && !disabled ? 'var(--surface-hover)' : 'transparent',
+        color: disabled ? 'var(--text-faint)' : active ? 'var(--brand-fg)' : 'var(--text-body)',
+        opacity: disabled ? 0.5 : 1,
+        fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: active ? 600 : 500
+      } }, /*#__PURE__*/
+    React.createElement(Sh2Icon, { name: icon, size: 14 }), /*#__PURE__*/
+    React.createElement("span", null, label),
+    count != null && count > 0 && /*#__PURE__*/
+    React.createElement("span", { style: { fontSize: 10.5, color: active ? 'var(--brand-fg)' : 'var(--text-faint)', background: 'rgba(127,127,127,0.16)', borderRadius: 999, padding: '0 6px' } }, count)
+
+    ));
+
+}
+
+// Left section rail — Pages/Wizards tabs on top, then (in Pages mode) "Home" +
+// one row per top-level folder in this place.
+function SectionRail({ sections, allCount, active, onSelect, place, theme, view, onPages, onWizards, wizardCount }) {
   const meta = sh2Places[place] || sh2Places.my;
+  const onWizardsView = view === 'wizards';
   return (/*#__PURE__*/
     React.createElement("div", { style: {
         width: 'var(--sections-width)', flexShrink: 0, display: 'flex', flexDirection: 'column',
         background: 'var(--surface-panel)', borderRight: '1px solid var(--border-subtle)',
         padding: '14px 8px 10px'
       } }, /*#__PURE__*/
-    React.createElement("div", { style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 } }, /*#__PURE__*/
+
+    React.createElement("div", { style: { display: 'flex', gap: 4, marginBottom: 10, padding: '0 2px' } }, /*#__PURE__*/
+    React.createElement(SidebarTab, { icon: "files", label: "Pages", active: !onWizardsView, onClick: onPages }), /*#__PURE__*/
+    React.createElement(SidebarTab, { icon: "wand-2", label: "Wizards", count: wizardCount, active: onWizardsView,
+      disabled: !wizardCount, onClick: onWizards })
+    ), /*#__PURE__*/
+    React.createElement("div", { style: { flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 } },
+    onWizardsView ? /*#__PURE__*/
+    React.createElement("div", { style: { padding: '4px 8px', fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 } },
+    wizardCount, " wizard", wizardCount === 1 ? '' : 's', ". Chat with a bundle of pages, or install more from the marketplace."
+    ) : /*#__PURE__*/
+
+    React.createElement(React.Fragment, null, /*#__PURE__*/
     React.createElement(RailRow, { icon: "house", label: "Home", count: allCount,
       active: !active || active === 'all', onClick: () => onSelect('all') }),
     (sections || []).map((s) => /*#__PURE__*/
     React.createElement(RailRow, { key: s.name, chipColor: window.LoreSectionColor ? window.LoreSectionColor(s.name, theme) : null,
       label: s.name, count: s.count, active: active === s.name, onClick: () => onSelect(s.name) })
     )
+    )
+
     ), /*#__PURE__*/
     React.createElement("div", { style: { padding: '10px 10px 2px', borderTop: '1px solid var(--divider)', display: 'flex', gap: 7, alignItems: 'flex-start' } }, /*#__PURE__*/
     React.createElement(Sh2Icon, { name: meta.icon, size: 12, style: { color: meta.fg, flexShrink: 0, marginTop: 1 } }), /*#__PURE__*/
