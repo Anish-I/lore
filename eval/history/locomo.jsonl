@@ -1,0 +1,2 @@
+{"benchmark": "LoCoMo-retrieval", "conversations": 1, "questions_scored": 15, "recall@1": 0.6667, "recall@5": 0.8, "recall@10": 0.8, "mrr": 0.7222, "p50_ms": 2592, "p95_ms": 2667, "notes_ingested": 419, "metric": "retrieval recall@k of gold evidence turn (not end-to-end QA F1)"}
+{"benchmark": "LoCoMo-retrieval", "conversations": 10, "questions_scored": 1982, "recall@1": 0.4783, "recall@5": 0.7149, "recall@10": 0.7775, "mrr": 0.5808, "p50_ms": 2902, "p95_ms": 3120, "notes_ingested": 5882, "metric": "retrieval recall@k of gold evidence turn (not end-to-end QA F1)"}

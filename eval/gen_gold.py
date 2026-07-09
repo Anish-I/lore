@@ -24,10 +24,27 @@ import sys
 import urllib.parse
 import urllib.request
 
+def _desktop_config() -> dict:
+    appdata = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
+    for app_name in ("lore-desktop", "Lore"):
+        try:
+            with open(os.path.join(appdata, app_name, "lore-config.json"), encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception:
+            continue
+    return {}
+
+
+# TENANT/SCOPES: explicit env var wins; else read the desktop app's own
+# config (whatever the user actually onboarded with); a hardcoded fallback
+# would silently drift from reality the moment someone changes their scope
+# (this bit a scheduled `run_nightly.py` job for weeks — see BACKLOG).
+_CFG = _desktop_config()
 PORT = os.environ.get("LORE_PORT", "8099")
 BASE = f"http://localhost:{PORT}"
-TENANT = os.environ.get("LORE_TENANT", "local")
-SCOPES = [s for s in os.environ.get("LORE_SCOPES", "engineering").split(",") if s]
+TENANT = os.environ.get("LORE_TENANT") or _CFG.get("tenant") or "local"
+SCOPES = [s for s in os.environ.get("LORE_SCOPES", "").split(",") if s] or \
+    ([_CFG["scope"]] if _CFG.get("scope") else ["engineering"])
 GOLD_N = int(os.environ.get("GOLD_N", "40"))
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "gemma4:e4b")

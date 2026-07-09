@@ -128,7 +128,14 @@ def score_conversation(conv, k, max_q):
         ev = qa.get("evidence") or []
         if not ev:
             continue                       # unanswerable/adversarial — no gold turn
-        gold = {note_id(sample_id, e) for e in ev if isinstance(e, str)}
+        # Some evidence entries pack multiple dia_ids into one semicolon-joined
+        # string (e.g. "D8:6; D9:17") instead of separate list items — split
+        # them, else the compound string never matches a real ingested note_id.
+        gold_dia_ids = []
+        for e in ev:
+            if isinstance(e, str):
+                gold_dia_ids.extend(part.strip() for part in e.split(";") if part.strip())
+        gold = {note_id(sample_id, d) for d in gold_dia_ids}
         if not gold:
             continue
         st, b, ms = call("POST", "/search", {

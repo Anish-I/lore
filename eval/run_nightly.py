@@ -28,10 +28,27 @@ import sys
 import time
 import urllib.request
 
+def _desktop_config() -> dict:
+    appdata = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
+    for app_name in ("lore-desktop", "Lore"):
+        try:
+            with open(os.path.join(appdata, app_name, "lore-config.json"), encoding="utf-8") as f:
+                return json.load(f) or {}
+        except Exception:
+            continue
+    return {}
+
+
+# TENANT/SCOPES: explicit env var wins; else the desktop app's own config;
+# a hardcoded fallback silently drifts from reality the moment the user's
+# scope changes — this is exactly what made the scheduled nightly job (see
+# the schtasks entry above) report 100% stale-gold for weeks unnoticed.
+_CFG = _desktop_config()
 PORT = os.environ.get("LORE_PORT", "8099")
 BASE = f"http://localhost:{PORT}"
-TENANT = os.environ.get("LORE_TENANT", "local")
-SCOPES = [s for s in os.environ.get("LORE_SCOPES", "engineering").split(",") if s]
+TENANT = os.environ.get("LORE_TENANT") or _CFG.get("tenant") or "local"
+SCOPES = [s for s in os.environ.get("LORE_SCOPES", "").split(",") if s] or \
+    ([_CFG["scope"]] if _CFG.get("scope") else ["engineering"])
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 HISTORY = os.environ.get("LORE_EVAL_HISTORY", os.path.join(HERE, "history", "nightly.jsonl"))

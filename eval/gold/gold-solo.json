@@ -1,122 +1,212 @@
 {
-  "generated_at": "2026-07-06T22:22:40.941501",
+  "generated_at": "2026-07-08T09:34:01.818417",
   "tenant": "solo",
   "scopes": [
     "research"
   ],
   "queries": [
     {
-      "q": "What must you unset before spawning worker instances from Bash?",
-      "expect_note_id": "6e71f696160d2cc0",
-      "expect_title_sub": "feedback_nested_claude",
+      "q": "In what locations can developers now define database connection details when using Prisma 7?",
+      "expect_note_id": "1aecc0159b92fd9a",
+      "expect_title_sub": "Prisma 7 moved `url` out of schema.prism",
       "kind": "paraphrase"
     },
     {
-      "q": "What do my notes say about adversarial-2026?",
-      "expect_note_id": "1ca8d1eb0bf1c051",
-      "expect_title_sub": "Vault \u2014 per-scope adversarial ACL audit ",
+      "q": "How many extracted system prompts are contained within the source repository?",
+      "expect_note_id": "25fb1da88485c1ed",
+      "expect_title_sub": "CL4R1T4S system-prompt patterns \u2192 Claude",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Which three metrics are actual benchmarks buyers compare when reviewing results?",
+      "expect_note_id": "f0c1ab54a61d559b",
+      "expect_title_sub": "What to take from Mem0 for Lore (2026-07",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Is pgvector utilized when running on PG18?",
+      "expect_note_id": "f226c83eb108fd95",
+      "expect_title_sub": "Memory uses Ollama embeddings",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Where are daily conversation logs stored?",
+      "expect_note_id": "c4bc35beb55e9aa0",
+      "expect_title_sub": "Obsidian",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about ADR-002?",
+      "expect_note_id": "5dd5a9c362d3e878",
+      "expect_title_sub": "ADR-002: Composio vs Zapier NLA",
       "kind": "exact"
     },
     {
-      "q": "Where did the security risk surface according to the findings?",
-      "expect_note_id": "1ca8d1eb0bf1c051",
-      "expect_title_sub": "Vault \u2014 per-scope adversarial ACL audit ",
+      "q": "Where must all tool executions now pass through?",
+      "expect_note_id": "5dd5a9c362d3e878",
+      "expect_title_sub": "ADR-002: Composio vs Zapier NLA",
       "kind": "paraphrase"
     },
     {
-      "q": "How often does the weather data get archived?",
-      "expect_note_id": "55c7ac78b2ad7e00",
-      "expect_title_sub": "Infrastructure Overhaul (2026-03-28)",
+      "q": "What mathematical technique replaced the trailing standard deviation for estimating volatility?",
+      "expect_note_id": "d2db45ce0af16491",
+      "expect_title_sub": "BTC15M value model \u2014 discrepancy fixes +",
       "kind": "paraphrase"
     },
     {
-      "q": "What must change on the server side to enable multi-conversation viewing?",
-      "expect_note_id": "26f90cdb0a91fc94",
-      "expect_title_sub": "Chat history sheet added \u2014 2026-06-12",
+      "q": "Which acceptance gate was noted as remaining only partially functional?",
+      "expect_note_id": "45b233561ee18651",
+      "expect_title_sub": "V3 E2E Test Loop \u2014 2026-04-13",
       "kind": "paraphrase"
     },
     {
-      "q": "What are the four main areas/sections included in this project's screens?",
-      "expect_note_id": "a6d7a92359124686",
-      "expect_title_sub": "MobileApp",
+      "q": "What file is required for a project's overview and quick links?",
+      "expect_note_id": "5036ed864da33e93",
+      "expect_title_sub": "feedback_obsidian_all_projects",
       "kind": "paraphrase"
     },
     {
-      "q": "What format do font files use when they are single variable assets?",
-      "expect_note_id": "0308b79a29deddf4",
-      "expect_title_sub": "Google Fonts repo restructure \u2014 static d",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "How many predefined style options are available for generation?",
-      "expect_note_id": "87555ab262b1e71f",
-      "expect_title_sub": "Project: tiktok-captions",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What do my notes say about eval-2026?",
-      "expect_note_id": "c180e15c8d71b00c",
-      "expect_title_sub": "Vault \u2014 BM25 proven at scale + the reran",
-      "kind": "exact"
-    },
-    {
-      "q": "What happens when the semantic model processes queries looking for exact identifiers?",
-      "expect_note_id": "c180e15c8d71b00c",
-      "expect_title_sub": "Vault \u2014 BM25 proven at scale + the reran",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "How can the maximum number of plan-endpoint requests be configured for E2E testing?",
-      "expect_note_id": "004cbcfea189b3f6",
-      "expect_title_sub": "Gemma4 step-field fallback in workflow p",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What is the git remote URL listed in this document?",
+      "q": "Which gateway handles automation for a Telegram bot?",
       "expect_note_id": "8ef993db12d2f6d1",
       "expect_title_sub": "DevOps",
       "kind": "paraphrase"
     },
     {
-      "q": "What setting must be used for tool calls to fire?",
-      "expect_note_id": "1c82ef06b270eb37",
-      "expect_title_sub": "LLM",
+      "q": "On what port does the Express.js backend operate?",
+      "expect_note_id": "34edeed9143cc3c4",
+      "expect_title_sub": "Server",
       "kind": "paraphrase"
     },
     {
-      "q": "Which user actions currently do not have proper security measures?",
-      "expect_note_id": "4ba662d22fcdcd31",
-      "expect_title_sub": "Frontend forms lack CSRF tokens and retu",
+      "q": "What two systems are used for chat message storage and caching?",
+      "expect_note_id": "3cb7f0582e039f95",
+      "expect_title_sub": "V3 Migration Decisions",
       "kind": "paraphrase"
     },
     {
-      "q": "What function accepts large limit and page values without proper input checking?",
-      "expect_note_id": "adc8fa33b5894e4a",
-      "expect_title_sub": "Unvalidated pagination parameters enable",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "How long are the temporary links active for data transfer?",
-      "expect_note_id": "602de508288b1d43",
-      "expect_title_sub": "Presigned S3 upload URLs generated witho",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What process normalizes the security findings?",
-      "expect_note_id": "e7305cb222dc9612",
-      "expect_title_sub": "Scanner runs Gitleaks and Semgrep",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What versions of the compiler and package manager were installed?",
-      "expect_note_id": "04b3630f0282b17e",
-      "expect_title_sub": "Rust",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What scopes must the admin token possess to gather sales data?",
+      "q": "What is the measurement ID used by Google Analytics 4?",
       "expect_note_id": "9b1dd57668ee5bbe",
       "expect_title_sub": "Xtrait prod analytics access (2026-06-13",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about CLM-15116?",
+      "expect_note_id": "cb537ae4b7564f79",
+      "expect_title_sub": "Vault \u2014 46k-note company simulation find",
+      "kind": "exact"
+    },
+    {
+      "q": "How much quicker was bulk data embedding than handling every single entry separately?",
+      "expect_note_id": "cb537ae4b7564f79",
+      "expect_title_sub": "Vault \u2014 46k-note company simulation find",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about Hunt-2026?",
+      "expect_note_id": "8da11ffd37ac14c7",
+      "expect_title_sub": "Index \u2014 Knowledge",
+      "kind": "exact"
+    },
+    {
+      "q": "Was this page generated by hand or by an automated process?",
+      "expect_note_id": "8da11ffd37ac14c7",
+      "expect_title_sub": "Index \u2014 Knowledge",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about ASUS-1825?",
+      "expect_note_id": "topic:solo:devops",
+      "expect_title_sub": "DevOps",
+      "kind": "exact"
+    },
+    {
+      "q": "Which specific regeneration task was noted as failing or being incomplete?",
+      "expect_note_id": "topic:solo:devops",
+      "expect_title_sub": "DevOps",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "How does audio extraction fail if the included media processing tool binary is x86_64?",
+      "expect_note_id": "89c77ef51b70fe38",
+      "expect_title_sub": "VSR (video-subtitle-remover) on macOS Ap",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What minimum spread is required after real fees for maker to be profitable?",
+      "expect_note_id": "452c952302e1829c",
+      "expect_title_sub": "PairStrategy",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Where is the compiled program located?",
+      "expect_note_id": "2dd584bb01248bba",
+      "expect_title_sub": "ClawCode",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What existing user interface element helps bypass performance limitations for complex requests?",
+      "expect_note_id": "8020ef33af2ddc70",
+      "expect_title_sub": "Gemma4:e4b local throughput ceiling for ",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What external source is consulted only after local files and memory are exhausted?",
+      "expect_note_id": "38e44c1d355f0f5a",
+      "expect_title_sub": "feedback_research_fallback_last30days",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "When was the architecture tested end-to-end?",
+      "expect_note_id": "da743a036499d093",
+      "expect_title_sub": "project_wingman_v2",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What forms are noted as being on file for the year-end records?",
+      "expect_note_id": "235cf35948a9f2ec",
+      "expect_title_sub": "Taxes",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What amount does a round trip fee consume in relation to small spreads?",
+      "expect_note_id": "62e7d66b0cb5b082",
+      "expect_title_sub": "Pair-Acquisition Crypto Strategy",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What do my notes say about install-2026?",
+      "expect_note_id": "52e55c3be67f0588",
+      "expect_title_sub": "Ads",
+      "kind": "exact"
+    },
+    {
+      "q": "What version of the skill was installed globally?",
+      "expect_note_id": "52e55c3be67f0588",
+      "expect_title_sub": "Ads",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Does the platform currently require keys or is it fully local?",
+      "expect_note_id": "27ccf1624edc0126",
+      "expect_title_sub": "Lore Improvements \u2014 from competitive ana",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What must the new database setup achieve regarding external dependencies?",
+      "expect_note_id": "588ff8fbd60fc8ae",
+      "expect_title_sub": "Lore Local-first SQLite Store (Phase 1) ",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "Where must the local scrape cache folder be listed in a project's `.gitignore` file?",
+      "expect_note_id": "6e2add5b80b66609",
+      "expect_title_sub": "Firecrawl Setup (2026-04-16)",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What service is OpenClaw trying to stop paying for?",
+      "expect_note_id": "c77094fbc532f7fd",
+      "expect_title_sub": "Must use Start-Process \u2014 bash & doesn't ",
       "kind": "paraphrase"
     },
     {
@@ -126,153 +216,69 @@
       "kind": "exact"
     },
     {
-      "q": "What percentage discount was offered on stock S00425?",
+      "q": "What is the stated doc/conveyance fee at Colonial Hyundai?",
       "expect_note_id": "cb6d675b9c28193f",
       "expect_title_sub": "2025 Ioniq 6 SEL AWD Lease Hunt \u2014 CT/MA",
       "kind": "paraphrase"
     },
     {
-      "q": "What limitation was noted regarding process termination when using Git Bash on Windows?",
-      "expect_note_id": "af4f672dff3bb706",
-      "expect_title_sub": "Bugs & Fixes",
+      "q": "Where do all Claude/Codex command-line interface calls pass through?",
+      "expect_note_id": "facca10d7cd9a034",
+      "expect_title_sub": "AgentRunService is the execution chokepo",
       "kind": "paraphrase"
     },
     {
-      "q": "What file should be checked using `git ls-files | grep lock` to determine the package manager?",
-      "expect_note_id": "e1cd2676c286122f",
-      "expect_title_sub": "wingman-expo uses npm, NOT pnpm (correct",
+      "q": "What service acts as the main provider for this layer?",
+      "expect_note_id": "1c82ef06b270eb37",
+      "expect_title_sub": "LLM",
       "kind": "paraphrase"
     },
     {
-      "q": "Can the raw access token be used as an API key for external tools?",
-      "expect_note_id": "eeb3e5d324872a0a",
-      "expect_title_sub": "Codex OAuth Token Scopes Are Limited",
+      "q": "What type of arbitrage idea does not apply because there is no strike ladder?",
+      "expect_note_id": "be268e37a5532a04",
+      "expect_title_sub": "Kalshi 15m crypto: win-rate diagnosis, v",
       "kind": "paraphrase"
     },
     {
-      "q": "What do the highest bids for YES and NO usually add up to?",
-      "expect_note_id": "8f9a2cb4d128d83c",
-      "expect_title_sub": "CRITICAL: Orderbook Interpretation Bug",
+      "q": "What are the installed versions for the compiler and package manager?",
+      "expect_note_id": "04b3630f0282b17e",
+      "expect_title_sub": "Rust",
       "kind": "paraphrase"
     },
     {
-      "q": "Which JavaScript file runs every time a prompt is submitted?",
-      "expect_note_id": "c8304ea7319cb383",
-      "expect_title_sub": "DynamicMemory",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What is the current balance shown in the document?",
-      "expect_note_id": "e4b2a60d48a44fcb",
-      "expect_title_sub": "Fed Goes Live (2026-03-30)",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "On Windows bash, what command sequence can locate a process ID given a port number?",
-      "expect_note_id": "282bef099bd9245f",
-      "expect_title_sub": "Never blanket-kill Node processes",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "For collaborative spaces, what authentication method is required for sharing content?",
+      "q": "What type of tool can be downloaded as a free web utility without needing an account?",
       "expect_note_id": "6e3ca6f52e0c1dda",
       "expect_title_sub": "Lore \u2014 Phase 2 & near-term roadmap (capt",
       "kind": "paraphrase"
     },
     {
-      "q": "Which object does the actual renderer read from for styling instructions?",
-      "expect_note_id": "eb704eb103499f81",
-      "expect_title_sub": "Preset preview hints pattern \u2014 separatin",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What was the win rate for the crypto single-model exploration?",
-      "expect_note_id": "38f71ca21effa742",
-      "expect_title_sub": "Session 2026-03-28",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What do my notes say about baseline-2026?",
-      "expect_note_id": "79e2ee4a4a3a1e69",
-      "expect_title_sub": "Lore \u2014 embedder A/B: BGE-base did NOT be",
-      "kind": "exact"
-    },
-    {
-      "q": "What limits performance when dealing with specialized industry terminology?",
-      "expect_note_id": "79e2ee4a4a3a1e69",
-      "expect_title_sub": "Lore \u2014 embedder A/B: BGE-base did NOT be",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "How long does the automated audit run compared to a manual professional review?",
-      "expect_note_id": "bac8d04b1ef36a2c",
-      "expect_title_sub": "claude-ads skill installed (2026-06-12)",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "When should detailed structures like tables or headings be used?",
-      "expect_note_id": "114fd7465c7ba89e",
-      "expect_title_sub": "feedback_response_length",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What port does the Express.js backend run on?",
-      "expect_note_id": "34edeed9143cc3c4",
-      "expect_title_sub": "Server",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What must be achieved by day 30 for the effort to count as a success?",
-      "expect_note_id": "c1463740621938b5",
-      "expect_title_sub": "Lore: 90-day plan to start winning (2026",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What error message indicates insufficient funds for accessing the LLM?",
-      "expect_note_id": "3bc08d9b4dae54b8",
-      "expect_title_sub": "OpenClaw Anthropic provider needs API cr",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What information is now included in the `signToken` payload at all callsites?",
-      "expect_note_id": "4ff4964291a44d42",
-      "expect_title_sub": "Phase 8 complete \u2014 Admin + Apple + Tour ",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What function accepts keys without confirming ownership?",
-      "expect_note_id": "2c501ae7182447a9",
-      "expect_title_sub": "S3 download URL generation allows path t",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What do my notes say about tools-2026?",
-      "expect_note_id": "c83cd061ebb422b9",
-      "expect_title_sub": "OpenClaw",
-      "kind": "exact"
-    },
-    {
-      "q": "Which model serves as the fallback option for the gateway?",
-      "expect_note_id": "c83cd061ebb422b9",
-      "expect_title_sub": "OpenClaw",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "On which hook does this script run?",
-      "expect_note_id": "6f9edba035e7b50f",
-      "expect_title_sub": "Obsidian Orphan Auto-Connector",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What command is used to start the Weather Trader?",
-      "expect_note_id": "5890064b9a861c66",
-      "expect_title_sub": "project_kalshi_bot",
-      "kind": "paraphrase"
-    },
-    {
-      "q": "What port is used for the job queue backing?",
+      "q": "What types of background tasks does it manage?",
       "expect_note_id": "a76c4d63297acf3a",
       "expect_title_sub": "Agent Hub uses BullMQ on Redis",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What port number does the dashboard component use?",
+      "expect_note_id": "7644d78289fa5adc",
+      "expect_title_sub": "KalshiBot",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What environment variable controls the maximum rate limit for the plan endpoint?",
+      "expect_note_id": "004cbcfea189b3f6",
+      "expect_title_sub": "Gemma4 step-field fallback in workflow p",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What was the quantitative benefit of using a cross-encoder rerank on recall@1?",
+      "expect_note_id": "28f70b8c560c4c6a",
+      "expect_title_sub": "Vault M1 \u2014 multi-domain ranking eval (20",
+      "kind": "paraphrase"
+    },
+    {
+      "q": "What action must be taken after running all setup commands for new tools to surface in the session?",
+      "expect_note_id": "7ac9b2fd35c62a15",
+      "expect_title_sub": "OpenClaw MCP install (Codex-backed)",
       "kind": "paraphrase"
     }
   ]
