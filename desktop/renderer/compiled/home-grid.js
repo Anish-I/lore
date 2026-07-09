@@ -129,9 +129,12 @@ function Checklist({ steps, onGo, onDismiss }) {
 
 }
 
-function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, onOpen, onChat }) {
+function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, place, owner, editor, onOpen, onChat }) {
   const [hover, setHover] = React.useState(false);
   const updated = hgAgo(note.mtimeMs);
+  // On Team/Company pages, reveal who owns the page and who last touched it
+  // (greyed) on hover — you're looking at shared work, so authorship matters.
+  const showByline = (place === 'team' || place === 'company') && (owner || editor);
   return (/*#__PURE__*/
     React.createElement("div", { onClick: onOpen, onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false),
       style: {
@@ -157,7 +160,26 @@ function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, onOp
     React.createElement("div", { style: {
         flex: 1, fontSize: 12, color: 'var(--text-subtle)', lineHeight: 1.5,
         display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden'
-      } }, snippet || ''), /*#__PURE__*/
+      } }, snippet || ''),
+    showByline && /*#__PURE__*/
+    React.createElement("div", { style: {
+        display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+        fontSize: 10.5, color: 'var(--text-faint)',
+        opacity: hover ? 1 : 0, maxHeight: hover ? 20 : 0, overflow: 'hidden',
+        transition: 'opacity 120ms ease, max-height 120ms ease'
+      } },
+    owner && /*#__PURE__*/
+    React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, title: `Created by ${owner}` }, /*#__PURE__*/
+    React.createElement(HgIcon, { name: "user", size: 10 }), owner
+    ),
+
+    editor && editor !== owner && /*#__PURE__*/
+    React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 4 }, title: `Last edited by ${editor}` }, /*#__PURE__*/
+    React.createElement(HgIcon, { name: "pencil", size: 10 }), editor
+    )
+
+    ), /*#__PURE__*/
+
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8 } }, /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 11, color: 'var(--text-faint)' } }, updated ? `Updated ${updated}` : ''), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
@@ -327,10 +349,12 @@ function HomeGrid({
     notes.map((n) => {
       const section = baseOf ? baseOf(n.id) : null;
       return (/*#__PURE__*/
-        React.createElement(PageCard, { key: n.id, note: n,
+        React.createElement(PageCard, { key: n.id, note: n, place: place,
           section: sectionFilter && sectionFilter !== 'all' ? null : section,
           sectionColor: section && window.LoreSectionColor ? window.LoreSectionColor(section, theme) : null,
           snippet: noteMeta && noteMeta[n.id] ? noteMeta[n.id].snippet : '',
+          owner: noteMeta && noteMeta[n.id] ? noteMeta[n.id].owner : null,
+          editor: noteMeta && noteMeta[n.id] ? noteMeta[n.id].editor : null,
           fresh: freshIds && freshIds.has(n.id), placeMeta: meta,
           onOpen: () => onOpen(n.id), onChat: () => onChat(n.id) }));
 

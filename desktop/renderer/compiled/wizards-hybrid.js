@@ -175,7 +175,7 @@ function WizardChatDrawer({ wizard, onClose }) {
 
 }
 
-function WizardsView({ onBack, backLabel, scopes, onChanged }) {
+function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) {
   const [personal, setPersonal] = React.useState(null);
   const [catalog, setCatalog] = React.useState([]);
   const [chatWizard, setChatWizard] = React.useState(null);
@@ -207,6 +207,27 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
   const Builder = window.LoreWizardBuilder;
   const kbCatalog = (catalog || []).filter((w) => w.kind === 'wizard' && !w.installed);
 
+  // Group personal wizards by the scope of the pages they wrap, so shared
+  // wizards surface under Team/Company headings the same way pages do.
+  const wzScope = (w) => w.scope === 'team' ? 'team' : w.scope === 'company' || w.scope === 'enterprise' ? 'company' : 'my';
+  const groups = { my: [], team: [], company: [] };
+  for (const w of personal || []) groups[wzScope(w)].push(w);
+  const teamHeading = teamName ? `Team ${teamName} wizards` : 'Team wizards';
+
+  // A titled block of wizard cards (used for Your/Team/Company sections).
+  const Section = ({ icon, tint, border, fg, title, subtitle, children }) => /*#__PURE__*/
+  React.createElement(React.Fragment, null, /*#__PURE__*/
+  React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 9, margin: '30px 0 4px' } }, /*#__PURE__*/
+  React.createElement("span", { style: { width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: tint || 'var(--brand-soft-bg)', border: `1px solid ${border || 'var(--brand-soft-border)'}` } }, /*#__PURE__*/
+  React.createElement(WzIcon, { name: icon, size: 14, style: { color: fg || 'var(--brand-fg)' } })
+  ), /*#__PURE__*/
+  React.createElement("h2", { style: { fontSize: 15, fontWeight: 600, color: 'var(--text-strong)', margin: 0 } }, title)
+  ),
+  subtitle && /*#__PURE__*/React.createElement("p", { style: { fontSize: 12, color: 'var(--text-faint)', margin: '0 0 14px' } }, subtitle), /*#__PURE__*/
+  React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 } }, children)
+  );
+
+
   return (/*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--surface-canvas)' } }, /*#__PURE__*/
     React.createElement("div", { style: { maxWidth: 860, margin: '0 auto', padding: '26px 30px 80px' } }, /*#__PURE__*/
@@ -221,11 +242,11 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
 
     ), /*#__PURE__*/
 
+
     React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 } },
-    (personal || []).map((w) => /*#__PURE__*/
+    groups.my.map((w) => /*#__PURE__*/
     React.createElement(WizardCard, { key: w.id, name: w.name,
       meta: `${w.note_count != null ? w.note_count : '—'} page${w.note_count === 1 ? '' : 's'} inside${w.folder ? ` · ${String(w.folder).split(/[\\/]/).pop()}` : ''}`,
-      teamBadge: w.scope === 'team' || w.scope === 'enterprise',
       onChat: () => setChatWizard(w) })
     ), /*#__PURE__*/
     React.createElement(CreateTile, { onClick: () => setBuilderOpen(true) })
@@ -234,11 +255,31 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
     React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)', marginTop: 14 } }, "loading wizards\u2026"),
 
 
-    kbCatalog.length > 0 && /*#__PURE__*/
-    React.createElement(React.Fragment, null, /*#__PURE__*/
-    React.createElement("h2", { style: { fontSize: 15, fontWeight: 600, color: 'var(--text-strong)', margin: '30px 0 4px' } }, "From the catalog"), /*#__PURE__*/
-    React.createElement("p", { style: { fontSize: 12, color: 'var(--text-faint)', margin: '0 0 14px' } }, "Ready-made knowledge packs \u2014 install one and chat with it like your own."), /*#__PURE__*/
-    React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 } },
+    groups.team.length > 0 && /*#__PURE__*/
+    React.createElement(Section, { icon: "users", tint: "var(--place-team-tint)", border: "var(--place-team-border)", fg: "var(--place-team-fg)",
+      title: teamHeading, subtitle: "Shared with your team \u2014 everyone on the team can chat with these." },
+    groups.team.map((w) => /*#__PURE__*/
+    React.createElement(WizardCard, { key: w.id, name: w.name,
+      meta: `${w.note_count != null ? w.note_count : '—'} page${w.note_count === 1 ? '' : 's'} inside`,
+      teamBadge: true, onChat: () => setChatWizard(w) })
+    )
+    ),
+
+
+    groups.company.length > 0 && /*#__PURE__*/
+    React.createElement(Section, { icon: "building-2", tint: "var(--place-company-tint)", border: "var(--place-company-border)", fg: "var(--place-company-fg)",
+      title: "Company wizards", subtitle: "Visible to everyone at your company." },
+    groups.company.map((w) => /*#__PURE__*/
+    React.createElement(WizardCard, { key: w.id, name: w.name,
+      meta: `${w.note_count != null ? w.note_count : '—'} page${w.note_count === 1 ? '' : 's'} inside`,
+      onChat: () => setChatWizard(w) })
+    )
+    ), /*#__PURE__*/
+
+
+
+    React.createElement(Section, { icon: "store", title: "Marketplace",
+      subtitle: kbCatalog.length > 0 ? 'Ready-made knowledge packs — install one and chat with it like your own.' : 'You’ve installed everything available right now. New packs show up here.' },
     kbCatalog.map((w) => /*#__PURE__*/
     React.createElement(WizardCard, { key: w.id, name: w.name,
       meta: w.desc || `${(w.noteTitles || []).length || w.noteCount || '—'} pages`,
@@ -250,8 +291,6 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
     )
     )
     )
-    )
-
     ),
 
     chatWizard && /*#__PURE__*/React.createElement(WizardChatDrawer, { wizard: chatWizard, onClose: () => setChatWizard(null) }),

@@ -173,6 +173,26 @@ function snippetOf(raw) {
   return '';
 }
 
+// Pull author/editor identity out of a note's frontmatter for the Team-page
+// hover byline. Team pages synced from teammates carry these; own notes usually
+// don't (we then fall back to the owner for both).
+function frontmatterAuthor(raw) {
+  const body = String(raw || '');
+  const fm = body.match(/^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?/);
+  if (!fm) return { owner: null, editor: null };
+  const meta = fm[1];
+  const pick = (keys) => {
+    for (const k of keys) {
+      const m = meta.match(new RegExp('^' + k + ':\\s*(.+)$', 'im'));
+      if (m) { const v = String(m[1]).trim().replace(/^['"]|['"]$/g, ''); if (v) return v; }
+    }
+    return null;
+  };
+  const owner = pick(['owner', 'author', 'created_by', 'createdby']);
+  const editor = pick(['last_editor', 'last_modified_by', 'updated_by', 'updatedby', 'lasteditor', 'editor']);
+  return { owner, editor: editor || owner };
+}
+
 // scope value -> place id ('my' | 'team' | 'company')
 function placeOfScope(scope) {
   const s = String(scope || '').toLowerCase();
@@ -627,7 +647,7 @@ function App() {
         const n = queue.shift();
         try {
           const r = await window.lore.readNote(n.id);
-          if (live) setNoteMeta((m) => ({ ...m, [n.id]: { snippet: snippetOf(r && r.raw) } }));
+          if (live) { const a = frontmatterAuthor(r && r.raw); setNoteMeta((m) => ({ ...m, [n.id]: { snippet: snippetOf(r && r.raw), owner: a.owner, editor: a.editor } })); }
         } catch { /* card renders without a snippet */ }
       }
     };
@@ -889,6 +909,46 @@ function App() {
       }
     } finally { setMoveBusy(false); }
   }, [activeId, appConfig, treeData, reloadTree, markStep, flash, inTeam, moveBusy]);
+
+  // Move an ENTIRE section (top-level folder) to Team/Company/Private — changes
+  // the scope of every note inside it using the same redaction-gated setNoteScope
+  // each note uses. One confirmation up front (with the page count); if any page
+  // trips the secret guard, one more confirmation applies the override to the
+  // whole batch.
+  const [sectionMoveBusy, setSectionMoveBusy] = React.useState(null); // section name in flight
+  const moveSection = React.useCallback(async (sectionName, target) => {
+    if (!window.lore?.setNoteScope || sectionMoveBusy) return;
+    const folder = scopeFilteredTree.find((n) => n.kind === 'folder' && n.name === sectionName);
+    if (!folder) return;
+    const notes = flatten([folder]);
+    if (!notes.length) { flash('That section has no pages to move.'); return; }
+    const label = (window.LorePlaceMeta[target] || {}).label || target;
+    const who = target === 'my' ? 'They become private again — only you can see them.'
+      : `Everyone in your ${target} will be able to read them.`;
+    if (!window.confirm(`Move all ${notes.length} page${notes.length === 1 ? '' : 's'} in “${sectionName}” to ${label}?\n\n${who}`)) return;
+    const scopeVal = target === 'team' ? 'team' : target === 'company' ? 'company'
+      : ((appConfig && appConfig.scope) || 'private');
+    setSectionMoveBusy(sectionName);
+    let moved = 0, failed = 0, forceAll = false;
+    try {
+      for (const n of notes) {
+        try {
+          let r = await window.lore.setNoteScope(n.id, scopeVal, forceAll);
+          if (r && r.reason === 'secret' && !r.ok && !forceAll) {
+            forceAll = window.confirm(`Some pages in “${sectionName}” contain secrets (${r.detail}).\n\nShare the whole section anyway?`);
+            if (!forceAll) { failed++; continue; }
+            r = await window.lore.setNoteScope(n.id, scopeVal, true);
+          }
+          if (r && r.ok) moved++; else failed++;
+        } catch { failed++; }
+      }
+      setGraphNonce((x) => x + 1);
+      if (treeData) await reloadTree(treeData.root);
+      if (target !== 'my') setScopeFilter(target);
+      markStep('moved');
+      flash(`Moved ${moved} page${moved === 1 ? '' : 's'} to ${label}${failed ? ` · ${failed} skipped` : ''}.`);
+    } finally { setSectionMoveBusy(null); }
+  }, [scopeFilteredTree, appConfig, treeData, reloadTree, flash, markStep, sectionMoveBusy]);
 
   // (Sidebar-era library switcher / discovered-libraries popover / tree context
   // menu removed with the old shell — the status-bar Open library button and
@@ -1514,7 +1574,8 @@ function App() {
                     active={railActive} onSelect={onRailSelect} place={place} theme={theme}
                     view={view} wizardCount={wizardIds.size}
                     onPages={() => { setMapOpen(false); setView('workspace'); }}
-                    onWizards={() => { setMapOpen(false); setView('wizards'); }} />
+                    onWizards={() => { setMapOpen(false); setView('wizards'); }} 
+                    onMoveSection={moveSection} sectionMoveBusy={sectionMoveBusy} />
                 )}
                 {activeBucket ? (
                   <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} hideTabs onOpen={() => setAskOpen(true)} />
@@ -1599,7 +1660,8 @@ function App() {
                 active={railActive} onSelect={onRailSelect} place={place} theme={theme}
                 view={view} wizardCount={wizardIds.size}
                 onPages={() => { setMapOpen(false); setView('workspace'); }}
-                onWizards={() => { setMapOpen(false); setView('wizards'); }} />
+                onWizards={() => { setMapOpen(false); setView('wizards'); }} 
+                    onMoveSection={moveSection} sectionMoveBusy={sectionMoveBusy} />
             )}
             <window.LoreWizardsView onBack={() => setView('workspace')}
               backLabel={(window.LorePlaceMeta[place] || {}).label}

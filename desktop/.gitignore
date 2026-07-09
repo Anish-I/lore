@@ -1,3 +1,5 @@
 e2e-buttons-shots/
 e2e-lighttheme.js
 e2e-verify-shell.js
+e2e-verify-cluster2.js
+e2e-verify-sectionmove.js

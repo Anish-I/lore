@@ -266,6 +266,64 @@ function RailRow({ icon, chipColor, label, count, active, onClick }) {
   );
 }
 
+// Hover "⋯" menu on a section row → move the WHOLE folder to Team/Company/Private.
+function SectionMoveMenu({ name, onMove, busy }) {
+  const [open, setOpen] = React.useState(false);
+  const targets = [
+    { id: 'team', label: 'Team', icon: 'users' },
+    { id: 'company', label: 'Company', icon: 'building-2' },
+    { id: 'my', label: 'Private', icon: 'lock' },
+  ];
+  return (
+    <span style={{ position: 'relative', flexShrink: 0, display: 'inline-flex' }} onClick={(e) => e.stopPropagation()}>
+      <button onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }} disabled={busy}
+        aria-label={`Move the ${name} section`} title={`Move everything in “${name}” to another place`}
+        style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: 5, border: 'none', background: open ? 'var(--surface-active)' : 'transparent', color: 'var(--text-faint)', cursor: busy ? 'wait' : 'pointer' }}
+        onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-active)'}
+        onMouseLeave={(e) => e.currentTarget.style.background = open ? 'var(--surface-active)' : 'transparent'}>
+        <Sh2Icon name={busy ? 'loader' : 'more-horizontal'} size={14} />
+      </button>
+      {open && (
+        <React.Fragment>
+          <div onClick={(e) => { e.stopPropagation(); setOpen(false); }} style={{ position: 'fixed', inset: 0, zIndex: 60 }} />
+          <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 3, zIndex: 61, minWidth: 156, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 8, boxShadow: 'var(--shadow-lg)', padding: 4 }}>
+            <div style={{ fontSize: 9.5, color: 'var(--text-faint)', padding: '4px 8px 3px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Move section to</div>
+            {targets.map((t) => (
+              <div key={t.id} onClick={(e) => { e.stopPropagation(); setOpen(false); onMove(t.id); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 8px', borderRadius: 6, cursor: 'pointer', fontSize: 12.5, color: 'var(--text-body)' }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                <Sh2Icon name={t.icon} size={13} style={{ color: 'var(--text-subtle)' }} />{t.label}
+              </div>
+            ))}
+          </div>
+        </React.Fragment>
+      )}
+    </span>
+  );
+}
+
+// A section row: folder chip + name + (count, replaced by the move menu on hover).
+function SectionRow({ name, count, color, active, onSelect, onMove, busy }) {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <div onClick={onSelect} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '7px 10px',
+        borderRadius: 8, cursor: 'pointer', textAlign: 'left',
+        background: active ? 'var(--surface-selected)' : hover ? 'var(--surface-hover)' : 'transparent',
+        color: active ? 'var(--text-strong)' : 'var(--text-body)',
+        fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: active ? 600 : 400,
+      }}>
+      <span style={{ width: 10, height: 10, borderRadius: 3, background: color || 'var(--text-faint)', flexShrink: 0 }} />
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+      {(hover || busy)
+        ? <SectionMoveMenu name={name} onMove={onMove} busy={busy} />
+        : (count != null && <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{count}</span>)}
+    </div>
+  );
+}
+
 // One of the two top-level sidebar tabs (Pages / Wizards). Greys out + blocks
 // clicks when disabled (e.g. Wizards with zero wizards).
 function SidebarTab({ icon, label, count, active, disabled, onClick }) {
@@ -294,7 +352,7 @@ function SidebarTab({ icon, label, count, active, disabled, onClick }) {
 
 // Left section rail — Pages/Wizards tabs on top, then (in Pages mode) "Home" +
 // one row per top-level folder in this place.
-function SectionRail({ sections, allCount, active, onSelect, place, theme, view, onPages, onWizards, wizardCount }) {
+function SectionRail({ sections, allCount, active, onSelect, place, theme, view, onPages, onWizards, wizardCount, onMoveSection, sectionMoveBusy }) {
   const meta = sh2Places[place] || sh2Places.my;
   const onWizardsView = view === 'wizards';
   return (
@@ -319,8 +377,11 @@ function SectionRail({ sections, allCount, active, onSelect, place, theme, view,
             <RailRow icon="house" label="Home" count={allCount}
               active={!active || active === 'all'} onClick={() => onSelect('all')} />
             {(sections || []).map((s) => (
-              <RailRow key={s.name} chipColor={window.LoreSectionColor ? window.LoreSectionColor(s.name, theme) : null}
-                label={s.name} count={s.count} active={active === s.name} onClick={() => onSelect(s.name)} />
+              <SectionRow key={s.name} name={s.name} count={s.count}
+                color={window.LoreSectionColor ? window.LoreSectionColor(s.name, theme) : null}
+                active={active === s.name} onSelect={() => onSelect(s.name)}
+                busy={sectionMoveBusy === s.name}
+                onMove={(target) => onMoveSection && onMoveSection(s.name, target)} />
             ))}
           </React.Fragment>
         )}

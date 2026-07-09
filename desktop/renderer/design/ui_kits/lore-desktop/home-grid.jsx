@@ -129,9 +129,12 @@ function Checklist({ steps, onGo, onDismiss }) {
   );
 }
 
-function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, onOpen, onChat }) {
+function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, place, owner, editor, onOpen, onChat }) {
   const [hover, setHover] = React.useState(false);
   const updated = hgAgo(note.mtimeMs);
+  // On Team/Company pages, reveal who owns the page and who last touched it
+  // (greyed) on hover — you're looking at shared work, so authorship matters.
+  const showByline = (place === 'team' || place === 'company') && (owner || editor);
   return (
     <div onClick={onOpen} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
       style={{
@@ -158,6 +161,25 @@ function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, onOp
         flex: 1, fontSize: 12, color: 'var(--text-subtle)', lineHeight: 1.5,
         display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
       }}>{snippet || ''}</div>
+      {showByline && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+          fontSize: 10.5, color: 'var(--text-faint)',
+          opacity: hover ? 1 : 0, maxHeight: hover ? 20 : 0, overflow: 'hidden',
+          transition: 'opacity 120ms ease, max-height 120ms ease',
+        }}>
+          {owner && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} title={`Created by ${owner}`}>
+              <HgIcon name="user" size={10} />{owner}
+            </span>
+          )}
+          {editor && editor !== owner && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }} title={`Last edited by ${editor}`}>
+              <HgIcon name="pencil" size={10} />{editor}
+            </span>
+          )}
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{updated ? `Updated ${updated}` : ''}</span>
         <div style={{ flex: 1 }} />
@@ -327,10 +349,12 @@ function HomeGrid({
             {notes.map((n) => {
               const section = baseOf ? baseOf(n.id) : null;
               return (
-                <PageCard key={n.id} note={n}
+                <PageCard key={n.id} note={n} place={place}
                   section={sectionFilter && sectionFilter !== 'all' ? null : section}
                   sectionColor={section && window.LoreSectionColor ? window.LoreSectionColor(section, theme) : null}
                   snippet={noteMeta && noteMeta[n.id] ? noteMeta[n.id].snippet : ''}
+                  owner={noteMeta && noteMeta[n.id] ? noteMeta[n.id].owner : null}
+                  editor={noteMeta && noteMeta[n.id] ? noteMeta[n.id].editor : null}
                   fresh={freshIds && freshIds.has(n.id)} placeMeta={meta}
                   onOpen={() => onOpen(n.id)} onChat={() => onChat(n.id)} />
               );

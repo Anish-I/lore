@@ -175,7 +175,7 @@ function WizardChatDrawer({ wizard, onClose }) {
   );
 }
 
-function WizardsView({ onBack, backLabel, scopes, onChanged }) {
+function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) {
   const [personal, setPersonal] = React.useState(null);
   const [catalog, setCatalog] = React.useState([]);
   const [chatWizard, setChatWizard] = React.useState(null);
@@ -207,6 +207,27 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
   const Builder = window.LoreWizardBuilder;
   const kbCatalog = (catalog || []).filter((w) => w.kind === 'wizard' && !w.installed);
 
+  // Group personal wizards by the scope of the pages they wrap, so shared
+  // wizards surface under Team/Company headings the same way pages do.
+  const wzScope = (w) => (w.scope === 'team' ? 'team' : (w.scope === 'company' || w.scope === 'enterprise') ? 'company' : 'my');
+  const groups = { my: [], team: [], company: [] };
+  for (const w of (personal || [])) groups[wzScope(w)].push(w);
+  const teamHeading = teamName ? `Team ${teamName} wizards` : 'Team wizards';
+
+  // A titled block of wizard cards (used for Your/Team/Company sections).
+  const Section = ({ icon, tint, border, fg, title, subtitle, children }) => (
+    <React.Fragment>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, margin: '30px 0 4px' }}>
+        <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: tint || 'var(--brand-soft-bg)', border: `1px solid ${border || 'var(--brand-soft-border)'}` }}>
+          <WzIcon name={icon} size={14} style={{ color: fg || 'var(--brand-fg)' }} />
+        </span>
+        <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>{title}</h2>
+      </div>
+      {subtitle && <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '0 0 14px' }}>{subtitle}</p>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>{children}</div>
+    </React.Fragment>
+  );
+
   return (
     <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--surface-canvas)' }}>
       <div style={{ maxWidth: 860, margin: '0 auto', padding: '26px 30px 80px' }}>
@@ -221,11 +242,11 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
           A Wizard is a bundle of pages you can chat with — its answers come only from what’s inside it. Pages stay where they are; a Wizard is a view over them.
         </p>
 
+        {/* Your wizards (private) + always the create tile. */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-          {(personal || []).map((w) => (
+          {groups.my.map((w) => (
             <WizardCard key={w.id} name={w.name}
               meta={`${w.note_count != null ? w.note_count : '—'} page${w.note_count === 1 ? '' : 's'} inside${w.folder ? ` · ${String(w.folder).split(/[\\/]/).pop()}` : ''}`}
-              teamBadge={w.scope === 'team' || w.scope === 'enterprise'}
               onChat={() => setChatWizard(w)} />
           ))}
           <CreateTile onClick={() => setBuilderOpen(true)} />
@@ -234,24 +255,42 @@ function WizardsView({ onBack, backLabel, scopes, onChanged }) {
           <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)', marginTop: 14 }}>loading wizards…</div>
         )}
 
-        {kbCatalog.length > 0 && (
-          <React.Fragment>
-            <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)', margin: '30px 0 4px' }}>From the catalog</h2>
-            <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '0 0 14px' }}>Ready-made knowledge packs — install one and chat with it like your own.</p>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
-              {kbCatalog.map((w) => (
-                <WizardCard key={w.id} name={w.name}
-                  meta={w.desc || `${(w.noteTitles || []).length || w.noteCount || '—'} pages`}
-                  onChat={null}
-                  extraAction={
-                    <WzButton icon="download" onClick={() => install(w.id)} disabled={installBusy === w.id} style={{ flex: 1 }}>
-                      {installBusy === w.id ? 'Installing…' : 'Install'}
-                    </WzButton>
-                  } />
-              ))}
-            </div>
-          </React.Fragment>
+        {groups.team.length > 0 && (
+          <Section icon="users" tint="var(--place-team-tint)" border="var(--place-team-border)" fg="var(--place-team-fg)"
+            title={teamHeading} subtitle="Shared with your team — everyone on the team can chat with these.">
+            {groups.team.map((w) => (
+              <WizardCard key={w.id} name={w.name}
+                meta={`${w.note_count != null ? w.note_count : '—'} page${w.note_count === 1 ? '' : 's'} inside`}
+                teamBadge onChat={() => setChatWizard(w)} />
+            ))}
+          </Section>
         )}
+
+        {groups.company.length > 0 && (
+          <Section icon="building-2" tint="var(--place-company-tint)" border="var(--place-company-border)" fg="var(--place-company-fg)"
+            title="Company wizards" subtitle="Visible to everyone at your company.">
+            {groups.company.map((w) => (
+              <WizardCard key={w.id} name={w.name}
+                meta={`${w.note_count != null ? w.note_count : '—'} page${w.note_count === 1 ? '' : 's'} inside`}
+                onChat={() => setChatWizard(w)} />
+            ))}
+          </Section>
+        )}
+
+        {/* Marketplace — ready-made knowledge packs to install. */}
+        <Section icon="store" title="Marketplace"
+          subtitle={kbCatalog.length > 0 ? 'Ready-made knowledge packs — install one and chat with it like your own.' : 'You’ve installed everything available right now. New packs show up here.'}>
+          {kbCatalog.map((w) => (
+            <WizardCard key={w.id} name={w.name}
+              meta={w.desc || `${(w.noteTitles || []).length || w.noteCount || '—'} pages`}
+              onChat={null}
+              extraAction={
+                <WzButton icon="download" onClick={() => install(w.id)} disabled={installBusy === w.id} style={{ flex: 1 }}>
+                  {installBusy === w.id ? 'Installing…' : 'Install'}
+                </WzButton>
+              } />
+          ))}
+        </Section>
       </div>
 
       {chatWizard && <WizardChatDrawer wizard={chatWizard} onClose={() => setChatWizard(null)} />}
