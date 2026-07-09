@@ -104,10 +104,10 @@ function IM_ImportModal({ onClose, onDone }) {
             />
             <div style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', marginBottom: 4 }}>
-                {dragging ? 'Drop to import' : 'Drop files or folders here'}
+                {dragging ? 'Drop to import' : 'Drop a folder, files, a .zip, or photos'}
               </div>
               <div style={{ fontSize: 12.5, color: 'var(--text-subtle)' }}>
-                Word docs, PDFs, text, Markdown, code and more all work
+                Word docs, PDFs, text, Markdown, code, .zip archives and images all work
               </div>
             </div>
             <IM_Button variant="secondary" icon="folder-open" onClick={IM_browse} disabled={busy}>

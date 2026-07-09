@@ -104,9 +104,9 @@ function IM_ImportModal({ onClose, onDone }) {
     ), /*#__PURE__*/
     React.createElement("div", { style: { textAlign: 'center' } }, /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', marginBottom: 4 } },
-    dragging ? 'Drop to import' : 'Drop files or folders here'
+    dragging ? 'Drop to import' : 'Drop a folder, files, a .zip, or photos'
     ), /*#__PURE__*/
-    React.createElement("div", { style: { fontSize: 12.5, color: 'var(--text-subtle)' } }, "Word docs, PDFs, text, Markdown, code and more all work"
+    React.createElement("div", { style: { fontSize: 12.5, color: 'var(--text-subtle)' } }, "Word docs, PDFs, text, Markdown, code, .zip archives and images all work"
 
     )
     ), /*#__PURE__*/

@@ -1054,6 +1054,7 @@ ipcMain.handle('scrape:start', (_e, scrapeConfig) => {
 
 // ---------- IPC: import (drop files/folders/zip → nodes) ----------
 const IMPORT_TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.js', '.ts', '.py', '.json', '.yaml', '.yml', '.csv', '.html', '.css', '.rst', '.org', '.log', '.pdf', '.docx']);
+const IMPORT_IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.avif']);
 
 function importRoot() {
   const cfg = loadConfig() || {};
@@ -1065,8 +1066,29 @@ function importRoot() {
   return { vault, dir, cfg };
 }
 
-function importCopyFile(srcPath, destDir, summary) {
+// Import a dropped photo: copy the image into <vault>/assets/ and create a small
+// viewable note that embeds it, so the picture actually lands in the library as a
+// page (and its filename is searchable) rather than being silently skipped.
+function importImageFile(srcPath, destDir, vault, summary) {
+  try {
+    const assetsDir = path.join(vault, 'assets');
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const ext = path.extname(srcPath);
+    const raw = path.basename(srcPath, ext).replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 60) || 'image';
+    let name = `${raw}${ext}`, i = 1;
+    while (fs.existsSync(path.join(assetsDir, name))) name = `${raw}-${i++}${ext}`;
+    fs.copyFileSync(srcPath, path.join(assetsDir, name));
+    const title = path.basename(srcPath, ext);
+    let note = path.join(destDir, `${raw}.md`), j = 1;
+    while (fs.existsSync(note)) note = path.join(destDir, `${raw}-${j++}.md`);
+    fs.writeFileSync(note, `# ${title}\n\n![${title}](assets/${name})\n`, 'utf8');
+    summary.copied++;
+  } catch { summary.errors++; }
+}
+
+function importCopyFile(srcPath, destDir, vault, summary) {
   const ext = path.extname(srcPath).toLowerCase();
+  if (IMPORT_IMAGE_EXT.has(ext)) { importImageFile(srcPath, destDir, vault, summary); return; }
   if (!IMPORT_TEXT_EXT.has(ext)) { summary.skipped++; return; }
   const base = path.basename(srcPath);
   let dest = path.join(destDir, base), i = 1;
@@ -1074,14 +1096,14 @@ function importCopyFile(srcPath, destDir, summary) {
   try { fs.copyFileSync(srcPath, dest); summary.copied++; } catch { summary.errors++; }
 }
 
-function importWalkDir(srcDir, destDir, summary) {
+function importWalkDir(srcDir, destDir, vault, summary) {
   let entries = [];
   try { entries = fs.readdirSync(srcDir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
     if (e.name.startsWith('.') || e.name === 'node_modules') continue;
     const full = path.join(srcDir, e.name);
-    if (e.isDirectory()) importWalkDir(full, destDir, summary);
-    else importCopyFile(full, destDir, summary);
+    if (e.isDirectory()) importWalkDir(full, destDir, vault, summary);
+    else importCopyFile(full, destDir, vault, summary);
   }
 }
 
@@ -1096,15 +1118,15 @@ async function runImport(paths) {
     try {
       const st = fs.statSync(p);
       const ext = path.extname(p).toLowerCase();
-      if (st.isDirectory()) importWalkDir(p, r.dir, summary);
+      if (st.isDirectory()) importWalkDir(p, r.dir, r.vault, summary);
       else if (ext === '.zip') {
         const tmp = path.join(os.tmpdir(), 'lore-import-' + path.basename(p, '.zip').replace(/[^a-z0-9]/gi, '_'));
         try {
           fs.rmSync(tmp, { recursive: true, force: true });
           execFileSync('powershell', ['-NoProfile', '-Command', `Expand-Archive -LiteralPath '${p.replace(/'/g, "''")}' -DestinationPath '${tmp.replace(/'/g, "''")}' -Force`], { windowsHide: true });
-          importWalkDir(tmp, r.dir, summary);
+          importWalkDir(tmp, r.dir, r.vault, summary);
         } catch { summary.errors++; }
-      } else importCopyFile(p, r.dir, summary);
+      } else importCopyFile(p, r.dir, r.vault, summary);
     } catch { summary.errors++; }
   }
   if (summary.copied > 0) {
