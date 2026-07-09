@@ -19,9 +19,15 @@ class VoyageReranker:
         for res in r.results: scores[res.index] = res.relevance_score
         return scores
 
+import os as _os
+
 class LocalReranker:
     """Real cross-encoder reranking via fastembed (ONNX, offline)."""
-    DEFAULT_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"
+    # ms-marco-L12 over L6: measured +2pp r@1 / +MRR on LoCoMo two-stage at ~56ms
+    # (vs 29ms) — a free precision win, no re-index needed (rerank is query-time).
+    # LORE_RERANK_MODEL overrides (e.g. jina-reranker-v2-base-multilingual for best
+    # r@10 at higher latency). See the 2026-07-10 retrieval campaign.
+    DEFAULT_MODEL = _os.environ.get("LORE_RERANK_MODEL") or "Xenova/ms-marco-MiniLM-L-12-v2"
     _cache = {}
     def __init__(self, model=DEFAULT_MODEL):
         from fastembed.rerank.cross_encoder import TextCrossEncoder
