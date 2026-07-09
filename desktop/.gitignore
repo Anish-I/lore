@@ -3,3 +3,13 @@ e2e-lighttheme.js
 e2e-verify-shell.js
 e2e-verify-cluster2.js
 e2e-verify-sectionmove.js
+e2e-verify-homechat.js
+e2e-verify-cluster2.js
+e2e-verify-sectionmove.js
+e2e-verify-serialize.js
+e2e-verify-homechat.js
+e2e-verify-editor.js
+e2e-shot-editor.js
+e2e-verify-import.js
+e2e-shot-settings.js
+e2e-verify-auth.js
