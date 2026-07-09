@@ -368,7 +368,8 @@ function App() {
   const [mapOpen, setMapOpen] = React.useState(false);     // full-screen knowledge map overlay
   const [refreshing, setRefreshing] = React.useState(false); // ribbon "Refresh" (upkeep re-scan) in flight
   const [homeChat, setHomeChat] = React.useState(false);   // home "Ask" box → inline MAIN chat (collapses the page grid)
-  const [authUser, setAuthUser] = React.useState(null);    // {user_id, email, scopes} | null — avatar menu
+  const [authUser, setAuthUser] = React.useState(null);    // {user_id, email, name, scopes} | null — avatar menu
+  const [authModalOpen, setAuthModalOpen] = React.useState(false); // in-app sign-in/up page
   const [askCtx, setAskCtx] = React.useState(null);        // {id, title} — "About: {page}" chat context chip
   const [noteMeta, setNoteMeta] = React.useState({});      // id -> {snippet} card-snippet cache
   const [freshIds, setFreshIds] = React.useState(() => new Set()); // "Moved just now" badges
@@ -396,13 +397,16 @@ function App() {
     try { setAuthUser((await window.lore.auth.status()) || null); } catch { /* signed out */ }
   }, []);
   React.useEffect(() => { refreshAuth(); }, [refreshAuth]);
-  const signIn = React.useCallback(async () => {
-    if (!window.lore?.auth?.login) { flash('Sign-in is unavailable in this build.'); return; }
-    try {
-      const r = await window.lore.auth.login();
-      if (r && r.ok) { await refreshAuth(); refreshInvites(); flash('Signed in.'); }
-      else flash((r && r.reason) || 'Sign-in failed.');
-    } catch { flash('Sign-in failed.'); }
+  // Sign-in now opens an in-app page (LoreAuthModal) instead of silently launching
+  // a browser. The modal runs auth.login and calls onAuthSignedIn on success.
+  const signIn = React.useCallback(() => { setAuthModalOpen(true); }, []);
+  const onAuthSignedIn = React.useCallback(async (r) => {
+    setAuthModalOpen(false);
+    await refreshAuth();
+    refreshInvites();
+    // Pull the freshly-persisted owner name so the greeting/avatar update at once.
+    try { if (window.lore?.config?.get) { const c = await window.lore.config.get(); setAppConfig(c); } } catch { /* config refresh is best-effort */ }
+    flash(r && r.name ? `Signed in as ${r.name}.` : 'Signed in.');
   }, [refreshAuth, flash]);
   const signOut = React.useCallback(async () => {
     try { if (window.lore?.auth?.logout) await window.lore.auth.logout(); } catch { /* ignore */ }
@@ -1627,7 +1631,7 @@ function App() {
                   homeAskPanel
                 ) : (
                   <HomeGrid place={place} theme={theme}
-                    ownerName={(authUser && authUser.email && authUser.email.split('@')[0]) || (appConfig && appConfig.owner) || null}
+                    ownerName={(authUser && (authUser.name || (authUser.email && authUser.email.split('@')[0]))) || (appConfig && appConfig.owner) || null}
                     totalCount={placeCounts.my} newCount={newCount}
                     suggestions={askSuggestions} onAsk={(q) => { setHomeChat(true); ask(q); }}
                     checklist={{
@@ -1748,6 +1752,10 @@ function App() {
 
         {moveOpen && window.LoreMoveDialog && activeNote && (
           <window.LoreMoveDialog note={activeNote} busy={moveBusy} onMove={moveNote} onClose={() => setMoveOpen(false)} />
+        )}
+
+        {authModalOpen && window.LoreAuthModal && (
+          <window.LoreAuthModal onClose={() => setAuthModalOpen(false)} onSignedIn={onAuthSignedIn} />
         )}
 
         {previewNote && (

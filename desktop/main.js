@@ -1200,14 +1200,27 @@ function loadSession() {
 }
 function clearSession() { try { fs.unlinkSync(authStorePath()); } catch { /* ignore */ } }
 
+// Decode a JWT payload (no verification — the backend already verified the
+// id_token; we only need the display-name/email/avatar claims for the UI).
+function decodeJwtClaims(jwt) {
+  try {
+    const part = String(jwt).split('.')[1];
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    return JSON.parse(Buffer.from(b64, 'base64').toString('utf8')) || {};
+  } catch { return {}; }
+}
+
 // Sign in: run the loopback flow → get Google id_token → exchange at the Lore
-// server for a session JWT → store it. Returns { ok, user_id, email, scopes } or { ok:false, reason }.
+// server for a session JWT → store it. Also persists the Google display name as
+// the library owner so the greeting/avatar update. Returns { ok, user_id, email,
+// name, scopes } or { ok:false, reason }.
 ipcMain.handle('auth:login', async () => {
   try {
     const clientCfg = loadGoogleClient();
     if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Google sign-in isn’t configured in this build.' };
     const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url));
     if (!tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
+    const claims = decodeJwtClaims(tokens.id_token);
     const r = await fetch(`${BACKEND_URL()}/auth/google`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders() },
@@ -1215,8 +1228,18 @@ ipcMain.handle('auth:login', async () => {
     });
     const body = await r.json();
     if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
-    saveSession({ token: body.token, user_id: body.user_id, email: body.email, scopes: body.scopes });
-    return { ok: true, user_id: body.user_id, email: body.email, scopes: body.scopes };
+    const email = body.email || claims.email || null;
+    const name = body.name || claims.name || (email ? email.split('@')[0] : null);
+    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes });
+    // Persist the display name as the owner so the UI shows the real name (this is
+    // the "sign-in changed nothing" fix — the name now propagates to config).
+    try {
+      const c = loadConfig() || {};
+      if (name) c.owner = name;
+      if (email) c.ownerEmail = email;
+      saveConfig(c);
+    } catch { /* non-fatal */ }
+    return { ok: true, user_id: body.user_id, email, name, scopes: body.scopes };
   } catch (e) {
     return { ok: false, reason: e.message };
   }
@@ -1230,7 +1253,7 @@ ipcMain.handle('auth:status', async () => {
     const r = await fetch(`${BACKEND_URL()}/auth/me`, { headers: { Authorization: `Bearer ${sess.token}` } });
     if (!r.ok) return null;
     const me = await r.json();
-    return { user_id: me.user_id, email: sess.email, scopes: me.scopes };
+    return { user_id: me.user_id, email: sess.email, name: sess.name || (sess.email ? String(sess.email).split('@')[0] : null), picture: sess.picture || null, scopes: me.scopes };
   } catch { return null; }
 });
 

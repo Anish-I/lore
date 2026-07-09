@@ -86,7 +86,7 @@ function PlaceTab({ meta, active, count, onClick }) {
 
 function AvatarMenu({ authUser, theme, onToggleTheme, onSettings, onHooks, onManageTeam, onSignIn, onSignOut, ownerName }) {
   const [open, setOpen] = React.useState(false);
-  const who = (authUser && (authUser.email || authUser.user_id)) || ownerName || null;
+  const who = (authUser && (authUser.name || authUser.email || authUser.user_id)) || ownerName || null;
   const row = (icon, label, onClick, sub) => (
     <div key={label} onClick={() => { setOpen(false); if (onClick) onClick(); }}
       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', cursor: 'pointer', borderRadius: 8 }}
