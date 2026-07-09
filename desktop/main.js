@@ -685,6 +685,52 @@ ipcMain.handle('note:write', (_e, { path: p, text }) => {
   }
 });
 
+// ---------- IPC: inline images for the WYSIWYG editor ----------
+// Images live as REAL files under <vault>/assets/ and notes reference them as
+// `assets/<name>` (clean, portable markdown). The renderer's strict CSP blocks
+// file:// images, so display goes through a data: URL (assetDataUrl) rather than
+// a custom protocol — same on-disk result, no scheme/CSP surgery.
+const IMG_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp', avif: 'image/avif' };
+function assetDataUrl(abs) {
+  try {
+    const buf = fs.readFileSync(abs);
+    const ext = path.extname(abs).slice(1).toLowerCase();
+    return `data:${IMG_MIME[ext] || 'application/octet-stream'};base64,${buf.toString('base64')}`;
+  } catch { return null; }
+}
+// Copy a picked image into <vault>/assets/ and return its vault-relative path.
+ipcMain.handle('note:add-image', async () => {
+  const root = vaultRoot();
+  if (!root) return { ok: false, error: 'Open a library first.' };
+  const r = await dialog.showOpenDialog(win, {
+    title: 'Insert image', properties: ['openFile'],
+    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif'] }],
+  });
+  if (r.canceled || !r.filePaths || !r.filePaths[0]) return { ok: false, canceled: true };
+  try {
+    const src = r.filePaths[0];
+    const assetsDir = path.join(root, 'assets');
+    fs.mkdirSync(assetsDir, { recursive: true });
+    const ext = path.extname(src) || '.png';
+    const base = path.basename(src, ext).replace(/[^a-zA-Z0-9._-]+/g, '-').slice(0, 40) || 'image';
+    let name = `${base}${ext}`, i = 1;
+    while (fs.existsSync(path.join(assetsDir, name))) name = `${base}-${i++}${ext}`;
+    const dest = path.join(assetsDir, name);
+    fs.copyFileSync(src, dest);
+    return { ok: true, rel: `assets/${name}`, dataUrl: assetDataUrl(dest) };
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+});
+// Resolve a vault-relative (or contained absolute) asset path to a data: URL for
+// display. Path-guarded to the vault root.
+ipcMain.handle('asset:dataurl', (_e, rel) => {
+  const root = vaultRoot();
+  if (!root || !rel) return null;
+  const abs = path.isAbsolute(rel) ? rel : path.join(root, rel);
+  const normRoot = path.resolve(root);
+  if (!path.resolve(abs).startsWith(normRoot + path.sep) && path.resolve(abs) !== normRoot) return null;
+  return assetDataUrl(abs);
+});
+
 // ---------- IPC: backup mirror ----------
 ipcMain.handle('backup:pick-dir', async () => {
   const r = await dialog.showOpenDialog(win, {

@@ -27,8 +27,13 @@
       if (linkHref !== null) { if (c.type === 'text' || c.type === 'code_inline') linkText += c.content; continue; }
       if (c.type === 'code_inline') { runs.push({ code: true, x: c.content }); continue; }
       if (c.type === 'softbreak' || c.type === 'hardbreak') { runs.push({ x: ' ' }); continue; }
+      if (c.type === 'image') {
+        const src = (c.attrs || []).find((a) => a[0] === 'src');
+        runs.push({ img: src ? src[1] : '', x: (c.children || []).map((k) => k.content).join('') });
+        continue;
+      }
       if (c.type === 'text') { pushText(runs, c.content); continue; }
-      // em/strong/image markers: ignore the marker; text arrives via text children
+      // em/strong markers: ignore the marker; text arrives via text children
     }
     return runs.length ? runs : [{ x: inline.content || '' }];
   }

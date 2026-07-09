@@ -20,8 +20,23 @@ const edS = {
   context: { width: 'var(--context-width)', flexShrink: 0, background: 'var(--surface-panel)', borderLeft: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column' },
 };
 
+// Reading-view image: resolves a stored `assets/…` path to a data: URL (CSP-safe)
+// and renders it. Absolute http/data URLs render directly.
+function EdImg({ src, alt }) {
+  const [url, setUrl] = React.useState(/^(https?:|data:|blob:)/.test(src || '') ? src : null);
+  React.useEffect(() => {
+    if (url || !src || !(window.lore && window.lore.assetDataUrl)) return;
+    let live = true;
+    window.lore.assetDataUrl(src).then((u) => { if (live && u) setUrl(u); }).catch(() => {});
+    return () => { live = false; };
+  }, [src]);
+  if (!url) return <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-faint)' }}>🖼 {alt || src}</span>;
+  return <img src={url} alt={alt || ''} style={{ display: 'block', maxWidth: '100%', borderRadius: 'var(--radius-md)', margin: '10px 0' }} />;
+}
+
 function Runs({ runs, onOpen }) {
   return runs.map((r, i) => {
+    if (r.img) return <EdImg key={i} src={r.img} alt={r.x} />;
     if (r.link) return <WikiLink key={i} onClick={() => onOpen && onOpen(r.link)}>{r.x}</WikiLink>;
     if (r.mark) return <mark key={i} style={{ background: 'var(--highlight-bg)', color: 'var(--text-strong)', borderRadius: 2, padding: '0 2px' }}>{r.x}</mark>;
     if (r.code) return <code key={i} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.86em', background: 'var(--surface-inset)', padding: '0.1em 0.35em', borderRadius: 'var(--radius-sm)' }}>{r.x}</code>;
@@ -214,6 +229,160 @@ function VisibilityControl({ note, onSetScope }) {
   );
 }
 
+// Split a note's YAML frontmatter (preserved byte-for-byte) from its body.
+function edSplitFrontmatter(raw) {
+  const m = String(raw || '').match(/^(---\s*\r?\n[\s\S]*?\r?\n---\s*\r?\n?)/);
+  return m ? { fm: m[1], body: String(raw).slice(m[1].length) } : { fm: '', body: String(raw || '') };
+}
+
+// One toolbar button (Word-style). Uses onMouseDown preventDefault so clicking it
+// never steals the caret/selection from the editor (execCommand needs it live).
+function EdTbBtn({ icon, label, active, onClick, text }) {
+  const [hover, setHover] = React.useState(false);
+  return (
+    <button title={label} aria-label={label}
+      onMouseDown={(e) => e.preventDefault()} onClick={onClick}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', minWidth: 30, height: 30, padding: text ? '0 8px' : 0,
+        borderRadius: 7, border: '1px solid transparent', cursor: 'pointer',
+        background: active ? 'var(--brand-soft-bg)' : hover ? 'var(--surface-hover)' : 'transparent',
+        color: active ? 'var(--brand-fg)' : 'var(--text-body)',
+        fontFamily: 'var(--font-sans)', fontSize: 12.5, fontWeight: 600,
+      }}>
+      {icon ? <EdIcon name={icon} size={16} /> : text}
+    </button>
+  );
+}
+const edTbSep = () => <span style={{ width: 1, height: 20, background: 'var(--divider)', margin: '0 3px', flexShrink: 0 }} />;
+
+// Word-like WYSIWYG editor. Renders the note body as rich HTML (markdown-it),
+// edits it in a contentEditable with a formatting toolbar, and serializes back to
+// clean Markdown on save (frontmatter preserved, wikilinks/tags intact). A
+// "source" toggle exposes the raw markdown as a safety valve.
+function WysiwygEditor({ note, onExit, accent }) {
+  const ref = React.useRef(null);
+  const [showSource, setShowSource] = React.useState(false);
+  const [blockTag, setBlockTag] = React.useState('P');   // current block format (for toolbar active state)
+  const bodyRef = React.useRef(edSplitFrontmatter(note.raw).body);
+  const fmRef = React.useRef(edSplitFrontmatter(note.raw).fm);
+  const [source, setSource] = React.useState(bodyRef.current);
+  // Serialized form of the loaded content — the WYSIWYG normalizes markdown
+  // (e.g. `*item` → `- item`), so we compare against THIS, not the raw file, to
+  // decide "did the user actually change anything". Prevents rewriting (and
+  // churning the git history of) notes the user merely opened in edit mode.
+  const baselineRef = React.useRef(null);
+
+  const resolveImages = React.useCallback((el) => {
+    el.querySelectorAll('img').forEach((img) => {
+      const src = img.getAttribute('src') || '';
+      img.style.maxWidth = '100%';
+      if (/^(https?:|data:|blob:)/.test(src)) return;
+      img.dataset.rel = src;
+      if (window.lore && window.lore.assetDataUrl) {
+        window.lore.assetDataUrl(src).then((u) => { if (u) img.src = u; }).catch(() => {});
+      }
+    });
+  }, []);
+
+  // Render the body HTML into the editable whenever we (re)enter rich mode.
+  React.useEffect(() => {
+    if (showSource) return;
+    const el = ref.current; if (!el) return;
+    try { document.execCommand('styleWithCSS', false, false); } catch { /* tag-based marks */ }
+    el.innerHTML = window.markdownToHtmlBody(bodyRef.current);
+    resolveImages(el);
+    // Baseline = the loaded content as our serializer would emit it, so a no-op
+    // open→close doesn't count as an edit.
+    if (baselineRef.current === null) baselineRef.current = window.htmlToMarkdown(el);
+    el.focus();
+    const sel = window.getSelection();
+    if (sel && el.lastChild) { const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); sel.removeAllRanges(); sel.addRange(r); }
+  }, [showSource, resolveImages]);
+
+  const currentBody = () => (showSource ? source : window.htmlToMarkdown(ref.current || ''));
+  const save = () => {
+    const body = currentBody();
+    if (baselineRef.current !== null && body === baselineRef.current) return; // unchanged — don't rewrite
+    baselineRef.current = body;
+    if (note.onEdit) note.onEdit((fmRef.current || '') + body);
+  };
+  const commitExit = () => { save(); onExit && onExit(); };
+
+  const exec = (cmd, val) => { document.execCommand(cmd, false, val); if (ref.current) ref.current.focus(); syncBlock(); };
+  const fmt = (tag) => { document.execCommand('formatBlock', false, tag); if (ref.current) ref.current.focus(); syncBlock(); };
+  const syncBlock = () => {
+    try {
+      const b = document.queryCommandValue('formatBlock');
+      setBlockTag(b ? String(b).toUpperCase() : 'P');
+    } catch { /* ignore */ }
+  };
+  const insertLink = () => { const url = window.prompt('Link URL (https://…):'); if (url) exec('createLink', url.trim()); };
+  const insertImage = async () => {
+    if (!window.lore || !window.lore.addImage) return;
+    try {
+      const r = await window.lore.addImage();
+      if (r && r.ok) {
+        if (ref.current) ref.current.focus();
+        document.execCommand('insertHTML', false, `<img src="${r.dataUrl}" data-rel="${r.rel}" alt="" style="max-width:100%" />`);
+      }
+    } catch { /* cancelled or no library */ }
+  };
+  const toggleSource = () => {
+    if (!showSource) { bodyRef.current = window.htmlToMarkdown(ref.current || ''); setSource(bodyRef.current); }
+    else { bodyRef.current = source; }
+    setShowSource((s) => !s);
+  };
+
+  const isH = (t) => blockTag === t;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}
+      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) commitExit(); }}
+      onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); commitExit(); } }}>
+      {/* Word-style toolbar */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', padding: '7px 44px', borderBottom: '1px solid var(--divider)', background: 'var(--surface-base)', position: 'sticky', top: 0, zIndex: 5 }}>
+        {!showSource && (
+          <React.Fragment>
+            <EdTbBtn icon="bold" label="Bold (Ctrl+B)" onClick={() => exec('bold')} />
+            <EdTbBtn icon="italic" label="Italic (Ctrl+I)" onClick={() => exec('italic')} />
+            <EdTbBtn icon="strikethrough" label="Strikethrough" onClick={() => exec('strikeThrough')} />
+            {edTbSep()}
+            <EdTbBtn text="H1" label="Heading 1" active={isH('H1')} onClick={() => fmt('H1')} />
+            <EdTbBtn text="H2" label="Heading 2" active={isH('H2')} onClick={() => fmt('H2')} />
+            <EdTbBtn text="H3" label="Heading 3" active={isH('H3')} onClick={() => fmt('H3')} />
+            <EdTbBtn icon="pilcrow" label="Normal text" active={isH('P') || isH('DIV')} onClick={() => fmt('P')} />
+            {edTbSep()}
+            <EdTbBtn icon="list" label="Bulleted list" onClick={() => exec('insertUnorderedList')} />
+            <EdTbBtn icon="list-ordered" label="Numbered list" onClick={() => exec('insertOrderedList')} />
+            <EdTbBtn icon="quote" label="Quote" active={isH('BLOCKQUOTE')} onClick={() => fmt('BLOCKQUOTE')} />
+            <EdTbBtn icon="code" label="Code block" active={isH('PRE')} onClick={() => fmt('PRE')} />
+            {edTbSep()}
+            <EdTbBtn icon="link" label="Insert link" onClick={insertLink} />
+            <EdTbBtn icon="image" label="Insert image" onClick={insertImage} />
+            <EdTbBtn icon="remove-formatting" label="Clear formatting" onClick={() => exec('removeFormat')} />
+          </React.Fragment>
+        )}
+        <div style={{ flex: 1 }} />
+        <EdTbBtn icon={showSource ? 'eye' : 'code-2'} label={showSource ? 'Rich view' : 'Markdown source'} active={showSource} onClick={toggleSource} />
+        <EdTbBtn text="Done" label="Save & close (Ctrl+S)" onClick={commitExit} />
+      </div>
+
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {showSource ? (
+          <div style={edS.col}>
+            <textarea autoFocus value={source} onChange={(e) => { setSource(e.target.value); bodyRef.current = e.target.value; }}
+              style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 340px)', resize: 'none', border: 'none', background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--amber-400)' }} />
+          </div>
+        ) : (
+          <div className="ak-md" ref={ref} contentEditable suppressContentEditableWarning
+            onKeyUp={syncBlock} onMouseUp={syncBlock}
+            style={{ ...edS.col, minHeight: 'calc(100vh - 320px)', outline: 'none', caretColor: accent || 'var(--amber-400)', paddingTop: 24, paddingBottom: 120 }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers, onTogglePane, mode, onMode, onOpen, scope, onScope, scopeOptions, onSetScope, hideTabs, hideToolbar, accent, footer }) {
   if (bucket) {
     return (
@@ -249,25 +418,18 @@ function Editor({ note, bucket, tabs, activeId, onTab, onCloseTab, onCloseOthers
       {/* The demo's calm editor: no Read/Edit toggle. Reading view by default;
           CLICK the body to edit (textarea autofocuses); blur or Cmd/Ctrl-S saves
           and returns to reading. */}
-      <div style={edS.scroll}>
-        {mode === 'edit'
-          ? <div style={edS.col}>
-              <textarea autoFocus value={note.raw || ''} onChange={(e) => note.onEdit && note.onEdit(e.target.value)}
-                onBlur={() => onMode && onMode('read')}
-                onKeyDown={(e) => {
-                  if ((e.metaKey || e.ctrlKey) && String(e.key).toLowerCase() === 's') { e.preventDefault(); onMode && onMode('read'); }
-                }}
-                style={{ display: 'block', width: '100%', minHeight: 'calc(100vh - 340px)', resize: 'none', border: 'none', borderRadius: 0, background: 'transparent', color: 'var(--text-body)', fontFamily: 'var(--font-mono)', fontSize: 14, lineHeight: 1.8, padding: 0, outline: 'none', boxSizing: 'border-box', caretColor: 'var(--amber-400)' }} />
-            </div>
-          : <div style={edS.col} onClick={() => onMode && onMode('edit')} title="Click to edit">
+      {mode === 'edit'
+        ? <WysiwygEditor note={note} accent={accent} onExit={() => onMode && onMode('read')} />
+        : <div style={edS.scroll}>
+            <div style={edS.col} onClick={() => onMode && onMode('edit')} title="Click to edit">
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '0 0 18px', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' }}>
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{note.path || (note.title + '.md')}</span>
                 {note.updated && <span style={{ flexShrink: 0 }}>· updated {note.updated}</span>}
               </div>
               {note.body.map((b, i) => <Block key={i} b={b} note={note} onOpen={onOpen} accent={accent} />)}
               {footer}
-            </div>}
-      </div>
+            </div>
+          </div>}
     </div>
   );
 }

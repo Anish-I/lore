@@ -17,6 +17,11 @@ contextBridge.exposeInMainWorld('lore', {
   readTree:       (root)       => ipcRenderer.invoke('vault:tree', root),
   readNote:       (path)       => ipcRenderer.invoke('note:read', path),
   writeNote:      (path, text) => ipcRenderer.invoke('note:write', { path, text }),
+  // Inline images for the WYSIWYG editor. addImage() opens a picker, copies the
+  // file into <vault>/assets/, and returns { ok, rel, dataUrl }. assetDataUrl(rel)
+  // resolves a stored `assets/…` path to a data: URL for display under the CSP.
+  addImage:       ()          => ipcRenderer.invoke('note:add-image'),
+  assetDataUrl:   (rel)       => ipcRenderer.invoke('asset:dataurl', rel),
   // Change a note's scope (confidentiality). Broadening is blocked if the note
   // has secrets unless force:true. Resolves {ok, scope, broadened} or {ok:false, reason}.
   setNoteScope:   (path, scope, force) => ipcRenderer.invoke('note:set-scope', { path, scope, force }),
