@@ -1656,7 +1656,11 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
       }),
     });
     const result = await r.json();
-    if (r.ok) { try { await executeAutoFileMoves(result); } catch { /* moves retry next run */ } }
+    if (r.ok) {
+      try { await executeAutoFileMoves(result); } catch { /* moves retry next run */ }
+      // Stamp when the library was last tidied/backfilled so the UI can show it.
+      try { const c2 = loadConfig() || {}; c2.upkeepLastRun = new Date().toISOString(); saveConfig(c2); } catch { /* non-fatal */ }
+    }
     refreshManifests('upkeep', `upkeep run — folded ${result.folded || 0}, topics ${result.topics || 0}`);
     // Notify the renderer so it can refresh the graph / status panel.
     if (win && !win.isDestroyed())

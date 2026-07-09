@@ -125,6 +125,13 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const [upkeepRunning, setUpkeepRunning] = React.useState(false);
   const [upkeepResult, setUpkeepResult] = React.useState(null); // {dateNotes, topics, folded} | {error}
   const [upkeepStatusLine, setUpkeepStatusLine] = React.useState('');
+  // Automatic organization knobs: propose Sections when N+ related notes cluster.
+  const [autoClassify, setAutoClassify] = React.useState(!!(config && config.autoClassify));
+  const [sectionThreshold, setSectionThreshold] = React.useState(config && config.sectionThreshold || 5);
+  const [lastTidied, setLastTidied] = React.useState(config && config.upkeepLastRun || null);
+  // Folder read-scope: which top-level folders Lore is allowed to read/index.
+  const [folders, setFolders] = React.useState(null); // [names] | null (loading)
+  const [excludes, setExcludes] = React.useState(config && config.excludes || []);
 
   // AI provider (graph enrichment): codex sub / claude sub / byok
   const [providers, setProviders] = React.useState(null); // { codex, claude, byok } | null
@@ -145,7 +152,13 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     }
     if (window.lore && window.lore.upkeep && window.lore.upkeep.status) {
       window.lore.upkeep.status().
-      then((st) => {if (st) setUpkeepStatusLine(stText(st, ''));}).
+      then((st) => {
+        // Only surface a friendly line — never dump the raw status object (a
+        // bare {lastRun:null} used to render as JSON). The "Last tidied" row
+        // below carries the timestamp.
+        if (st && st.lastRun) setUpkeepStatusLine(`Last run ${stAgo(st.lastRun) || ''}.`);else
+        if (st && st.error) setUpkeepStatusLine('');
+      }).
       catch(() => {});
     }
     if (window.lore && window.lore.config && window.lore.config.get) {
@@ -159,6 +172,17 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
         setBackupDir(c && c.backupDir || '');
         setAutoFileObvious(!!(c && c.autoFileObvious === true));
         setUpkeepAuto(!(c && c.upkeepAuto === false));
+        setAutoClassify(!!(c && c.autoClassify === true));
+        setSectionThreshold(c && c.sectionThreshold || 5);
+        setLastTidied(c && c.upkeepLastRun || null);
+        setExcludes(c && c.excludes || []);
+        // Load the vault's top-level folders for the read-scope picker.
+        const root = c && Array.isArray(c.roots) && c.roots[0];
+        if (root && window.lore && window.lore.readTree) {
+          window.lore.readTree(root).
+          then((t) => setFolders((t && t.tree ? t.tree : []).filter((n) => n.kind === 'folder').map((n) => n.name).sort((a, b) => a.localeCompare(b)))).
+          catch(() => setFolders([]));
+        } else setFolders([]);
       }).
       catch(() => {});
     }
@@ -261,6 +285,32 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     if (window.lore && window.lore.config && window.lore.config.set) {
       window.lore.config.set({ autoFileObvious: !!v }).catch(() => {});
     }
+  };
+
+  const stSetAutoClassify = (v) => {
+    setAutoClassify(v);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      window.lore.config.set({ autoClassify: !!v }).catch(() => {});
+    }
+  };
+
+  const stSetSectionThreshold = (v) => {
+    const n = Math.max(3, Math.min(20, Number(v) || 5));
+    setSectionThreshold(n);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      window.lore.config.set({ sectionThreshold: n }).catch(() => {});
+    }
+  };
+
+  // Toggle whether Lore reads a given top-level folder (persists cfg.excludes).
+  const stToggleFolderRead = (name) => {
+    setExcludes((prev) => {
+      const next = prev.includes(name) ? prev.filter((x) => x !== name) : [...prev, name];
+      if (window.lore && window.lore.config && window.lore.config.set) {
+        window.lore.config.set({ excludes: next }).catch(() => {});
+      }
+      return next;
+    });
   };
 
   const stSetDefaultScope = (id) => {
@@ -702,10 +752,39 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
 
 
 
-    React.createElement(Section, { icon: "refresh-ccw", title: "Tidy up" }, /*#__PURE__*/
+    React.createElement(Section, { icon: "refresh-ccw", title: /*#__PURE__*/
+      React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 7 } }, "Tidy up & auto-organize",
+
+      window.LoreHelpHint && /*#__PURE__*/React.createElement(window.LoreHelpHint, { tip: "Lore keeps your library tidy on its own: it folds throwaway date/session notes into durable topic pages, and when enough pages cluster around one subject it proposes grouping them into a Section (a folder/column). You stay in control \u2014 proposals only apply when you accept them." })
+      ) }, /*#__PURE__*/
+
     React.createElement(Row, { label: "Tidy automatically", hint: identityReady ? 'Lore folds date/session notes into durable topic notes automatically after each capture.' : 'Finish setup before enabling automatic tidying.' }, /*#__PURE__*/
     React.createElement(StSwitch, { checked: upkeepAuto && identityReady, onChange: stSetUpkeepAuto, disabled: !identityReady })
     ), /*#__PURE__*/
+    React.createElement(Row, { label: /*#__PURE__*/
+      React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 7 } }, "Suggest Sections automatically",
+
+      window.LoreHelpHint && /*#__PURE__*/React.createElement(window.LoreHelpHint, { tip: "When on, Lore watches for pages that cluster around the same subject and proposes a Section (a folder/column) to group them. Nothing moves until you accept the suggestion." })
+      ),
+      hint: "Propose grouping related pages into Sections (columns) as your library grows." }, /*#__PURE__*/
+    React.createElement(StSwitch, { checked: autoClassify, onChange: stSetAutoClassify, disabled: !identityReady })
+    ), /*#__PURE__*/
+    React.createElement(Row, { label: `Group into a Section after ${sectionThreshold} related pages`,
+      hint: "How many pages must cluster around a subject before Lore proposes a Section for them." }, /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, minWidth: 190 } }, /*#__PURE__*/
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' } }, "3"), /*#__PURE__*/
+    React.createElement("input", { type: "range", min: 3, max: 20, step: 1, value: sectionThreshold,
+      onChange: (e) => stSetSectionThreshold(e.target.value), disabled: !identityReady,
+      style: { flex: 1, accentColor: 'var(--brand-fg)', cursor: identityReady ? 'pointer' : 'not-allowed' } }), /*#__PURE__*/
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' } }, "20"), /*#__PURE__*/
+    React.createElement("span", { style: { minWidth: 20, textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: 12.5, fontWeight: 600, color: 'var(--brand-fg)' } }, sectionThreshold)
+    )
+    ),
+    lastTidied && /*#__PURE__*/
+    React.createElement(Row, { label: "Last tidied", hint: "When Lore last folded notes and refreshed the library." }, /*#__PURE__*/
+    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' } }, stAgo(lastTidied) || '—')
+    ), /*#__PURE__*/
+
     React.createElement(Row, { label: "Tidy up now", hint: "Detect ephemeral notes (daily, session, sync) and consolidate them into durable topic notes.", last: true }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8 } },
     upkeepRunning && /*#__PURE__*/
@@ -739,6 +818,28 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
 
     )
 
+    ), /*#__PURE__*/
+
+
+    React.createElement(Section, { icon: "folder-tree", title: /*#__PURE__*/
+      React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 7 } }, "Folders Lore reads",
+
+      window.LoreHelpHint && /*#__PURE__*/React.createElement(window.LoreHelpHint, { tip: "Choose which top-level folders in your library Lore is allowed to read and index. Turn one off to keep it private from search, Ask, and the graph. Changes apply on the next Refresh (or restart)." })
+      ) },
+
+    folders === null && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '12px 16px', fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' } }, "Loading folders\u2026"),
+
+    folders && folders.length === 0 && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '12px 16px', fontSize: 12.5, color: 'var(--text-subtle)' } }, "No sub-folders yet \u2014 everything in your library is read."),
+
+    folders && folders.map((name, i) => /*#__PURE__*/
+    React.createElement(Row, { key: name, label: name,
+      hint: excludes.includes(name) ? 'Hidden from Lore — not read, searched, or in the graph.' : 'Lore reads and indexes this folder.',
+      last: i === folders.length - 1 }, /*#__PURE__*/
+    React.createElement(StSwitch, { checked: !excludes.includes(name), onChange: () => stToggleFolderRead(name) })
+    )
+    )
     ),
 
     s.account && s.account.name && /*#__PURE__*/
