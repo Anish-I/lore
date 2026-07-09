@@ -201,7 +201,7 @@ function AkAnswerRow({ children, streaming }) {
 
 function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource, sourceOptions, identityReady, onSetup,
   threads, onLoadThreads, onResumeThread, onDeleteThread, onNewChat, onCiteScope, onOpenCitation, providers, defaultProvider,
-  ctx, onClearCtx, scopeChip }) {
+  ctx, onClearCtx, scopeChip, inline }) {
   const [draft, setDraft] = React.useState('');
   // Answering engine = the user's own subscriptions/key (same providers as
   // Settings -> AI provider), defaulting to their Settings choice. 'local' is
@@ -230,9 +230,49 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     });
   };
 
+  // Inline mode: the home area's MAIN chat — full width on the canvas, content
+  // centered in a reading column, with visible History + Model buttons.
+  const panelStyle = inline ?
+  { flex: 1, minWidth: 0, background: 'var(--surface-canvas)', display: 'flex', flexDirection: 'column' } :
+  akS.panel;
+  const colStyle = inline ? { maxWidth: 760, width: '100%', margin: '0 auto' } : { width: '100%' };
+  const modelBtn = /*#__PURE__*/
+  React.createElement("div", { style: { position: 'relative' } }, /*#__PURE__*/
+  React.createElement("button", { onClick: () => setCog((c) => !c), title: "Choose the answering model & source",
+    style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', border: '1px solid var(--border)', borderRadius: 8, background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-body)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 12 } }, /*#__PURE__*/
+  React.createElement(AkIcon, { name: "cpu", size: 13, style: { color: 'var(--brand-fg)' } }), /*#__PURE__*/
+  React.createElement("span", { style: { maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, providerLabel), /*#__PURE__*/
+  React.createElement(AkIcon, { name: "chevron-down", size: 12, style: { color: 'var(--text-faint)' } })
+  ),
+  cog && /*#__PURE__*/
+  React.createElement(React.Fragment, null, /*#__PURE__*/
+  React.createElement("div", { onClick: () => setCog(false), style: { position: 'fixed', inset: 0, zIndex: 40 } }), /*#__PURE__*/
+  React.createElement("div", { style: { position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: 232, padding: 11, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 41, display: 'flex', flexDirection: 'column', gap: 10 } }, /*#__PURE__*/
+  React.createElement("label", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' } }, "Model", /*#__PURE__*/
+  React.createElement("select", { value: provider, onChange: (e) => setModel(e.target.value), style: akSel },
+  available.map((m) => /*#__PURE__*/React.createElement("option", { key: m.id, value: m.id }, m.label))
+  )
+  ), /*#__PURE__*/
+  React.createElement("label", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' } }, "Source", /*#__PURE__*/
+  React.createElement("select", { value: source || 'all', onChange: (e) => onSource && onSource(e.target.value), style: akSel },
+  (sourceOptions && sourceOptions.length ? sourceOptions : [{ value: 'all', label: 'All configured' }]).map((o) => /*#__PURE__*/React.createElement("option", { key: o.value, value: o.value }, o.label))
+  )
+  )
+  )
+  )
+
+  );
+
+
   return (/*#__PURE__*/
-    React.createElement("div", { style: akS.panel }, /*#__PURE__*/
-    React.createElement("div", { style: { ...akS.header, position: 'relative' } }, /*#__PURE__*/
+    React.createElement("div", { style: panelStyle }, /*#__PURE__*/
+    React.createElement("div", { style: { ...akS.header, position: 'relative', ...(inline ? { padding: '10px 20px' } : {}) } },
+    inline && onClose && /*#__PURE__*/
+    React.createElement("button", { onClick: onClose, title: "Back to your pages",
+      style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-body)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 12, flexShrink: 0 } }, /*#__PURE__*/
+    React.createElement(AkIcon, { name: "arrow-left", size: 14 }), "Pages"
+    ), /*#__PURE__*/
+
     React.createElement("span", { style: { width: 30, height: 30, borderRadius: 9, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)', flexShrink: 0 } }, /*#__PURE__*/
     React.createElement(AkIcon, { name: "sparkles", size: 16, style: { color: 'var(--brand-fg)' } })
     ), /*#__PURE__*/
@@ -240,16 +280,20 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' } }, "Ask Lore"), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 11, color: 'var(--text-faint)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, "Answers only from your pages \u2014 with receipts")
     ),
+    inline && modelBtn,
     onNewChat && messages.length > 0 && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "plus", label: "New conversation", size: "sm", onClick: onNewChat }),
-    onResumeThread && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "history", label: "Past conversations", size: "sm", onClick: openHistory }),
-    onClose && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "x", label: "Close Ask", size: "sm", onClick: onClose }),
+    onResumeThread && (inline ? /*#__PURE__*/
+    React.createElement("button", { onClick: openHistory, title: "Past conversations", style: { display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-body)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 12 } }, /*#__PURE__*/React.createElement(AkIcon, { name: "history", size: 13 }), "History") : /*#__PURE__*/
+    React.createElement(AkIconBtn, { icon: "history", label: "Past conversations", size: "sm", onClick: openHistory })),
+    !inline && onClose && /*#__PURE__*/React.createElement(AkIconBtn, { icon: "x", label: "Close Ask", size: "sm", onClick: onClose }),
     historyOpen && /*#__PURE__*/
     React.createElement(AskHistoryDrawer, { threads: threads, onClose: () => setHistoryOpen(false),
       onResume: onResumeThread, onDelete: (id) => {if (onDeleteThread) onDeleteThread(id);} })
 
     ), /*#__PURE__*/
 
-    React.createElement("div", { style: akS.scroll, ref: scrollRef },
+    React.createElement("div", { style: akS.scroll, ref: scrollRef }, /*#__PURE__*/
+    React.createElement("div", { style: colStyle },
     messages.length === 0 && /*#__PURE__*/
     React.createElement("div", { style: { padding: '20px 6px' } }, /*#__PURE__*/
     React.createElement("img", { src: "design/assets/sprites/lore-familiar.png", alt: "", "aria-hidden": "true",
@@ -315,11 +359,12 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     )
 
     )
+    )
     ), /*#__PURE__*/
 
     React.createElement("div", { style: akS.composerWrap }, /*#__PURE__*/
     React.createElement("div", { style: akS.scrim }), /*#__PURE__*/
-    React.createElement("div", { style: akS.composer }, /*#__PURE__*/
+    React.createElement("div", { style: inline ? { ...akS.composer, maxWidth: 760, margin: '0 auto' } : akS.composer }, /*#__PURE__*/
     React.createElement("textarea", {
       value: draft, onChange: (e) => setDraft(e.target.value), rows: 2,
       onKeyDown: (e) => {if (e.key === 'Enter' && !e.shiftKey) {e.preventDefault();send();}},
@@ -345,10 +390,12 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     React.createElement(AkIcon, { name: "telescope", size: 11, style: { flexShrink: 0 } }), /*#__PURE__*/
     React.createElement("span", { style: { maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, "Looking in: ", scopeChip.label)
     ) :
-    null, /*#__PURE__*/
+    null,
+    !inline && /*#__PURE__*/
     React.createElement("button", { onClick: () => setCog((c) => !c), title: "Model, source & citations", style: { display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 8px', border: '1px solid var(--border)', borderRadius: 999, background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10 } }, /*#__PURE__*/
     React.createElement(AkIcon, { name: "sliders-horizontal", size: 11 })
     ), /*#__PURE__*/
+
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
     React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', flexShrink: 0 } }, /*#__PURE__*/React.createElement(AkKbd, null, "\u21B5")), /*#__PURE__*/
     React.createElement("button", { onClick: () => send(), disabled: asking || !identityReady || !draft.trim(), "aria-label": "Send question", style: {
@@ -357,7 +404,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
         background: 'var(--brand-bg)', color: 'var(--text-onbrand)', opacity: asking || !identityReady || !draft.trim() ? 0.5 : 1
       } }, /*#__PURE__*/React.createElement(AkIcon, { name: "arrow-up", size: 16 })),
 
-    cog && /*#__PURE__*/
+    !inline && cog && /*#__PURE__*/
     React.createElement("div", { style: { position: 'absolute', bottom: 32, left: 0, width: 232, padding: 11, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10 } }, /*#__PURE__*/
     React.createElement("label", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' } }, "Model", /*#__PURE__*/
     React.createElement("select", { value: provider, onChange: (e) => setModel(e.target.value), style: akSel },

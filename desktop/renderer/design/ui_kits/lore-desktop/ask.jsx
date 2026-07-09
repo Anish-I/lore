@@ -201,7 +201,7 @@ function AkAnswerRow({ children, streaming }) {
 
 function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSource, sourceOptions, identityReady, onSetup,
   threads, onLoadThreads, onResumeThread, onDeleteThread, onNewChat, onCiteScope, onOpenCitation, providers, defaultProvider,
-  ctx, onClearCtx, scopeChip }) {
+  ctx, onClearCtx, scopeChip, inline }) {
   const [draft, setDraft] = React.useState('');
   // Answering engine = the user's own subscriptions/key (same providers as
   // Settings -> AI provider), defaulting to their Settings choice. 'local' is
@@ -230,9 +230,49 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
     });
   };
 
+  // Inline mode: the home area's MAIN chat — full width on the canvas, content
+  // centered in a reading column, with visible History + Model buttons.
+  const panelStyle = inline
+    ? { flex: 1, minWidth: 0, background: 'var(--surface-canvas)', display: 'flex', flexDirection: 'column' }
+    : akS.panel;
+  const colStyle = inline ? { maxWidth: 760, width: '100%', margin: '0 auto' } : { width: '100%' };
+  const modelBtn = (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setCog((c) => !c)} title="Choose the answering model & source"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', border: '1px solid var(--border)', borderRadius: 8, background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-body)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 12 }}>
+        <AkIcon name="cpu" size={13} style={{ color: 'var(--brand-fg)' }} />
+        <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{providerLabel}</span>
+        <AkIcon name="chevron-down" size={12} style={{ color: 'var(--text-faint)' }} />
+      </button>
+      {cog && (
+        <React.Fragment>
+          <div onClick={() => setCog(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+          <div style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, width: 232, padding: 11, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 41, display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }}>Model
+              <select value={provider} onChange={(e) => setModel(e.target.value)} style={akSel}>
+                {available.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+            </label>
+            <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }}>Source
+              <select value={source || 'all'} onChange={(e) => onSource && onSource(e.target.value)} style={akSel}>
+                {(sourceOptions && sourceOptions.length ? sourceOptions : [{ value: 'all', label: 'All configured' }]).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </label>
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+
   return (
-    <div style={akS.panel}>
-      <div style={{ ...akS.header, position: 'relative' }}>
+    <div style={panelStyle}>
+      <div style={{ ...akS.header, position: 'relative', ...(inline ? { padding: '10px 20px' } : {}) }}>
+        {inline && onClose && (
+          <button onClick={onClose} title="Back to your pages"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-body)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 12, flexShrink: 0 }}>
+            <AkIcon name="arrow-left" size={14} />Pages
+          </button>
+        )}
         <span style={{ width: 30, height: 30, borderRadius: 9, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)', flexShrink: 0 }}>
           <AkIcon name="sparkles" size={16} style={{ color: 'var(--brand-fg)' }} />
         </span>
@@ -240,9 +280,12 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>Ask Lore</div>
           <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Answers only from your pages — with receipts</div>
         </div>
+        {inline && modelBtn}
         {onNewChat && messages.length > 0 && <AkIconBtn icon="plus" label="New conversation" size="sm" onClick={onNewChat} />}
-        {onResumeThread && <AkIconBtn icon="history" label="Past conversations" size="sm" onClick={openHistory} />}
-        {onClose && <AkIconBtn icon="x" label="Close Ask" size="sm" onClick={onClose} />}
+        {onResumeThread && (inline
+          ? <button onClick={openHistory} title="Past conversations" style={{ display: 'inline-flex', alignItems: 'center', gap: 6, height: 28, padding: '0 10px', borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text-body)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 12 }}><AkIcon name="history" size={13} />History</button>
+          : <AkIconBtn icon="history" label="Past conversations" size="sm" onClick={openHistory} />)}
+        {!inline && onClose && <AkIconBtn icon="x" label="Close Ask" size="sm" onClick={onClose} />}
         {historyOpen && (
           <AskHistoryDrawer threads={threads} onClose={() => setHistoryOpen(false)}
             onResume={onResumeThread} onDelete={(id) => { if (onDeleteThread) onDeleteThread(id); }} />
@@ -250,6 +293,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
       </div>
 
       <div style={akS.scroll} ref={scrollRef}>
+       <div style={colStyle}>
         {messages.length === 0 && (
           <div style={{ padding: '20px 6px' }}>
             <img src="design/assets/sprites/lore-familiar.png" alt="" aria-hidden="true"
@@ -315,11 +359,12 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
               </div>
             )
         ))}
+       </div>
       </div>
 
       <div style={akS.composerWrap}>
         <div style={akS.scrim} />
-        <div style={akS.composer}>
+        <div style={inline ? { ...akS.composer, maxWidth: 760, margin: '0 auto' } : akS.composer}>
           <textarea
             value={draft} onChange={(e) => setDraft(e.target.value)} rows={2}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
@@ -346,9 +391,11 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
                 <span style={{ maxWidth: 150, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Looking in: {scopeChip.label}</span>
               </button>
             ) : null}
+            {!inline && (
             <button onClick={() => setCog((c) => !c)} title="Model, source & citations" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, height: 24, padding: '0 8px', border: '1px solid var(--border)', borderRadius: 999, background: cog ? 'var(--surface-raised)' : 'transparent', color: 'var(--text-faint)', cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 10 }}>
               <AkIcon name="sliders-horizontal" size={11} />
             </button>
+            )}
             <div style={{ flex: 1 }} />
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)', flexShrink: 0 }}><AkKbd>↵</AkKbd></span>
             <button onClick={() => send()} disabled={asking || !identityReady || !draft.trim()} aria-label="Send question" style={{
@@ -357,7 +404,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
               background: 'var(--brand-bg)', color: 'var(--text-onbrand)', opacity: asking || !identityReady || !draft.trim() ? 0.5 : 1,
             }}><AkIcon name="arrow-up" size={16} /></button>
 
-            {cog && (
+            {!inline && cog && (
               <div style={{ position: 'absolute', bottom: 32, left: 0, width: 232, padding: 11, background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', borderRadius: 'var(--radius-md)', boxShadow: 'var(--shadow-lg)', zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <label style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-muted)' }}>Model
                   <select value={provider} onChange={(e) => setModel(e.target.value)} style={akSel}>

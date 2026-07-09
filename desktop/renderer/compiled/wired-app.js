@@ -367,6 +367,7 @@ function App() {
   const [moveOpen, setMoveOpen] = React.useState(false); // "Move…" place dialog
   const [mapOpen, setMapOpen] = React.useState(false); // full-screen knowledge map overlay
   const [refreshing, setRefreshing] = React.useState(false); // ribbon "Refresh" (upkeep re-scan) in flight
+  const [homeChat, setHomeChat] = React.useState(false); // home "Ask" box → inline MAIN chat (collapses the page grid)
   const [authUser, setAuthUser] = React.useState(null); // {user_id, email, scopes} | null — avatar menu
   const [askCtx, setAskCtx] = React.useState(null); // {id, title} — "About: {page}" chat context chip
   const [noteMeta, setNoteMeta] = React.useState({}); // id -> {snippet} card-snippet cache
@@ -632,6 +633,7 @@ function App() {
   const railActive = kbFilter.length === 1 ? kbFilter[0] : 'all';
   const onRailSelect = React.useCallback((name) => {
     setKbFilter(name === 'all' ? [] : [name]);
+    setHomeChat(false); // picking a section shows its pages, not the chat
   }, []);
 
   // Card snippets — lazy readNote for the first 60 visible cards, ~6 at a time.
@@ -1319,7 +1321,10 @@ function App() {
 
   const ask = async (q, model, provider) => {
     if (asking) return;
-    setAskOpen(true);
+    // NB: ask() no longer force-opens the docked panel — the caller owns which
+    // surface shows (home drives the inline main chat; the docked panel is
+    // already open when it calls this). This is what makes the home "Ask" box
+    // the MAIN chat instead of popping the side panel.
     setAsking(true);
     markStep('asked');
     // Follow-ups: hand the backend the running conversation (it uses the last 6 turns).
@@ -1485,6 +1490,17 @@ function App() {
     threads: askThreads, onLoadThreads: loadAskThreads, onResumeThread: resumeAskThread, onDeleteThread: deleteAskThread, onNewChat: () => {newAskChat();setAskCtx(null);}, onCiteScope: pushCitationScope, onOpenCitation: openCitation, providers: llmProviders, defaultProvider: appConfig && appConfig.llmProvider || 'claude',
     ctx: askCtx, onClearCtx: () => setAskCtx(null), scopeChip: askScopeChip });
 
+  // The home area's INLINE main chat — same engine/history/model controls as the
+  // docked panel, but full width in place of the page grid. Closing returns to
+  // the grid (the conversation is kept).
+  const homeAskPanel = /*#__PURE__*/React.createElement(AskPanel, { inline: true, messages: messages, asking: asking, suggestions: askSuggestions, onSend: ask,
+    onClose: () => setHomeChat(false), source: askSource, onSource: setAskSource, sourceOptions: askSourceOptions,
+    identityReady: identityReady, onSetup: () => {setView('settings');setShowOnboarding(true);},
+    threads: askThreads, onLoadThreads: loadAskThreads, onResumeThread: resumeAskThread, onDeleteThread: deleteAskThread,
+    onNewChat: () => {newAskChat();setAskCtx(null);}, onCiteScope: pushCitationScope, onOpenCitation: openCitation,
+    providers: llmProviders, defaultProvider: appConfig && appConfig.llmProvider || 'claude',
+    ctx: askCtx, onClearCtx: () => setAskCtx(null), scopeChip: askScopeChip });
+
   const EmptyEditor = () => {
     const [draftQ, setDraftQ] = React.useState('');
     const submitAsk = () => {
@@ -1545,7 +1561,7 @@ function App() {
       onSignIn: signIn, onSignOut: signOut }), /*#__PURE__*/
     React.createElement(Ribbon, { place: place, askOpen: askOpen, mapOpen: mapOpen, wizardsOpen: view === 'wizards',
       canMove: Boolean(activeNote),
-      onHome: () => {setMapOpen(false);setView('workspace');setActiveId(null);setKbFilter([]);},
+      onHome: () => {setMapOpen(false);setView('workspace');setActiveId(null);setKbFilter([]);setHomeChat(false);},
       onSearch: () => setSearchOpen(true),
       onSettings: () => setView('settings'),
       onRefresh: async () => {
@@ -1606,12 +1622,14 @@ function App() {
         hideTabs: true, hideToolbar: true,
         accent: (window.LorePlaceMeta[placeOfScope(editorNote.scope)] || {}).fg,
         footer: RelatedPages ? /*#__PURE__*/React.createElement(RelatedPages, { connections: connections, onOpen: openNoteFromBacklink }) : null }) }
-    ) : /*#__PURE__*/
+    ) :
+    homeChat ?
+    homeAskPanel : /*#__PURE__*/
 
     React.createElement(HomeGrid, { place: place, theme: theme,
       ownerName: authUser && authUser.email && authUser.email.split('@')[0] || appConfig && appConfig.owner || null,
       totalCount: placeCounts.my, newCount: newCount,
-      suggestions: askSuggestions, onAsk: (q) => ask(q),
+      suggestions: askSuggestions, onAsk: (q) => {setHomeChat(true);ask(q);},
       checklist: {
         imported: Boolean(treeData && treeData.indexed > 0 || allNotes.length > 0),
         opened: Boolean(checklistCfg.opened), asked: Boolean(checklistCfg.asked),
@@ -1620,7 +1638,7 @@ function App() {
       onChecklistGo: (step) => {
         if (step === 'imported') setShowImportModal(true);else
         if (step === 'opened' && placeNotes[0]) openNote(placeNotes[0].id);else
-        if (step === 'asked') setAskOpen(true);else
+        if (step === 'asked') setHomeChat(true);else
         if (step === 'moved') flash('Open a page, then press Move… in the ribbon.');
       },
       onChecklistDismiss: dismissChecklist,
