@@ -26,6 +26,10 @@ contextBridge.exposeInMainWorld('lore', {
   // has secrets unless force:true. Resolves {ok, scope, broadened} or {ok:false, reason}.
   setNoteScope:   (path, scope, force) => ipcRenderer.invoke('note:set-scope', { path, scope, force }),
 
+  // Move a note to the OS trash (page-view delete button). Reconciliation
+  // arrives via the 'trashed' tree action, same as the tree context menu.
+  trashNote:      (path) => ipcRenderer.invoke('note:trash', path),
+
   // --- audit log (compliance trail) ---
   queryLog: {
     list: async (tenant, limit) => {

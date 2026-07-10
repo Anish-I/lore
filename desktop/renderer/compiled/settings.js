@@ -447,6 +447,14 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const ownerLabel = stText(cfg && cfg.owner, 'No identity configured');
   const tenantLabel = stText(cfg && cfg.tenant, 'No tenant');
   const scopeLabel = stText(cfg && cfg.scope, '');
+  // The raw `tenant · scope` pair (e.g. "local · engineering") is internal
+  // plumbing — tenant is the data namespace, scope the default note permission —
+  // and reads as gibberish under the account name. Show the account KIND
+  // instead: "Enterprise" only when signed into enterprise/company spaces,
+  // otherwise this is a personal on-device library. Internals stay on hover.
+  const accountKind = authUser && Array.isArray(authUser.scopes) &&
+  authUser.scopes.some((s) => /enterprise|company/i.test(String(s))) ?
+  'Enterprise' : 'Personal — on this computer';
   const displayNone = (v) => stText(v, 'None');
 
   return (/*#__PURE__*/
@@ -460,7 +468,8 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     React.createElement(StAvatar, { name: ownerLabel, size: 48 }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }, /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' } }, ownerLabel), /*#__PURE__*/
-    React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 } }, tenantLabel, scopeLabel ? ` · ${scopeLabel}` : '')
+    React.createElement("div", { title: `${tenantLabel}${scopeLabel ? ` · ${scopeLabel}` : ''}`,
+      style: { fontSize: 11.5, color: 'var(--text-faint)', marginTop: 2 } }, accountKind)
     ), /*#__PURE__*/
     React.createElement(StBadge, { tone: identityReady ? 'success' : 'neutral' }, identityReady ? 'configured' : 'not configured'), /*#__PURE__*/
     React.createElement(StButton, { variant: "secondary", size: "sm", onClick: onOpenSetup }, "Configure")

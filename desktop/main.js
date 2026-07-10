@@ -808,6 +808,10 @@ async function setNoteScope(p, scope, force) {
 
 ipcMain.handle('note:set-scope', (_e, { path: p, scope, force }) => setNoteScope(p, scope, force));
 
+// Delete button in the page view — same flow as the tree's "Move to Trash"
+// (pathGuard + OS trash + 'trashed' tree action, so tabs/tree/index reconcile).
+ipcMain.handle('note:trash', (_e, p) => { ctxTrash(p, 'note'); return { ok: true }; });
+
 // Context-menu variant of the push: same redaction gate, but the "share anyway?"
 // confirm is a native dialog (there is no renderer surface mid-menu). Notifies the
 // renderer via tree:action so the tree/graph refresh and a scope glyph appears.

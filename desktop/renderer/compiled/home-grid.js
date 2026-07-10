@@ -129,14 +129,18 @@ function Checklist({ steps, onGo, onDismiss }) {
 
 }
 
-function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, place, owner, editor, onOpen, onChat }) {
+// Memoized: the grid renders hundreds of these, and snippet batches land ~6 at a
+// time — without memo every batch re-rendered EVERY card (measured 400–500ms of
+// scripting per Home/place click on a 310-note vault; the "intermittent button
+// lag" bug). Handlers take the note id so the grid can pass stable references.
+const PageCard = React.memo(function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, place, owner, editor, onOpen, onChat }) {
   const [hover, setHover] = React.useState(false);
   const updated = hgAgo(note.mtimeMs);
   // On Team/Company pages, reveal who owns the page and who last touched it
   // (greyed) on hover — you're looking at shared work, so authorship matters.
   const showByline = (place === 'team' || place === 'company') && (owner || editor);
   return (/*#__PURE__*/
-    React.createElement("div", { onClick: onOpen, onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false),
+    React.createElement("div", { onClick: () => onOpen(note.id), onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false),
       style: {
         display: 'flex', flexDirection: 'column', gap: 7, minHeight: 118, padding: '13px 14px',
         borderRadius: 12, cursor: 'pointer',
@@ -183,7 +187,7 @@ function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, plac
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8 } }, /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 11, color: 'var(--text-faint)' } }, updated ? `Updated ${updated}` : ''), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
-    React.createElement("button", { onClick: (e) => {e.stopPropagation();onChat();}, style: {
+    React.createElement("button", { onClick: (e) => {e.stopPropagation();onChat(note.id);}, style: {
         display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 10px', borderRadius: 999,
         border: '1px solid var(--brand-soft-border)', background: 'var(--brand-soft-bg)',
         color: 'var(--brand-fg)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 11.5, fontWeight: 600,
@@ -194,7 +198,7 @@ function PageCard({ note, section, sectionColor, snippet, fresh, placeMeta, plac
     )
     ));
 
-}
+});
 
 // Centered card shown on the Team place before a team exists.
 function TeamGate({ onCreateTeam, onJoinTeam, invites, inviteBusy, onAcceptInvite, busy, error }) {
@@ -292,6 +296,22 @@ function HomeGrid({
   teamSetup // null | same handlers — soft banner (team pages exist but no team)
 }) {
   const meta = window.LorePlaceMeta[place] || window.LorePlaceMeta.my;
+  // Progressive grid: mount one page of cards and extend as the sentinel nears
+  // the viewport. Mounting all ~300 cards at once cost ~450ms of scripting per
+  // Home/place navigation (the "intermittent button lag" bug).
+  const GRID_PAGE = 60;
+  const [visible, setVisible] = React.useState(GRID_PAGE);
+  const sentinelRef = React.useRef(null);
+  React.useEffect(() => {setVisible(GRID_PAGE);}, [place, sectionFilter]);
+  React.useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setVisible((v) => v + GRID_PAGE * 2);
+    }, { rootMargin: '600px' });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [visible, notes ? notes.length : 0]);
   if (teamGate) return /*#__PURE__*/React.createElement(TeamGate, teamGate);
 
   const heading = sectionFilter && sectionFilter !== 'all' ? sectionFilter : meta.label;
@@ -346,7 +366,7 @@ function HomeGrid({
     ) : /*#__PURE__*/
 
     React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 12 } },
-    notes.map((n) => {
+    notes.slice(0, visible).map((n) => {
       const section = baseOf ? baseOf(n.id) : null;
       return (/*#__PURE__*/
         React.createElement(PageCard, { key: n.id, note: n, place: place,
@@ -356,11 +376,12 @@ function HomeGrid({
           owner: noteMeta && noteMeta[n.id] ? noteMeta[n.id].owner : null,
           editor: noteMeta && noteMeta[n.id] ? noteMeta[n.id].editor : null,
           fresh: freshIds && freshIds.has(n.id), placeMeta: meta,
-          onOpen: () => onOpen(n.id), onChat: () => onChat(n.id) }));
+          onOpen: onOpen, onChat: onChat }));
 
     })
-    )
+    ),
 
+    notes.length > visible && /*#__PURE__*/React.createElement("div", { ref: sentinelRef, style: { height: 1 } })
     )
     ));
 

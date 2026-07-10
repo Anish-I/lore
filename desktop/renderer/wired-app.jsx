@@ -638,6 +638,13 @@ function App() {
     const list = flatten(shownTree);
     return [...list].sort((a, b) => (b.mtimeMs || 0) - (a.mtimeMs || 0));
   }, [shownTree]);
+  // Stable card handler: PageCard is memoized, so this must not be an inline
+  // arrow at the call site or every HomeGrid render re-renders all ~300 cards.
+  const onChatCard = React.useCallback((id) => {
+    const n = placeNotes.find((x) => x.id === id);
+    setAskCtx({ id, title: (n && n.name) || id });
+    setAskOpen(true);
+  }, [placeNotes]);
   // Section rail rows — top-level folders of this place with note counts.
   const railSections = React.useMemo(() =>
     scopeFilteredTree.filter((n) => n.kind === 'folder')
@@ -1616,6 +1623,11 @@ function App() {
                     onBack={() => setActiveId(null)}
                     onChatAbout={() => { setAskCtx({ id: activeId, title: editorNote.title }); setAskOpen(true); }}
                     onMove={() => setMoveOpen(true)}
+                    onDelete={window.lore?.trashNote ? async () => {
+                      if (!window.confirm(`Delete "${editorNote.title}"? It moves to the Trash (recoverable there).`)) return;
+                      await window.lore.trashNote(activeId);
+                      // Tab close + tree refresh arrive via the 'trashed' tree action.
+                    } : null}
                     relPath={(() => {
                       if (!treeData || !treeData.root || !activeId) return null;
                       const norm = (s) => String(s).replace(/\\/g, '/');
@@ -1659,7 +1671,7 @@ function App() {
                     }}
                     onChecklistDismiss={dismissChecklist}
                     sectionFilter={railActive} notes={placeNotes} noteMeta={noteMeta} baseOf={baseOf} freshIds={freshIds}
-                    onOpen={openNote} onChat={(id) => { const n = placeNotes.find((x) => x.id === id); setAskCtx({ id, title: (n && n.name) || id }); setAskOpen(true); }}
+                    onOpen={openNote} onChat={onChatCard}
                     onNewPage={onCreateNote} onAddFiles={onImport}
                     teamGate={(place === 'team' && !inTeam && placeCounts.team === 0) ? {
                       onCreateTeam: createTeam, onJoinTeam: joinTeam,

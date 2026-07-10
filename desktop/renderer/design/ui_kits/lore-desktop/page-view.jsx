@@ -141,11 +141,12 @@ function HistoryPanel({ relPath, onRestored, onClose }) {
   );
 }
 
-function PageView({ note, editor, place, mode, connections, onBack, onChatAbout, onMove, relPath, onRestored }) {
+function PageView({ note, editor, place, mode, connections, onBack, onChatAbout, onMove, onDelete, relPath, onRestored }) {
   const meta = window.LorePlaceMeta[pvScopePlace(note && note.scope)] || window.LorePlaceMeta.my;
   const placeMeta = window.LorePlaceMeta[place] || meta;
   const [hoverBack, setHoverBack] = React.useState(false);
   const [historyOpen, setHistoryOpen] = React.useState(false);
+  const [hoverDelete, setHoverDelete] = React.useState(false);
   return (
     <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', background: 'var(--surface-canvas)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 26px', borderBottom: '1px solid var(--divider)', flexShrink: 0 }}>
@@ -194,6 +195,18 @@ function PageView({ note, editor, place, mode, connections, onBack, onChatAbout,
               <HistoryPanel relPath={relPath} onRestored={onRestored || (() => {})} onClose={() => setHistoryOpen(false)} />
             )}
           </span>
+        )}
+        {onDelete && (
+          <button onClick={onDelete} title="Delete this page (moves to Trash)"
+            onMouseEnter={() => setHoverDelete(true)} onMouseLeave={() => setHoverDelete(false)}
+            style={{
+              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 30, height: 30, borderRadius: 8,
+              border: `1px solid ${hoverDelete ? 'var(--danger-border, var(--border-strong))' : 'var(--border)'}`,
+              background: 'transparent', cursor: 'pointer',
+              color: hoverDelete ? 'var(--danger-fg)' : 'var(--text-subtle)',
+            }}>
+            <PvIcon name="trash-2" size={14} />
+          </button>
         )}
       </div>
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>

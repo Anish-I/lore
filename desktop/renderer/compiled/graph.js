@@ -534,7 +534,6 @@ function grPlaceOf(scope) {
 // Full-screen knowledge Map overlay (Redesign C): mockup header + place legend
 // around the existing canvas GraphView, colored by place. Esc closes.
 function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, baseOf, loading, total = 0, onShowAll }) {
-  const meta = window.LorePlaceMeta || {};
   React.useEffect(() => {
     const onKey = (e) => {if (e.key === 'Escape') {e.stopPropagation();onClose();}};
     window.addEventListener('keydown', onKey);
@@ -552,7 +551,7 @@ function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, bas
     React.createElement(GrIcon, { name: "waypoints", size: 18, style: { color: 'var(--brand-fg)' } }), /*#__PURE__*/
     React.createElement("div", { style: { minWidth: 0 } }, /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' } }, "Knowledge map"), /*#__PURE__*/
-    React.createElement("div", { style: { fontSize: 11.5, color: 'var(--text-faint)', marginTop: 1 } }, "Colors show where each page lives. Double-click a dot to open it.")
+    React.createElement("div", { style: { fontSize: 11.5, color: 'var(--text-faint)', marginTop: 1 } }, "Colors match the section chips. Double-click a dot to open it.")
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }),
     hiddenByFilters && !empty && onShowAll && /*#__PURE__*/
@@ -565,14 +564,6 @@ function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, bas
     shown, " of ", total, " pages \xB7 Show all"
     ), /*#__PURE__*/
 
-    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 14 } },
-    ['my', 'team', 'company'].map((id) => /*#__PURE__*/
-    React.createElement("span", { key: id, style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-muted)' } }, /*#__PURE__*/
-    React.createElement("span", { style: { width: 9, height: 9, borderRadius: '50%', background: (meta[id] || {}).solid || 'var(--text-faint)' } }),
-    (meta[id] || {}).label || id
-    )
-    )
-    ), /*#__PURE__*/
     React.createElement("button", { onClick: onClose, style: {
         display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 13px', borderRadius: 8,
         border: '1px solid var(--border)', background: 'transparent', cursor: 'pointer',
@@ -606,7 +597,10 @@ function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, bas
     ) : /*#__PURE__*/
 
     React.createElement("div", { style: { flex: 1, minHeight: 0, display: 'flex' } }, /*#__PURE__*/
-    React.createElement(GraphView, { graph: graph, onOpen: onOpen, bases: bases, kbFilter: kbFilter, onToggleBase: onToggleBase, baseOf: baseOf, hideTitle: true, colorBy: "place" })
+
+
+
+    React.createElement(GraphView, { graph: graph, onOpen: onOpen, bases: bases, kbFilter: kbFilter, onToggleBase: onToggleBase, baseOf: baseOf, hideTitle: true })
     )
 
     ));
