@@ -22,13 +22,21 @@ function toPosix(p) {
 
 // Resolve + contain: rel must stay inside root (mirror of main.js pathGuard,
 // re-checked here so the module is safe standalone).
+// Backslashes are treated as separators on EVERY platform: vault-relative note
+// paths are cross-platform strings, and on POSIX a `..\` would otherwise
+// resolve as a single filename here yet reach isomorphic-git as a real `../`
+// traversal after the toPosix() conversion of the return value.
 function relInside(root, relPath) {
-  const abs = path.resolve(root, relPath);
+  const abs = path.resolve(root, toPosix(relPath));
   const normRoot = path.resolve(root);
   if (!abs.toLowerCase().startsWith(normRoot.toLowerCase() + path.sep) && abs.toLowerCase() !== normRoot.toLowerCase()) {
     throw new Error(`path escapes vault root: ${relPath}`);
   }
-  return toPosix(path.relative(normRoot, abs));
+  const rel = toPosix(path.relative(normRoot, abs));
+  if (rel === '..' || rel.startsWith('../')) {
+    throw new Error(`path escapes vault root: ${relPath}`);
+  }
+  return rel;
 }
 
 function hasRepo(root) {

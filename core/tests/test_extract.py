@@ -1,6 +1,7 @@
 """M4: PDF/DOCX extraction + distill routing + /ingest-url guards."""
 import zipfile
 
+import pytest
 from fastapi.testclient import TestClient
 
 from lore.api import app, get_embedder, get_reranker
@@ -29,7 +30,9 @@ def _mk_docx(path):
 
 
 def _mk_pdf(path):
-    import fitz
+    # PyMuPDF ships in the [dev] extras (CI) and the desktop bundle; skip — not
+    # fail — in a bare local env so the suite stays runnable without it.
+    fitz = pytest.importorskip("fitz")
     doc = fitz.open()
     page = doc.new_page()
     page.insert_text((72, 100), "Policy limit is nine percent per claim.")

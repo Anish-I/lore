@@ -183,6 +183,7 @@ create table if not exists notes(
   source_path text, title text, source_type text,
   memory_type text default 'durable',
   body text, body_sha256 text, content_hash text,
+  importance real default 0,
   created_at timestamptz,
   updated_at timestamptz default now());
 create table if not exists chunks(

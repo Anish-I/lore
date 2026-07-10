@@ -12,7 +12,9 @@ lore = "lore.cli:main"
 lore-mcp = "lore.mcp_server:main"
 
 [project.optional-dependencies]
-dev = ["pytest","httpx"]
+# pymupdf: exercised by tests/test_extract.py (extract.py imports fitz lazily;
+# the desktop bundle ships it, a bare `pip install -e core` doesn't).
+dev = ["pytest","httpx","pymupdf"]
 local = ["fastembed"]   # offline semantic embeddings + cross-encoder rerank (no API key)
 
 [tool.pytest.ini_options]

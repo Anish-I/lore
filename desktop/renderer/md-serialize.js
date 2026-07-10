@@ -1,4 +1,3 @@
-/* global window, document */
 // Lore desktop — HTML → Markdown serializer for the WYSIWYG editor.
 //
 // The WYSIWYG surface is a contentEditable whose HTML we must write back to the
@@ -18,7 +17,7 @@
   // Collapse insignificant whitespace in an inline run (contentEditable emits a
   // lot of it) but keep single spaces between words.
   function normText(t) {
-    return String(t).replace(/ /g, ' ').replace(/[ \t\r\n]+/g, ' ');
+    return String(t).replace(/\u00a0/g, ' ').replace(/[ \t\r\n]+/g, ' ');
   }
 
   function escapeInline(t) {
