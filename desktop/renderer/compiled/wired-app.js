@@ -366,6 +366,12 @@ function App() {
   const [toast, setToast] = React.useState(null); // bottom-center toast message
   const [moveOpen, setMoveOpen] = React.useState(false); // "Move…" place dialog
   const [mapOpen, setMapOpen] = React.useState(false); // full-screen knowledge map overlay
+  // Map-local section filter. Deliberately SEPARATE from the sidebar's kbFilter and
+  // reset on every map open: a stale sidebar section selection used to silently
+  // shrink the map to a handful of nodes with no indication why (2026-07-09 bug —
+  // "only 3 nodes in knowledge map"). The map always opens showing everything; its
+  // own chips then filter without touching the sidebar's selection.
+  const [mapKbFilter, setMapKbFilter] = React.useState([]);
   const [refreshing, setRefreshing] = React.useState(false); // ribbon "Refresh" (upkeep re-scan) in flight
   const [homeChat, setHomeChat] = React.useState(false); // home "Ask" box → inline MAIN chat (collapses the page grid)
   const [authUser, setAuthUser] = React.useState(null); // {user_id, email, name, scopes} | null — avatar menu
@@ -622,6 +628,10 @@ function App() {
   const toggleBase = React.useCallback((name) => {
     setKbFilter((f) => f.includes(name) ? f.filter((x) => x !== name) : [...f, name]);
   }, []);
+  // Map chip toggle — mutates only the map-local filter (see mapKbFilter above).
+  const toggleMapBase = React.useCallback((name) => {
+    setMapKbFilter((f) => f.includes(name) ? f.filter((x) => x !== name) : [...f, name]);
+  }, []);
 
   // Grid data for the current place (+ section filter), newest first.
   const placeNotes = React.useMemo(() => {
@@ -700,9 +710,11 @@ function App() {
     await signIn();
     refreshInvites();
   }, [signIn, refreshInvites]);
+  // Graph as the MAP sees it: map-local section chips (mapKbFilter, NOT the
+  // sidebar's kbFilter) composed with the top-bar place switch (scopeFilter).
   const filteredGraph = React.useMemo(() => {
     if (!graphData) return graphData;
-    const kbSet = kbFilter.length ? new Set(kbFilter) : null;
+    const kbSet = mapKbFilter.length ? new Set(mapKbFilter) : null;
     const nodes = graphData.nodes.filter((n) => {
       if (kbSet && !kbSet.has(baseOf(n.path))) return false;
       return passesScopeFilter(scopeFilter, n.scope, wizardIds.has(String(n.path || '').toLowerCase()));
@@ -710,7 +722,7 @@ function App() {
     const ids = new Set(nodes.map((n) => n.id));
     const edges = graphData.edges.filter((e) => ids.has(e[0]) && ids.has(e[1]));
     return { nodes, edges };
-  }, [graphData, kbFilter, scopeFilter, wizardIds, baseOf]);
+  }, [graphData, mapKbFilter, scopeFilter, wizardIds, baseOf]);
   // Dominant scope per knowledge base (folder), so the switcher chips can be colored by scope.
   const baseScopes = React.useMemo(() => {
     const m = {},rank = { enterprise: 3, team: 2, private: 1 };
@@ -1578,7 +1590,7 @@ function App() {
       refreshing: refreshing,
       onNewPage: onCreateNote, onAddFiles: onImport,
       onToggleAsk: () => setAskOpen((o) => !o),
-      onMap: () => {setView('workspace');setMapOpen((o) => !o);},
+      onMap: () => {setView('workspace');if (!mapOpen) setMapKbFilter([]);setMapOpen(!mapOpen);},
       onWizards: () => {setMapOpen(false);setView(view === 'wizards' ? 'workspace' : 'wizards');},
       onMove: () => setMoveOpen(true) }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', minHeight: 0, position: 'relative' } }, /*#__PURE__*/
@@ -1743,9 +1755,11 @@ function App() {
 
     mapOpen && window.LoreMapOverlay && /*#__PURE__*/
     React.createElement(window.LoreMapOverlay, { graph: filteredGraph, loading: graphLoading,
+      total: graphData && graphData.nodes ? graphData.nodes.length : 0,
+      onShowAll: () => {setMapKbFilter([]);setScopeFilter('private');},
       onOpen: (id) => {setMapOpen(false);onGraphOpen(id);},
       onClose: () => setMapOpen(false),
-      bases: bases, kbFilter: kbFilter, onToggleBase: toggleBase, baseOf: baseOf }),
+      bases: bases, kbFilter: mapKbFilter, onToggleBase: toggleMapBase, baseOf: baseOf }),
 
 
     ToastPill && /*#__PURE__*/React.createElement(ToastPill, { toast: toast }),

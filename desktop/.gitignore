@@ -13,3 +13,4 @@ e2e-shot-editor.js
 e2e-verify-import.js
 e2e-shot-settings.js
 e2e-verify-auth.js
+e2e-map-fix-shots/

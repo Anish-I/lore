@@ -44,7 +44,9 @@ const GR_DATE_RE = /^(session:\s*)?\d{4}[-/]\d{2}[-/]\d{2}/i;
 const grSectionColor = window.LoreSectionColor;
 
 // bases: top-level folder ("Section") names present in the library.
-// kbFilter: the SAME array the sidebar's Sections switcher owns ([] = show all).
+// kbFilter: the section filter this surface renders chips for ([] = show all).
+// Inside the Map overlay this is the map-local filter (reset on every map open),
+// NOT the sidebar's Sections selection — see mapKbFilter in wired-app.jsx.
 // onToggleBase: toggles one folder in/out of kbFilter.
 // Scope filtering (All/Private/Team/Plugins) already happened one level up — the
 // `graph` prop is pre-filtered by the parent's kbFilter+scopeFilter, so this
@@ -531,14 +533,19 @@ function grPlaceOf(scope) {
 
 // Full-screen knowledge Map overlay (Redesign C): mockup header + place legend
 // around the existing canvas GraphView, colored by place. Esc closes.
-function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, baseOf, loading }) {
+function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, baseOf, loading, total = 0, onShowAll }) {
   const meta = window.LorePlaceMeta || {};
   React.useEffect(() => {
     const onKey = (e) => {if (e.key === 'Escape') {e.stopPropagation();onClose();}};
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
-  const empty = !graph || !graph.nodes || graph.nodes.length === 0;
+  const shown = graph && graph.nodes ? graph.nodes.length : 0;
+  const empty = shown === 0;
+  // Filters (place switch or section chips) can hide part or all of the graph.
+  // Always say so, and always offer a one-click way back to the full map — a
+  // silently-shrunk map is indistinguishable from a broken index (2026-07-09 bug).
+  const hiddenByFilters = total > shown;
   return (/*#__PURE__*/
     React.createElement("div", { style: { position: 'absolute', inset: 0, zIndex: 45, background: 'var(--surface-canvas)', display: 'flex', flexDirection: 'column', animation: 'lore-fade-in 160ms ease' } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '13px 18px', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 } }, /*#__PURE__*/
@@ -547,7 +554,17 @@ function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, bas
     React.createElement("div", { style: { fontSize: 15, fontWeight: 600, color: 'var(--text-strong)' } }, "Knowledge map"), /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 11.5, color: 'var(--text-faint)', marginTop: 1 } }, "Colors show where each page lives. Double-click a dot to open it.")
     ), /*#__PURE__*/
-    React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
+    React.createElement("div", { style: { flex: 1 } }),
+    hiddenByFilters && !empty && onShowAll && /*#__PURE__*/
+    React.createElement("button", { onClick: onShowAll, title: "A place or section filter is hiding part of the map", style: {
+        display: 'inline-flex', alignItems: 'center', gap: 6, height: 26, padding: '0 11px', borderRadius: 999,
+        border: '1px solid var(--border)', background: 'var(--surface-raised)', cursor: 'pointer',
+        color: 'var(--text-muted)', fontFamily: 'var(--font-sans)', fontSize: 11.5
+      } }, /*#__PURE__*/
+    React.createElement(GrIcon, { name: "layers", size: 11 }), "Showing ",
+    shown, " of ", total, " pages \xB7 Show all"
+    ), /*#__PURE__*/
+
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 14 } },
     ['my', 'team', 'company'].map((id) => /*#__PURE__*/
     React.createElement("span", { key: id, style: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--text-muted)' } }, /*#__PURE__*/
@@ -567,8 +584,25 @@ function MapOverlay({ graph, onOpen, onClose, bases, kbFilter, onToggleBase, bas
     empty ? /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'var(--text-subtle)' } }, /*#__PURE__*/
     React.createElement(GrIcon, { name: "waypoints", size: 30, style: { color: 'var(--text-faint)' } }), /*#__PURE__*/
-    React.createElement("div", { style: { fontSize: 14 } }, loading ? 'Loading the map…' : 'No pages on the map yet.'), /*#__PURE__*/
-    React.createElement("div", { style: { fontSize: 12, color: 'var(--text-faint)' } }, loading ? 'Fetching pages and connections…' : 'Add or import pages and they appear here automatically.')
+    React.createElement("div", { style: { fontSize: 14 } },
+    loading ? 'Loading the map…' :
+    hiddenByFilters ? `All ${total} pages are hidden by the current filters.` :
+    'No pages on the map yet.'
+    ), /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 12, color: 'var(--text-faint)' } },
+    loading ? 'Fetching pages and connections…' :
+    hiddenByFilters ? 'A place (Team/Company) or section filter is active.' :
+    'Add or import pages and they appear here automatically.'
+    ),
+    !loading && hiddenByFilters && onShowAll && /*#__PURE__*/
+    React.createElement("button", { onClick: onShowAll, style: {
+        display: 'inline-flex', alignItems: 'center', gap: 6, height: 30, padding: '0 14px', borderRadius: 8, marginTop: 4,
+        border: '1px solid var(--border)', background: 'var(--surface-raised)', cursor: 'pointer',
+        color: 'var(--text-primary)', fontFamily: 'var(--font-sans)', fontSize: 12.5
+      } }, /*#__PURE__*/
+    React.createElement(GrIcon, { name: "layers", size: 12 }), "Show everything"
+    )
+
     ) : /*#__PURE__*/
 
     React.createElement("div", { style: { flex: 1, minHeight: 0, display: 'flex' } }, /*#__PURE__*/
