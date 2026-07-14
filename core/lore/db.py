@@ -94,6 +94,12 @@ class _SqliteCursor:
     def __init__(self, cur):
         self._cur = cur
 
+    @property
+    def rowcount(self):
+        # psycopg-parity: rows affected by the last INSERT/UPDATE/DELETE
+        # (sqlite3 reports -1 for SELECTs, same as psycopg before a fetch).
+        return self._cur.rowcount
+
     def fetchone(self):
         return self._cur.fetchone()
 

@@ -13,6 +13,7 @@ from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
 from . import auth, mailer, tenancy
+from . import supersede
 
 app = FastAPI(title="Lore Core")
 
@@ -413,7 +414,22 @@ def ingest(req: IngestReq, authorization: Optional[str] = Header(default=None)):
         embedder=embedder, conn=_conn, sparse_embedder=sparse,
         source_type=req.source_type, content_hash=req.content_hash,
     )
+    _maybe_propose_supersessions(tenant, req.source_id)
+    _maybe_extract_people(tenant, req.source_id)
     return {"ok": True, "note_id": req.source_id, "chunks": n}
+
+
+def _maybe_propose_supersessions(tenant: str, note_id: str) -> None:
+    """Auto-supersession detection on freshly ingested/captured notes (never on
+    bulk file reindex — that path is volume-sensitive). Proposals only; nothing
+    ranks until accepted (see _note_signals_provider's origin filter).
+    Non-fatal by design. Gate: LORE_AUTO_SUPERSEDE=0."""
+    if os.environ.get("LORE_AUTO_SUPERSEDE", "1") == "0":
+        return
+    try:
+        supersede.propose_supersessions(_conn, tenant, note_id)
+    except Exception:
+        pass  # detection must never fail an ingest
 
 def _note_meta(note_ids):
     """{note_id: {title, scope}} for a set of note ids — the per-citation source
@@ -499,10 +515,15 @@ def _note_signals_provider(tenant: str, query: str):
                 from notes where tenant_id=%s and {frag}""",
             (tenant, *params)).fetchall()
         frag2, params2 = in_clause("dst_note_id", ids)
+        # Only ACCEPTED supersessions rank (cue-asserted or human-accepted).
+        # Auto proposals awaiting review — and dismissed ones — must never
+        # penalize a note's ranking (supersede.NON_RANKING_ORIGINS).
+        frag2o, params2o = in_clause("origin", supersede.NON_RANKING_ORIGINS)
         superseded = {r[0] for r in _conn.execute(
             f"""select distinct dst_note_id from edges
-                where tenant_id=%s and kind='supersedes' and {frag2}""",
-            (tenant, *params2)).fetchall()}
+                where tenant_id=%s and kind='supersedes' and {frag2}
+                  and not ({frag2o})""",
+            (tenant, *params2, *params2o)).fetchall()}
         frag3, params3 = in_clause("note_id", ids)
         fb = dict(_conn.execute(
             f"""select note_id, coalesce(sum(vote),0) from feedback
@@ -1028,6 +1049,8 @@ def capture(req: CaptureReq, authorization: Optional[str] = Header(default=None)
         embedder=_local_embedder(), conn=_conn, sparse_embedder=_local_sparse(),
         source_type="claude-session",
     )
+    _maybe_propose_supersessions(tenant, note_id)
+    _maybe_extract_people(tenant, note_id)
     return {"ok": True, "note_id": note_id, "chunks": n}
 
 # --- URL ingestion (M4) -------------------------------------------------------
@@ -1888,6 +1911,177 @@ def ask_history_delete(req: AskHistoryDeleteReq):
     _conn.execute("delete from ask_history where tenant_id=%s and thread_id=%s",
                   (req.tenant, req.thread_id))
     return {"ok": True, "deleted": rows[0] if rows else 0}
+
+
+# --- Supersession proposals (auto-detected stale-fact candidates) -----------
+# SAFEGUARD: proposals never affect ranking — _note_signals_provider filters
+# out NON_RANKING_ORIGINS. Only an explicit accept (or a cue-lexicon edge from
+# prose) marks the old note superseded.
+
+class SupersessionResolveReq(BaseModel):
+    tenant: str
+    src: str            # the newer note (proposal source)
+    dst: str            # the older, possibly-stale note
+    action: str         # 'accept' | 'dismiss'
+
+
+# --- People (names + interactions extracted from notes/captures) ------------
+# Extraction is deterministic (capitalized-name n-grams + email regex, no LLM);
+# privacy is per-MENTION: a person is only visible through mentions whose
+# scope_id the caller may read — same local-trust auth style as /sections.
+
+class PeopleMergeReq(BaseModel):
+    tenant: str
+    keep_id: str
+    merge_id: str
+
+
+class PeopleHideReq(BaseModel):
+    tenant: str
+    person_id: str
+
+
+def _maybe_extract_people(tenant: str, note_id: str) -> None:
+    """People extraction on freshly ingested/captured notes. Non-fatal by
+    design (like _maybe_propose_supersessions). Gate: LORE_PEOPLE=0."""
+    if os.environ.get("LORE_PEOPLE") == "0":
+        return
+    try:
+        from . import people
+        people.extract_mentions(_conn, tenant, note_id)
+    except Exception:
+        pass  # extraction must never fail an ingest
+
+
+@app.get("/people")
+def people_list(tenant: Optional[str] = None, scopes: Optional[str] = None):
+    """People with at least one in-scope mention, most recently seen first.
+    Returns {people:[{id, name, emails, mention_count, last_seen, sources}]}"""
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    from . import people
+    try:
+        return {"people": people.list_people(_conn, tenant, scopes or "")}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/people/detail")
+def people_detail(tenant: Optional[str] = None, scopes: Optional[str] = None,
+                  person_id: Optional[str] = None):
+    """One person + their in-scope interaction timeline (newest first).
+    Returns {person, interactions:[{note_id, title, source_type, date, evidence}]}"""
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    if not person_id:
+        raise HTTPException(status_code=422, detail="person_id is required")
+    from . import people
+    try:
+        detail = people.person_detail(_conn, tenant, scopes or "", person_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if detail is None:
+        raise HTTPException(status_code=404, detail="person not found")
+    return detail
+
+
+@app.post("/people/merge")
+def people_merge(req: PeopleMergeReq):
+    """Merge two people (dedupe): mentions re-point to keep_id, emails union,
+    merge_id row deleted. Body: {tenant, keep_id, merge_id}."""
+    from . import people
+    result = people.merge_people(_conn, req.tenant, req.keep_id, req.merge_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error") or "person not found")
+    return result
+
+
+@app.post("/people/hide")
+def people_hide(req: PeopleHideReq):
+    """Hide a person from lists (false-positive cleanup). Body: {tenant, person_id}."""
+    from . import people
+    return people.hide_person(_conn, req.tenant, req.person_id)
+
+
+@app.get("/supersessions")
+def supersessions_list(tenant: Optional[str] = None):
+    """Pending auto-supersession proposals for review.
+    Returns {proposals:[{src, dst, confidence, evidence, proposed_at,
+                         src_title, dst_title}]}"""
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return {"proposals": supersede.list_proposals(_conn, tenant)}
+
+
+@app.post("/supersessions/resolve")
+def supersessions_resolve(req: SupersessionResolveReq,
+                          authorization: Optional[str] = Header(default=None)):
+    """Accept or dismiss a pending proposal. Accepting makes the dst note count
+    as superseded in ranking (via the signals provider) on the next query;
+    dismissing pins the pair so it is never re-proposed.
+    Body: {tenant, src, dst, action}. Returns {ok, resolved}."""
+    _require_user_in_server_mode(authorization)   # no anonymous edge edits when hosted
+    if req.action not in ("accept", "dismiss"):
+        raise HTTPException(status_code=422, detail="action must be accept|dismiss")
+    changed = supersede.resolve_proposal(_conn, req.tenant, req.src, req.dst, req.action)
+    return {"ok": True, "resolved": changed}
+
+
+@app.get("/state")
+def state(tenant: Optional[str] = None, scopes: Optional[str] = None,
+          budget: int = 800,
+          authorization: Optional[str] = Header(default=None)):
+    """Compile current facts into a token-budgeted context block, newest first.
+
+    For agents using Lore as ambient memory rather than Q&A: superseded notes
+    are excluded entirely (their replacement is what's current), raw session
+    captures are skipped in favor of distilled notes, and output stops at
+    ~`budget` tokens (chars/4 estimate — same heuristic as the eval suite).
+
+    Query params: tenant (required), scopes (comma-separated), budget (default 800,
+    clamped 100..4000). Returns {block, count, tokens_est, budget}.
+    """
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    _, eff_scopes, tenant = _authorize_read(authorization, _as_scope_list(scopes), tenant)
+    if not eff_scopes:
+        raise HTTPException(status_code=422, detail="scopes is required")
+    budget = max(100, min(int(budget), 4000))
+
+    stale = supersede.superseded_note_ids(_conn, tenant)
+    scope_pred, scope_params = in_clause("scope_id", eff_scopes)
+    sess_pred, sess_params = in_clause(
+        "coalesce(source_type,'note')",
+        ("claude-session", "codex-session", "claude-history"))
+    rows = _conn.execute(
+        f"""select id, title, coalesce(created_at, updated_at)
+            from notes
+            where tenant_id=%s and {scope_pred} and not {sess_pred}
+            order by coalesce(created_at, updated_at) desc
+            limit 300""",
+        (tenant, *scope_params, *sess_params),
+    ).fetchall()
+
+    lines, used, count = [], 0, 0
+    for note_id, title, ts in rows:
+        if note_id in stale:
+            continue
+        chunk = _conn.execute(
+            "select text from chunks where note_id=%s order by chunk_index limit 1",
+            (note_id,),
+        ).fetchone()
+        excerpt = " ".join(((chunk[0] if chunk else "") or "").split())[:240]
+        day = str(ts)[:10] if ts else "?"
+        line = f"- {title or note_id} ({day}): {excerpt}"
+        cost = len(line) // 4 + 1
+        if used + cost > budget:
+            break
+        lines.append(line)
+        used += cost
+        count += 1
+
+    return {"block": "\n".join(lines), "count": count,
+            "tokens_est": used, "budget": budget}
 
 
 @app.get("/tags")

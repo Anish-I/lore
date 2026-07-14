@@ -4,6 +4,7 @@ Exposes three tools:
     lore_ask(question, scopes, tenant)     — answer a question from the knowledge base
     lore_search(query, scopes, tenant, k)  — return ranked chunk hits
     lore_graph(scopes, tenant)             — return node/edge counts
+    lore_state(budget, scopes, tenant)     — budget-capped current-facts block
 
 scopes and tenant are REQUIRED on every tool; never default to all or to a tenant.
 If omitted, they fall back to the LORE_SCOPES (comma-separated) / LORE_TENANT env
@@ -342,6 +343,43 @@ try:
         pack = data.get("pack") or "No relevant context found."
         return f"{pack}\n\n_(context pack: {data.get('tokens_total')} tokens over {len(data.get('items') or [])} sources)_"
 
+    @_mcp.tool()
+    def lore_state(
+        budget: int = 800, scopes: list[str] | None = None, tenant: str | None = None
+    ) -> str:
+        """Compile the user's CURRENT knowledge state into one budget-capped block.
+
+        Query-less ambient priming: newest facts first, superseded (stale) notes
+        excluded entirely. Use lore_recall when you have a specific task to pack
+        context for; use THIS at session start when you don't yet know what
+        you'll need.
+
+        Args:
+            budget: Approximate token cap for the block (default 800, max 4000).
+            scopes: List of ACL scope IDs the caller can read (required, never empty).
+                Falls back to the LORE_SCOPES env var (comma-separated) if omitted.
+            tenant: Tenant namespace to query (required, never empty).
+                Falls back to the LORE_TENANT env var if omitted.
+        """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
+        err = _check_scopes(scopes)
+        if err:
+            return err
+        err = _check_tenant(tenant)
+        if err:
+            return err
+        if not _backend_up():
+            return _BACKEND_DOWN_MSG
+        params = urllib.parse.urlencode({
+            "tenant": tenant.strip(), "scopes": ",".join(_clean_scopes(scopes)),
+            "budget": budget,
+        })
+        data, err = _safe_get(f"/state?{params}")
+        if err:
+            return f"Error calling Lore: {err}"
+        block = data.get("block") or "No current state available."
+        return f"{block}\n\n_({data.get('count', 0)} facts, ~{data.get('tokens_est', 0)} tokens)_"
+
     def main() -> None:
         _mcp.run()
 
@@ -440,6 +478,24 @@ except ImportError:
                     "required": ["task"],
                 },
             ),
+            _types.Tool(
+                name="lore_state",
+                description="Compile the user's CURRENT knowledge state into one budget-capped block (newest first, superseded notes excluded). Query-less ambient priming — use lore_recall for task-specific context.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "budget": {"type": "integer", "default": 800,
+                                   "description": "Approximate token cap for the block (max 4000)."},
+                        "scopes": {"type": "array", "items": {"type": "string"},
+                                   "description": "ACL scope IDs (required, never empty). Falls back to "
+                                                  "the LORE_SCOPES env var (comma-separated) if omitted."},
+                        "tenant": {"type": "string",
+                                   "description": "Tenant namespace to query (required, never empty). "
+                                                  "Falls back to the LORE_TENANT env var if omitted."},
+                    },
+                    "required": [],
+                },
+            ),
         ]
 
     @_server.call_tool()
@@ -525,6 +581,17 @@ except ImportError:
             nodes = len(data.get("nodes", []))
             edges = len(data.get("edges", []))
             return [_types.TextContent(type="text", text=f"Graph: {nodes} nodes, {edges} edges.")]
+        elif name == "lore_state":
+            params = urllib.parse.urlencode({
+                "tenant": tenant, "scopes": ",".join(clean_scopes),
+                "budget": arguments.get("budget", 800),
+            })
+            data, err = _safe_get(f"/state?{params}")
+            if err:
+                return [_types.TextContent(type="text", text=f"Error: {err}")]
+            block = data.get("block") or "No current state available."
+            text = f"{block}\n\n_({data.get('count', 0)} facts, ~{data.get('tokens_est', 0)} tokens)_"
+            return [_types.TextContent(type="text", text=text)]
         else:
             return [_types.TextContent(type="text", text=f"Unknown tool: {name}")]
 

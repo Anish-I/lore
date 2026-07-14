@@ -85,6 +85,61 @@ def append_entries(existing: str, new_blocks: list) -> str:
     return out
 
 
+def _superseded_audit_blocks(conn, tenant: str, existing: str) -> list:
+    """Append-only supersession audit for topic notes (Lore-generated only).
+
+    For every folded entry (`<!-- lore:from <id> -->`) whose source note is now
+    superseded by an ACCEPTED edge, emit ONE dated audit block wikilinking the
+    superseding note — appended through the same append_entries path as normal
+    entries, so the ADD-only invariant holds byte-for-byte. Dedup anchor:
+    `<!-- lore:superseded <old_id> -->` in the existing body. Visual treatment
+    of the stale entry itself (strikethrough/collapse) is a RENDER-time concern
+    per the append-only design — never a write-time mutation.
+
+    Returns [(date_key, block)] compatible with append_entries().
+    """
+    from . import supersede
+    from .sqlutil import in_clause
+
+    if not existing:
+        return []
+    folded_ids = set(re.findall(r"<!-- lore:from ([^ >]+) -->", existing))
+    if not folded_ids:
+        return []
+    try:
+        stale = supersede.superseded_note_ids(conn, tenant) & folded_ids
+    except Exception:
+        return []
+    stale = {nid for nid in stale if f"<!-- lore:superseded {nid} -->" not in existing}
+    if not stale:
+        return []
+
+    # Newest accepted superseding note per stale source (title for the wikilink).
+    pred, params = in_clause("e.origin", supersede.NON_RANKING_ORIGINS)
+    frag, fparams = in_clause("e.dst_note_id", sorted(stale))
+    rows = conn.execute(
+        f"""select e.dst_note_id, n.title
+            from edges e
+            join notes n on n.id = e.src_note_id and n.tenant_id = e.tenant_id
+            where e.tenant_id=%s and e.kind='supersedes' and {frag} and not ({pred})
+            order by coalesce(n.created_at, n.updated_at) desc""",
+        (tenant, *fparams, *params),
+    ).fetchall()
+    by_dst = {}
+    for dst, src_title in rows:
+        by_dst.setdefault(dst, src_title or "a newer note")
+
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    blocks = []
+    for dst, src_title in sorted(by_dst.items()):
+        blocks.append((today, (
+            f"\n## {today} — supersession\n"
+            f"<!-- lore:superseded {dst} -->\n\n"
+            f"> [!superseded] The entry folded from `{dst}` above is superseded by [[{src_title}]].\n"
+        )))
+    return blocks
+
+
 def _entry_date(title: str) -> str:
     """Extract an ISO date (YYYY-MM-DD) from an ephemeral note title, for entry headings
     and chronological sorting.  Falls back to a low sentinel when no date is present."""
@@ -397,6 +452,9 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
             block = f"\n{heading}\n{anchor}\n\n{entry_text}\n"
             new_blocks.append((date_key, block))
 
+        # Supersession audit entries ride the same append-only path.
+        new_blocks.extend(_superseded_audit_blocks(conn, tenant, existing))
+
         if new_blocks or is_new:
             try:
                 body_out = append_entries(existing, new_blocks)
@@ -482,5 +540,15 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
             result["journal"] = _write_journal(conn, embedder, tenant, scope)
         except Exception:
             result["journal"] = 0  # never let the journal break the fold
+
+    # --- Step 10: people backfill (names/emails → interaction records) ---
+    # Ingest/capture extract incrementally; this catches notes indexed before
+    # the People feature existed or via paths without the hook. READ-only over
+    # note bodies — never writes them. Non-fatal by design.
+    try:
+        from . import people
+        result["people"] = people.backfill_people(conn, tenant_id=tenant, limit=500)
+    except Exception as e:
+        result["people"] = {"status": "error", "detail": str(e)[:200]}
 
     return result
