@@ -1599,6 +1599,8 @@ function App() {
         onToggleAsk={() => setAskOpen((o) => !o)}
         onMap={() => { setView('workspace'); if (!mapOpen) setMapKbFilter([]); setMapOpen(!mapOpen); }}
         onWizards={() => { setMapOpen(false); setView(view === 'wizards' ? 'workspace' : 'wizards'); }}
+        peopleOpen={view === 'people'}
+        onPeople={() => { setMapOpen(false); setView(view === 'people' ? 'workspace' : 'people'); }}
         onMove={() => setMoveOpen(true)} />
       <div style={{ flex: 1, display: 'flex', minHeight: 0, position: 'relative' }}>
         <LoreErrorBoundary key={view}>
@@ -1697,6 +1699,13 @@ function App() {
                 pendingInvites={pendingInvites} inviteBusy={inviteBusy} onAcceptInvite={acceptInvite} onRefreshInvites={refreshInvites} />
               {askOpen && askPanel}
             </div>
+          </div>
+        )}
+        {view === 'people' && window.LorePeopleView && (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+            <BackBar label={(window.LorePlaceMeta[place] || {}).label} onBack={() => setView('workspace')} />
+            <window.LorePeopleView tenant={tenant} scopes={persona.scopes}
+              onOpenNote={(id, title) => openByRef(title || id)} />
           </div>
         )}
         {view === 'wizards' && window.LoreWizardsView && (

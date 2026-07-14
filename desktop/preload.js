@@ -10,6 +10,25 @@ let LOCAL_TOKEN = '';
 try { LOCAL_TOKEN = ipcRenderer.sendSync('local-token') || ''; } catch { /* backend unlocked */ }
 function authH(extra) { return LOCAL_TOKEN ? { ...extra, 'X-Lore-Token': LOCAL_TOKEN } : { ...extra }; }
 
+contextBridge.exposeInMainWorld('lorePeople', {
+  peopleList: (tenant, scopes) =>
+    fetch(`${BACKEND}/people?tenant=${encodeURIComponent(tenant)}&scopes=${encodeURIComponent(scopes)}`, { headers: authH() }).then((r) => r.json()),
+  peopleDetail: (tenant, scopes, personId) =>
+    fetch(`${BACKEND}/people/detail?tenant=${encodeURIComponent(tenant)}&scopes=${encodeURIComponent(scopes)}&person_id=${encodeURIComponent(personId)}`, { headers: authH() }).then((r) => r.json()),
+  peopleMerge: (tenant, keepId, mergeId) =>
+    fetch(`${BACKEND}/people/merge`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authH() },
+      body: JSON.stringify({ tenant, keep_id: keepId, merge_id: mergeId }),
+    }).then((r) => r.json()),
+  peopleHide: (tenant, personId) =>
+    fetch(`${BACKEND}/people/hide`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authH() },
+      body: JSON.stringify({ tenant, person_id: personId }),
+    }).then((r) => r.json()),
+});
+
 contextBridge.exposeInMainWorld('lore', {
   // --- filesystem (main process) ---
   pickVault:      ()           => ipcRenderer.invoke('vault:pick'),

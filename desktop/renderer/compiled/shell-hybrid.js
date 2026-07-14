@@ -194,8 +194,8 @@ function RibbonTile({ icon, label, onClick, active, disabled, activeColor, title
 }
 
 // Office-style ribbon: Go | Create | Understand | Share groups + contextual place hint.
-function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onHome, onSearch, onSettings, onRefresh, refreshing,
-  onNewPage, onAddFiles, onToggleAsk, onMap, onWizards, onMove }) {
+function Ribbon({ place, askOpen, mapOpen, wizardsOpen, peopleOpen, canMove, onHome, onSearch, onSettings, onRefresh, refreshing,
+  onNewPage, onAddFiles, onToggleAsk, onMap, onWizards, onPeople, onMove }) {
   const meta = sh2Places[place] || sh2Places.my;
   const group = (caption, tiles, last) => /*#__PURE__*/
   React.createElement("div", { style: {
@@ -222,7 +222,9 @@ function Ribbon({ place, askOpen, mapOpen, wizardsOpen, canMove, onHome, onSearc
     group('Understand', [/*#__PURE__*/
     React.createElement(RibbonTile, { key: "ask", icon: "sparkles", label: "Ask Lore", onClick: onToggleAsk, active: askOpen }), /*#__PURE__*/
     React.createElement(RibbonTile, { key: "map", icon: "waypoints", label: "Map", onClick: onMap, active: mapOpen }), /*#__PURE__*/
-    React.createElement(RibbonTile, { key: "wiz", icon: "wand-2", label: "Wizards", onClick: onWizards, active: wizardsOpen })]
+    React.createElement(RibbonTile, { key: "wiz", icon: "wand-2", label: "Wizards", onClick: onWizards, active: wizardsOpen }), /*#__PURE__*/
+    React.createElement(RibbonTile, { key: "people", icon: "users", label: "People", onClick: onPeople, active: peopleOpen,
+      title: "Names and interactions found across your notes and captures" })]
     ),
     group('Share', [/*#__PURE__*/
     React.createElement(RibbonTile, { key: "move", icon: "corner-up-right", label: "Move\u2026", onClick: onMove, disabled: !canMove,

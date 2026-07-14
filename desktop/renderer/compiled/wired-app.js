@@ -1599,6 +1599,8 @@ function App() {
       onToggleAsk: () => setAskOpen((o) => !o),
       onMap: () => {setView('workspace');if (!mapOpen) setMapKbFilter([]);setMapOpen(!mapOpen);},
       onWizards: () => {setMapOpen(false);setView(view === 'wizards' ? 'workspace' : 'wizards');},
+      peopleOpen: view === 'people',
+      onPeople: () => {setMapOpen(false);setView(view === 'people' ? 'workspace' : 'people');},
       onMove: () => setMoveOpen(true) }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', minHeight: 0, position: 'relative' } }, /*#__PURE__*/
     React.createElement(LoreErrorBoundary, { key: view },
@@ -1697,6 +1699,13 @@ function App() {
       pendingInvites: pendingInvites, inviteBusy: inviteBusy, onAcceptInvite: acceptInvite, onRefreshInvites: refreshInvites }),
     askOpen && askPanel
     )
+    ),
+
+    view === 'people' && window.LorePeopleView && /*#__PURE__*/
+    React.createElement("div", { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 } }, /*#__PURE__*/
+    React.createElement(BackBar, { label: (window.LorePlaceMeta[place] || {}).label, onBack: () => setView('workspace') }), /*#__PURE__*/
+    React.createElement(window.LorePeopleView, { tenant: tenant, scopes: persona.scopes,
+      onOpenNote: (id, title) => openByRef(title || id) })
     ),
 
     view === 'wizards' && window.LoreWizardsView && /*#__PURE__*/
