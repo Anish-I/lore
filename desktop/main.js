@@ -257,6 +257,24 @@ async function ensureBackend() {
     childEnv.FASTEMBED_CACHE_PATH = febCache;
   }
 
+  // Query-expansion glossary (recall.py reads LORE_GLOSSARY_PATH). A/B on the
+  // live store (2026-07-15) doubled vague-query recall@1 with no change to the
+  // exact/complex/mixed lanes. The backend is a separate process and cannot
+  // read inside app.asar, so seed a user-editable copy in userData from the
+  // bundled default and point the backend at that copy — user edits win and
+  // are never overwritten.
+  {
+    const userGloss = path.join(app.getPath('userData'), 'lore-glossary.json');
+    if (!fs.existsSync(userGloss)) {
+      try {
+        fs.copyFileSync(path.join(__dirname, 'assets', 'lore-glossary.json'), userGloss);
+      } catch { /* non-fatal: expansion just stays off */ }
+    }
+    if (!childEnv.LORE_GLOSSARY_PATH && fs.existsSync(userGloss)) {
+      childEnv.LORE_GLOSSARY_PATH = userGloss;
+    }
+  }
+
   // Local Obsidian-light default: SQLite truth + embedded Qdrant, no servers.
   // Applies to BOTH the packaged and dev spawn paths below unless the user has
   // explicitly opted into server mode (cfg.serverMode === true), in which case

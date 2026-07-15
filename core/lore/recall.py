@@ -72,6 +72,19 @@ _EXPAND = os.environ.get("EXPAND", "1") != "0"
 # recalibration job learn triggers from the user's real queries.
 _GLOSSARY = {}
 
+# Optional: load the glossary from a JSON file ({trigger: "extra terms"}), so
+# an external dictionary (e.g. a curated synonym map) can be A/B-tested without
+# code changes. Bad file → empty glossary, never a crash at import time.
+_GLOSSARY_PATH = os.environ.get("LORE_GLOSSARY_PATH")
+if _GLOSSARY_PATH:
+    try:
+        import json as _json
+        with open(_GLOSSARY_PATH, encoding="utf-8") as _f:
+            _loaded = _json.load(_f)
+        _GLOSSARY = {str(k).lower(): str(v) for k, v in _loaded.items() if k and v}
+    except Exception:
+        _GLOSSARY = {}
+
 def expand_query(q: str) -> str:
     if not _EXPAND:
         return q
