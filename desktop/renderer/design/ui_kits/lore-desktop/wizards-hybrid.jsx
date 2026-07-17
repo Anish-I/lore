@@ -25,7 +25,7 @@ function WzButton({ icon, children, onClick, variant, disabled, style: extra }) 
   );
 }
 
-function WizardCard({ name, meta, teamBadge, onChat, extraAction }) {
+function WizardCard({ name, meta, teamBadge, onChat, extraAction, icon }) {
   const [hover, setHover] = React.useState(false);
   return (
     <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
@@ -36,7 +36,7 @@ function WizardCard({ name, meta, teamBadge, onChat, extraAction }) {
       }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
         <span style={{ width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
-          <WzIcon name="wand-2" size={17} style={{ color: 'var(--brand-fg)' }} />
+          <WzIcon name={icon || 'wand-2'} size={17} style={{ color: 'var(--brand-fg)' }} />
         </span>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
@@ -207,6 +207,26 @@ function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) 
   const Builder = window.LoreWizardBuilder;
   const kbCatalog = (catalog || []).filter((w) => w.kind === 'wizard' && !w.installed);
 
+  // Skills & tools — the scraped catalog. Counters are REAL and sourced
+  // (GitHub stars via scripts/enrich-catalog.cjs, installs from the source
+  // marketplace); no synthetic ratings anywhere.
+  const [toolQ, setToolQ] = React.useState('');
+  const [toolsShown, setToolsShown] = React.useState(9);
+  const wzCompact = (n) => n >= 1e6 ? (n / 1e6).toFixed(n < 1e7 ? 1 : 0) + 'M'
+    : n >= 1e3 ? (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'k' : String(n);
+  const toolMeta = (w) => {
+    const parts = [];
+    if (w.stars != null) parts.push(`★ ${wzCompact(w.stars)} GitHub`);
+    if (w.installs != null) parts.push(`${wzCompact(w.installs)} installs`);
+    if (w.author) parts.push(w.author);
+    return parts.join(' · ') || w.desc;
+  };
+  const ql = toolQ.trim().toLowerCase();
+  const toolCatalog = (catalog || [])
+    .filter((w) => w.kind === 'tool' && !w.installed)
+    .filter((w) => !ql || (w.name + ' ' + (w.desc || '') + ' ' + (w.author || '') + ' ' + (w.topics || []).join(' ')).toLowerCase().includes(ql))
+    .sort((a, b) => (b.installs || 0) - (a.installs || 0) || (b.stars || 0) - (a.stars || 0));
+
   // Group personal wizards by the scope of the pages they wrap, so shared
   // wizards surface under Team/Company headings the same way pages do.
   const wzScope = (w) => (w.scope === 'team' ? 'team' : (w.scope === 'company' || w.scope === 'enterprise') ? 'company' : 'my');
@@ -291,6 +311,42 @@ function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) 
               } />
           ))}
         </Section>
+
+        {/* Skills & tools — agent skills/MCP servers from the open ecosystem.
+            Popularity badges are sourced, not invented: GitHub stars + the
+            origin marketplace's install count. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, margin: '30px 0 4px' }}>
+          <span style={{ width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' }}>
+            <WzIcon name="plug-zap" size={14} style={{ color: 'var(--brand-fg)' }} />
+          </span>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-strong)', margin: 0 }}>Skills &amp; tools</h2>
+        </div>
+        <p style={{ fontSize: 12, color: 'var(--text-faint)', margin: '0 0 10px' }}>
+          Agent skills from the open ecosystem — star counts come from each skill’s GitHub repo, install counts from its marketplace.
+        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, maxWidth: 340, padding: '0 11px', height: 32, marginBottom: 14, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 8 }}>
+          <WzIcon name="search" size={14} style={{ color: 'var(--text-faint)' }} />
+          <input value={toolQ} onChange={(e) => { setToolQ(e.target.value); setToolsShown(9); }} placeholder="Search skills &amp; tools…"
+            style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 12.5 }} />
+        </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 }}>
+          {toolCatalog.slice(0, toolsShown).map((w) => (
+            <WizardCard key={w.id} name={w.name} icon="plug-zap" meta={toolMeta(w)}
+              onChat={null}
+              extraAction={
+                <WzButton icon="download" onClick={() => install(w.id)} disabled={installBusy === w.id} style={{ flex: 1 }}>
+                  {installBusy === w.id ? 'Installing…' : 'Install'}
+                </WzButton>
+              } />
+          ))}
+        </div>
+        {toolCatalog.length > toolsShown && (
+          <div style={{ display: 'flex', justifyContent: 'center', marginTop: 14 }}>
+            <WzButton icon="chevron-down" onClick={() => setToolsShown((n) => n + 18)}>
+              Show more ({toolCatalog.length - toolsShown} left)
+            </WzButton>
+          </div>
+        )}
       </div>
 
       {chatWizard && <WizardChatDrawer wizard={chatWizard} onClose={() => setChatWizard(null)} />}

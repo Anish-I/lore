@@ -146,3 +146,66 @@ def test_name_then_email_reuses_the_same_person(conn):
     assert rows[0]["name"] == "Dana Whitmore"
     assert rows[0]["emails"] == ["dana@example.com"]
     assert rows[0]["mention_count"] == 2
+
+
+def test_sentence_words_never_become_people(conn):
+    """The live store's top 'person' was 'What' (44 mentions). Never again."""
+    t = _tenant()
+    add_note(conn, t, f"{t}-n1",
+             "What happened with the deploy? What went wrong there. "
+             "What is left to do. Web design needs a pass. Web fonts too. Web servers restarted. "
+             "Built the demo with React Native and tested with Expo Go this week. "
+             "New York trip planning continued. Met with Dana Whitmore about it.")
+    people.extract_mentions(conn, t, f"{t}-n1")
+    names = [p["name"] for p in people.list_people(conn, t, "scope-a")]
+    assert "What" not in names
+    assert "Web" not in names
+    assert "New York" not in names        # 'New' is sentence furniture
+    assert "React Native" not in names    # bare "with" is not a person cue
+    assert "Expo Go" not in names
+    assert "Dana Whitmore" in names
+
+
+def test_note_titles_are_topics_not_people(conn):
+    t = _tenant()
+    add_note(conn, t, f"{t}-topic", "the knowledge graph description note body here",
+             title="Wingman Knowledge")
+    add_note(conn, t, f"{t}-n1",
+             "Wingman Knowledge got restructured today. Priya Natarajan reviewed the change.")
+    people.extract_mentions(conn, t, f"{t}-n1")
+    names = [p["name"] for p in people.list_people(conn, t, "scope-a")]
+    assert "Wingman Knowledge" not in names
+    assert "Priya Natarajan" in names
+
+
+def test_single_names_only_via_email_binding(conn):
+    t = _tenant()
+    add_note(conn, t, f"{t}-n1",
+             "Talked to Priya about the rollout. Priya agreed. Priya will follow up. "
+             "Also synced with Marcus <marcus@example.com> about hiring.")
+    people.extract_mentions(conn, t, f"{t}-n1")
+    rows = people.list_people(conn, t, "scope-a")
+    names = {p["name"]: p for p in rows}
+    assert "Priya" not in names          # recurrence lane is dead — no email, no single name
+    assert "Marcus" in names             # email-bound single name survives
+    assert names["Marcus"]["emails"] == ["marcus@example.com"]
+
+
+def test_backfill_wipes_junk_from_older_extraction_version(conn):
+    t = _tenant()
+    add_note(conn, t, f"{t}-n1",
+             "Weekly sync with Dana Whitmore covered the budget line and the hiring plan.")
+    # Simulate junk from extraction v1 sitting in the store.
+    people.ensure_schema(conn)
+    conn.execute(
+        "insert into people (id, tenant_id, name, emails, first_seen, last_seen, hidden)"
+        " values ('junk1', %s, 'What', '', now(), now(), 0)", (t,))
+    conn.execute(
+        "insert into person_mentions (tenant_id, person_id, note_id, scope_id, source_type, evidence, created_at)"
+        " values (%s, 'junk1', %s, 'scope-a', 'note', 'What happened', now())", (t, f"{t}-n1"))
+
+    people.backfill_people(conn, tenant_id=t)
+
+    names = [p["name"] for p in people.list_people(conn, t, "scope-a")]
+    assert "What" not in names
+    assert "Dana Whitmore" in names

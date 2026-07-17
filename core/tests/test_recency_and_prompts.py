@@ -66,6 +66,16 @@ def test_digest_style_prompt_instructs_synthesis_not_refusal():
     chunks = [{"title": "Fresh note (updated 2026-07-03)", "text": "changed pair sizing"}]
     digest = _grounded_prompt("what did I work on this week?", chunks, style="digest")
     assert "do NOT say the context lacks a summary" in digest
-    assert "bullet points" in digest
+    # v2: digest must ANSWER the question and stay on its subject — a
+    # categorized inventory of everything recent is the failure mode.
+    assert "Answer the user's question DIRECTLY" in digest
+    assert "question's subject" in digest
     plain = _grounded_prompt("what did we decide?", chunks)
     assert "say so plainly" in plain
+
+
+def test_temporal_subject_extraction():
+    from lore.api import _temporal_subject
+    assert _temporal_subject("get latest changes of lore") == "lore"
+    assert _temporal_subject("what did I do this week?") == ""
+    assert _temporal_subject("what's new in the kalshi bot") == "kalshi bot"

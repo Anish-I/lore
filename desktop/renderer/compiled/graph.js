@@ -64,6 +64,8 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
   const drawRef = React.useRef(null);
   const selRef = React.useRef(null);
   const prevCountRef = React.useRef(null); // node count last time the sim rebuilt — a change means a filter, not a live refresh
+  const prevPosRef = React.useRef({}); // id -> {x,y,vx,vy} from the last teardown — live refreshes keep the layout
+  const prevLinkKeysRef = React.useRef(new Set()); // link identity set — a NEW link animates its draw-in
 
   // Content signature: the heavy simulation effect below rebuilds only when the
   // actual node/edge SET changes, not on every new `graph` object reference — so
@@ -177,6 +179,38 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
     // 5th element (origin ∈ index|capture|llm) is the edge's provenance tag;
     // tolerate 4-tuples from older backends.
     .map(([a, b, kind, w, origin]) => ({ source: a, target: b, kind: kind || 'link', weight: w != null ? w : 0.9, origin: origin || 'index' }));
+
+    // ---- live-refresh continuity: keep positions, animate only what's new ----
+    // Rebuilding from scratch re-scattered EVERY node and reheated the sim to
+    // alpha=1 whenever a note was captured — that's the "graph stutters hard,
+    // then normal". Existing nodes now keep their coordinates; only genuinely
+    // new nodes pop in (with an ease-out-back scale + halo) next to a linked
+    // neighbor, and their edges draw in.
+    const prevPos = prevPosRef.current || {};
+    const hadPrev = Object.keys(prevPos).length > 0;
+    const nowTs = performance.now();
+    let newborn = 0;
+    for (const n of nodes) {
+      const p = prevPos[n.id];
+      if (p) {n.x = p.x;n.y = p.y;n.vx = p.vx || 0;n.vy = p.vy || 0;} else
+      if (hadPrev) {n._born = nowTs;newborn++;}
+    }
+    const linkKey = (l) => `${l.source}|${l.target}|${l.kind}`;
+    const prevLinkKeys = prevLinkKeysRef.current;
+    if (hadPrev) {
+      for (const l of links) if (!prevLinkKeys.has(linkKey(l))) l._born = nowTs + 160; // edge draws after the pop starts
+    }
+    prevLinkKeysRef.current = new Set(links.map(linkKey));
+    // Seed newborns near a linked neighbor so they pop where they belong.
+    for (const l of links) {
+      const s = byId[l.source],t2 = byId[l.target];
+      if (!s || !t2) continue;
+      if (s._born && !t2._born && t2.x != null) {s.x = t2.x + (Math.random() * 26 - 13);s.y = t2.y + (Math.random() * 26 - 13);} else
+      if (t2._born && !s._born && s.x != null) {t2.x = s.x + (Math.random() * 26 - 13);t2.y = s.y + (Math.random() * 26 - 13);}
+    }
+    // Small delta with history = live refresh → nudge, don't re-scatter.
+    const liveRefresh = hadPrev && newborn <= 6 &&
+    Math.abs(nodes.length - Object.keys(prevPos).length) <= 6;
     dataRef.current = { nodes, links, byId };
 
     const dpr = () => window.devicePixelRatio || 1;
@@ -195,7 +229,12 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
       return true;
     };
 
+    // Pop-in easing: starts at 0, overshoots ~1.1, settles at 1 (ease-out-back).
+    const easeOutBack = (p) => {const c1 = 1.70158,c3 = c1 + 1,u = p - 1;return 1 + c3 * u * u * u + c1 * u * u;};
+    let animRaf = null;
+
     const render = () => {
+      let animating = false;
       const ctx = cv.getContext('2d');
       const t = tRef.current || d3.zoomIdentity;
       const pal = palRef.current;
@@ -221,13 +260,26 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
         // genuinely unrecognized kind, not the default for structural edges.
         const kindColor = pal.edgeColors[l.kind] || pal.edge;
         const conf = l.weight != null ? l.weight : 0.9;
+        // Connect animation: a new edge draws in from source to target.
+        let dashProgress = 1;
+        if (l._born) {
+          const p = (performance.now() - l._born) / 620;
+          if (p >= 1) delete l._born;else
+          if (p > 0) {dashProgress = p;animating = true;} else
+          {animating = true;continue;} // scheduled but not started yet
+        }
         ctx.beginPath();ctx.moveTo(a.x, a.y);ctx.lineTo(b.x, b.y);
+        if (dashProgress < 1) {
+          const dist = Math.hypot(b.x - a.x, b.y - a.y);
+          ctx.setLineDash([dist * dashProgress, dist]);
+        }
         ctx.strokeStyle = lit ? pal.edgeLit : kindColor;
         // Structural edges stay more muted than reasoned ones (dominant weight kept
         // on the /enrich-derived typed relations) but are no longer near-invisible.
         ctx.globalAlpha = focus ? lit ? 0.85 : 0.08 : isStructural ? 0.5 : Math.max(0.15, conf * 0.85);
         ctx.lineWidth = (lit ? 1.3 : isStructural ? 0.7 : 0.5 + conf * 0.9) / t.k;
         ctx.stroke();
+        if (dashProgress < 1) ctx.setLineDash([]);
       }
       ctx.globalAlpha = 1;
 
@@ -236,10 +288,24 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
         if (n.x == null || !visible(n)) continue;
         const near = !focus || nb.has(n.id) || n.id === focus;
         ctx.globalAlpha = near ? 1 : 0.22;
+        // Pop animation: newborn nodes scale in with overshoot + a fading halo.
+        let r = n.r;
+        if (n._born) {
+          const p = (performance.now() - n._born) / 460;
+          if (p >= 1) delete n._born;else
+          {
+            animating = true;
+            r = Math.max(0.1, n.r * easeOutBack(Math.max(0.001, p)));
+            ctx.beginPath();ctx.arc(n.x, n.y, r + 7 * (1 - p), 0, Math.PI * 2);
+            ctx.strokeStyle = pal.brand;ctx.globalAlpha = 0.55 * (1 - p);
+            ctx.lineWidth = 1.6 / t.k;ctx.stroke();
+            ctx.globalAlpha = near ? 1 : 0.22;
+          }
+        }
         // Exact 2π, not 6.283185: Electron 43's Chromium (Graphite rasterizer)
         // renders a near-full arc as a visibly open 'pac-man'; older Chromium
         // snapped it closed. closePath() belts-and-suspenders the fill.
-        ctx.beginPath();ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);ctx.closePath();
+        ctx.beginPath();ctx.arc(n.x, n.y, r, 0, Math.PI * 2);ctx.closePath();
         // colorBy 'place' (Map overlay): scope → place solid, matching the legend.
         // Default: color by Section (top-level folder) when known — the pills
         // filter by section, so node color matches what you're toggling; scope
@@ -268,6 +334,12 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
         ctx.fillText(label.length > 42 ? label.slice(0, 40) + '…' : label, n.x, n.y + n.r + 2 / t.k);
       }
       ctx.globalAlpha = 1;
+
+      // Keep frames coming while a pop/draw-in is mid-flight even after the
+      // simulation has gone to sleep (one rAF in flight at a time).
+      if (animating && animRaf == null) {
+        animRaf = requestAnimationFrame(() => {animRaf = null;render();});
+      }
     };
     drawRef.current = render;
 
@@ -278,8 +350,10 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
     force('center', d3.forceCenter(0, 0)).
     force('collide', d3.forceCollide((d) => d.r + 3)).
     force('x', d3.forceX(0).strength(0.018)).
-    force('y', d3.forceY(0).strength(0.018)).
-    alpha(1).alphaDecay(0.022).velocityDecay(0.4);
+    force('y', d3.forceY(0).strength(0.018))
+    // Live refresh (positions preserved) needs only a nudge to settle the
+    // newcomers — a full alpha=1 reheat re-scatters the whole layout.
+    .alpha(liveRefresh ? 0.14 : 1).alphaDecay(0.022).velocityDecay(0.4);
     sim.on('tick', render);
     simRef.current = sim;
 
@@ -384,12 +458,21 @@ function GraphView({ graph, onOpen, bases, kbFilter, onToggleBase, baseOf, hideT
     // yanked from wherever the user panned. 900ms on first entry lets the layout
     // settle; 650ms is enough for a filtered subset to mostly settle.
     const nodeCount = nodes.length;
-    const setChanged = prevCountRef.current !== null && prevCountRef.current !== nodeCount;
+    // A live refresh keeps its layout — yanking the camera for +1 node is the
+    // other half of the "stutter". Only filter-scale set changes re-fit.
+    const setChanged = prevCountRef.current !== null && prevCountRef.current !== nodeCount && !liveRefresh;
     prevCountRef.current = nodeCount;
     const shouldFit = firstEntry || setChanged;
     const fitTimer = shouldFit ? setTimeout(fitView, firstEntry ? 900 : 650) : null;
 
     return () => {
+      // Hand the settled coordinates to the next build (live-refresh continuity).
+      const snap = {};
+      for (const n of dataRef.current.nodes) {
+        if (n.x != null) snap[n.id] = { x: n.x, y: n.y, vx: n.vx || 0, vy: n.vy || 0 };
+      }
+      prevPosRef.current = snap;
+      if (animRaf != null) cancelAnimationFrame(animRaf);
       if (fitTimer) clearTimeout(fitTimer);
       ro.disconnect();mo.disconnect();
       cv.removeEventListener('pointerdown', onDown);

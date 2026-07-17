@@ -1,4 +1,4 @@
-import datetime, hashlib, json, os, time, uuid
+import datetime, hashlib, json, os, re, time, uuid
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse
@@ -75,18 +75,50 @@ _TEMPORAL_RE = __import__("re").compile(
     __import__("re").I)
 
 
-def _recent_note_rows(tenant: str, scopes: list, limit: int = 8):
+# Words that carry no SUBJECT in a temporal question — what's left after
+# removing them is what the user is actually asking about ("get latest changes
+# of lore" → "lore"). Deliberately generous: a lost subject degrades to the
+# old all-notes digest, a false subject returns nothing and falls back anyway.
+_TEMPORAL_STOPWORDS = frozenset((
+    "get", "show", "give", "tell", "catch", "me", "up", "my", "the", "a", "an",
+    "of", "on", "in", "for", "about", "with", "to", "and", "or", "any",
+    "what", "whats", "what's", "did", "have", "has", "been", "i", "we", "is", "are",
+    "new", "news", "recent", "recently", "latest", "newest", "last", "past",
+    "today", "yesterday", "week", "weeks", "day", "days", "changes", "changed",
+    "updates", "updated", "update", "happening", "happened", "going", "worked",
+    "work", "working", "done", "do", "notes", "note", "pages", "page", "stuff",
+    "summary", "summarize", "digest", "this", "that", "these", "those", "few",
+))
+
+
+def _temporal_subject(question: str) -> str:
+    """The non-temporal remainder of a recency question, or '' when the
+    question is purely temporal ('what did I do this week?')."""
+    words = re.findall(r"[a-z0-9][a-z0-9'_-]*", (question or "").lower())
+    return " ".join(w for w in words if w not in _TEMPORAL_STOPWORDS).strip()
+
+
+def _recent_note_rows(tenant: str, scopes: list, limit: int = 8, subject: str = None):
     """Newest in-scope notes with their leading chunk text (skips captured session
-    bodies' noise by preferring title+first chunk)."""
+    bodies' noise by preferring title+first chunk). When the question names a
+    SUBJECT ('latest changes of lore'), restrict to notes whose title or path
+    mentions it — the all-notes list only serves purely temporal questions."""
     frag, sparams = in_clause("n.scope_id", list(scopes))
-    rows = _conn.execute(
-        f"""select n.id, n.title, n.scope_id, n.updated_at, c.text
+    base = f"""select n.id, n.title, n.scope_id, n.updated_at, c.text
             from notes n
             left join chunks c on c.note_id = n.id and c.chunk_index = 0
-            where n.tenant_id=%s and {frag}
-            order by n.updated_at desc limit %s""",
+            where n.tenant_id=%s and {frag}"""
+    if subject:
+        like = f"%{subject.lower()}%"
+        rows = _conn.execute(
+            base + " and (lower(n.title) like %s or lower(coalesce(n.source_path,'')) like %s)"
+                 + " order by n.updated_at desc limit %s",
+            (tenant, *sparams, like, like, limit)).fetchall()
+        if rows:
+            return rows
+    return _conn.execute(
+        base + " order by n.updated_at desc limit %s",
         (tenant, *sparams, limit)).fetchall()
-    return rows
 
 
 # Model selection: Voyage if an API key is set, else REAL local models (fastembed),
@@ -623,7 +655,8 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
     """
     _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
     if _TEMPORAL_RE.search(req.question or ""):
-        rows = _recent_note_rows(tenant, scopes, limit=8)
+        rows = _recent_note_rows(tenant, scopes, limit=8,
+                                 subject=_temporal_subject(req.question) or None)
         tr = {
             "query": req.question,
             "classification": "recency",

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import os
 import re
-from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
@@ -18,60 +17,63 @@ _SINGLE_NAME_RE = re.compile(rf"\b({_NAME_TOKEN})\b")
 _ANGLE_EMAIL_RE = re.compile(
     rf"(?P<name>{_NAME_TOKEN}(?:\s+{_NAME_TOKEN}){{0,2}})\s*<\s*(?P<email>(?i:{EMAIL_RE.pattern}))\s*>")
 
+# Person-context cues. In a dev vault nearly every capitalized 2-gram is a
+# TERM ("React Native", "Cormorant Garamond") — capitalization alone shipped
+# 371 "people". A candidate from prose only counts when its sentence treats it
+# like a person: a person-verb after it, or a person-preposition before it.
+# Same precision-first, evidence-anchored philosophy as relations.py.
+# NB: no bare "with"/"from" — "built with React Native", "test with Expo Go",
+# "from GitHub" all pass those. Person-verbs must carry the with/from.
+_PERSON_BEFORE_RE = re.compile(
+    r"\b(met(?: with)?|meets?|meeting with|talk(?:ed|ing)? (?:to|with)|spoke (?:to|with)|"
+    r"call(?:ed)? with|ping(?:ed)?|ask(?:ed)?|told|thank(?:s|ed)?|cc|bcc|email(?:ed)?|"
+    r"according to|reviewed by|approved by|assigned to|paired with|pairing with|"
+    r"sync(?:ed|ing)? with|interview(?:ed|ing)?|hired?|reply from|replied to|"
+    r"message from|dm(?:'d)? from|hi|hey|hello|dear)\s*[:,]?\s*$", re.I)
+_PERSON_AFTER_RE = re.compile(
+    r"^\s*[,:]?\s*(said|says|asked|agreed|replied|responded|mentioned|suggested|"
+    r"confirmed|approved|reviewed|wrote|drafted|thinks?|wants?|will|met|joined|"
+    r"sent|shared|reported|noted|proposed|covered|took|owns?|leads?|manages?|"
+    r"promised|recommended|signed|scheduled|emailed|called|left|is (?:the )?"
+    r"(?:owner|lead|manager|clerk|engineer|designer|lawyer|accountant|recruiter))\b", re.I)
+
+
+def _person_context(line: str, start: int, end: int) -> bool:
+    return bool(_PERSON_BEFORE_RE.search(line[:start])) or bool(_PERSON_AFTER_RE.match(line[end:]))
+
+# Rejected as name TOKENS. Two families: (a) app/tech nouns that show up
+# capitalized in notes constantly, (b) common English words that start
+# sentences/clauses — the live store's top "people" before this list existed
+# were "What" (44 mentions) and "Web". A real name colliding here (e.g. "Will")
+# still gets in through the email-bound lane.
 _GENERIC_WORDS = {
-    "Admin",
-    "Agent",
-    "Api",
-    "App",
-    "Assistant",
-    "Branch",
-    "Bucket",
-    "Capture",
-    "Claude",
-    "Cli",
-    "Code",
-    "Codex",
-    "Config",
-    "Context",
-    "Database",
-    "Email",
-    "Feature",
-    "File",
-    "Github",
-    "Hook",
-    "Inbox",
-    "Index",
-    "Invite",
-    "Issue",
-    "Json",
-    "Lore",
-    "Meeting",
-    "Note",
-    "Openai",
-    "Postgres",
-    "Pull",
-    "Query",
-    "Readme",
-    "Repo",
-    "Request",
-    "Response",
-    "Section",
-    "Server",
-    "Session",
-    "Sqlite",
-    "State",
-    "Supersession",
-    "System",
-    "Task",
-    "Tenant",
-    "Test",
-    "Thread",
-    "Title",
-    "Topic",
-    "User",
-    "Vault",
-    "Window",
-    "Workflow",
+    # tech/app nouns
+    "Admin", "Agent", "Api", "App", "Assistant", "Backend", "Branch", "Bucket",
+    "Button", "Capture", "Chat", "Claude", "Cli", "Client", "Code", "Codex",
+    "Company", "Config", "Context", "Data", "Database", "Desktop", "Docs", "Invoice",
+    "Email", "Error", "Feature", "File", "Files", "Fix", "Frontend", "Gemini",
+    "Github", "Google", "Graph", "Home", "Hook", "Hooks", "Inbox", "Index",
+    "Invite", "Issue", "Json", "Knowledge", "Linux", "Lore", "Map", "Meeting",
+    "Model", "Node", "Note", "Notes", "Ollama", "Openai", "Page", "Pages",
+    "People", "Plugin", "Postgres", "Private", "Prompt", "Pull", "Python",
+    "Qdrant", "Query", "Readme", "Repo", "Request", "Response", "Search",
+    "Section", "Server", "Session", "Settings", "Sonnet", "Sqlite", "State",
+    "Status", "Supersession", "System", "Task", "Team", "Tenant", "Terminal",
+    "Test", "Thread", "Title", "Token", "Topic", "Update", "User", "Vault",
+    "Web", "Window", "Windows", "Wizard", "Wizards", "Workflow",
+    # sentence furniture
+    "About", "Above", "After", "Again", "Against", "All", "Also", "And", "Any",
+    "Are", "Because", "Before", "Below", "Between", "Both", "But", "Can",
+    "Could", "Did", "Does", "Down", "During", "Each", "Else", "Every", "Few",
+    "First", "For", "From", "Get", "Give", "Had", "Has", "Have", "Here", "How",
+    "However", "Into", "Its", "Just", "Last", "Later", "Less", "Made", "Make",
+    "Many", "May", "Might", "More", "Most", "Must", "Never", "New", "Next",
+    "Not", "Now", "Once", "One", "Only", "Other", "Our", "Over", "Own", "Run",
+    "Said", "Same", "Say", "See", "Set", "Should", "Since", "Some", "Still",
+    "Such", "Than", "That", "The", "Their", "Then", "There", "These", "They",
+    "This", "Those", "Today", "Too", "Under", "Until", "Use", "Used", "Using",
+    "Very", "Was", "Were", "What", "When", "Where", "Which", "While", "Who",
+    "Why", "Will", "With", "Would", "Yes", "Yet", "You", "Your",
 }
 
 _GENERIC_PHRASES = {
@@ -125,7 +127,7 @@ def extract_mentions(conn: Any, tenant_id: str, note_id: str) -> dict[str, int]:
     if not note:
         return {"people": 0, "mentions": 0}
 
-    entities = _extract_entities(note["body"], allowed_singles=_tenant_recurrent_singles(conn, tenant_id))
+    entities = _extract_entities(note["body"], known_titles=_tenant_titles(conn, tenant_id))
     people_seen = 0
     mentions_seen = 0
     for entity in entities:
@@ -152,8 +154,35 @@ def extract_mentions(conn: Any, tenant_id: str, note_id: str) -> dict[str, int]:
     return {"people": people_seen, "mentions": mentions_seen}
 
 
+# Bump when extraction gates change incompatibly: the next backfill wipes the
+# tenant's people/mentions and re-extracts, so junk from older gates ("What",
+# "Web") can't linger. Hidden flags are sacrificed knowingly — junk-era hides
+# were hiding junk.
+EXTRACTION_VERSION = 4   # v4: no bare with/from cues; emails bind only adjacent names
+
+
+def _wipe_if_stale_version(conn: Any, tenant_id: str) -> bool:
+    _execute(conn, "create table if not exists people_meta (tenant_id text primary key, version integer)")
+    row = _fetchall(conn, "select version from people_meta where tenant_id = %s", [tenant_id])
+    version = int(row[0][0]) if row else 0
+    if version >= EXTRACTION_VERSION:
+        return False
+    _execute(conn, "delete from person_mentions where tenant_id = %s", [tenant_id])
+    _execute(conn, "delete from people where tenant_id = %s", [tenant_id])
+    _execute(
+        conn,
+        """insert into people_meta (tenant_id, version) values (%s, %s)
+           on conflict(tenant_id) do update set version = excluded.version""",
+        [tenant_id, EXTRACTION_VERSION],
+    )
+    _commit(conn)
+    return True
+
+
 def backfill_people(conn: Any, tenant_id: str | None = None, limit: int = 500) -> dict[str, int]:
     ensure_schema(conn)
+    if tenant_id:
+        _wipe_if_stale_version(conn, tenant_id)
     notes = _list_notes(conn, tenant_id=tenant_id, limit=limit)
     stats = {"notes": 0, "people": 0, "mentions": 0}
     for note in notes:
@@ -321,17 +350,18 @@ def parse_scopes(scopes: str | Iterable[str]) -> list[str]:
     return values
 
 
-def _extract_entities(body: str, allowed_singles: set[str] | None = None) -> list[dict[str, Any]]:
+def _extract_entities(body: str, known_titles: set[str] | None = None) -> list[dict[str, Any]]:
+    """Names + emails from note prose. Precision-first v2:
+
+    * multi-word capitalized sequences (2-3 tokens), every token stopworded;
+    * a phrase matching an existing NOTE TITLE is a topic, not a person;
+    * single-word names ONLY when bound to an email ("Dana <dana@x.com>") —
+      the recurrence lane shipped "What" (44 mentions) as the top person.
+    """
     text = _strip_code_blocks(body or "")
-    allowed_singles = allowed_singles or set()
+    known_titles = known_titles or set()
     lines = text.splitlines() or [text]
     by_key: dict[str, dict[str, Any]] = {}
-    multi_spans = [(match.start(), match.end()) for match in _NAME_SEQUENCE_RE.finditer(text)]
-    single_counts = Counter(
-        match.group(1)
-        for match in _SINGLE_NAME_RE.finditer(text)
-        if _valid_single_name(text, match) and not _inside_spans(match, multi_spans)
-    )
 
     def add(name: str, emails: Iterable[str], evidence: str) -> None:
         clean_name = _clean_name(name)
@@ -339,11 +369,13 @@ def _extract_entities(body: str, allowed_singles: set[str] | None = None) -> lis
         if not clean_name and not clean_emails:
             return
         if clean_name and not _valid_name(clean_name):
-            return
+            if not clean_emails:
+                return
+            clean_name = ""  # keep the email identity, drop the junk name
+        if clean_name and not clean_emails and clean_name.casefold() in known_titles:
+            return  # it's a page/topic name, not a person
         display_name = clean_name or _display_name_from_email(clean_emails[0])
-        key = display_name.casefold()
-        if clean_emails:
-            key = clean_emails[0]
+        key = clean_emails[0] if clean_emails else display_name.casefold()
         entity = by_key.setdefault(key, {"name": display_name, "emails": set(), "evidence": _evidence(evidence)})
         entity["emails"].update(clean_emails)
         if clean_name and "@" in entity["name"]:
@@ -363,12 +395,9 @@ def _extract_entities(body: str, allowed_singles: set[str] | None = None) -> lis
             name = match.group(1)
             if EMAIL_RE.search(name):
                 continue
+            if not _person_context(line, match.start(1), match.end(1)):
+                continue  # capitalized TERM, not a person acting like one
             add(name, [], line)
-
-    for match in _SINGLE_NAME_RE.finditer(text):
-        name = match.group(1)
-        if (single_counts[name] >= 3 or name in allowed_singles) and _valid_single_name(text, match) and not _inside_spans(match, multi_spans):
-            add(name, [], _line_for_offset(text, match.start()))
 
     email_bound_names = {entity["name"].casefold() for entity in by_key.values() if entity["emails"]}
     return [
@@ -378,36 +407,34 @@ def _extract_entities(body: str, allowed_singles: set[str] | None = None) -> lis
     ]
 
 
-def _inside_spans(match: re.Match[str], spans: list[tuple[int, int]]) -> bool:
-    return any(start <= match.start() and match.end() <= end for start, end in spans)
-
-
-def _tenant_recurrent_singles(conn: Any, tenant_id: str, limit: int = 1000) -> set[str]:
+def _tenant_titles(conn: Any, tenant_id: str) -> set[str]:
+    """Lowercased note titles — capitalized phrases matching one are topics."""
     try:
-        rows = _fetchall(conn, "select body from notes where tenant_id = %s limit %s", [tenant_id, limit])
+        rows = _fetchall(
+            conn,
+            "select distinct title from notes where tenant_id = %s and title is not null",
+            [tenant_id],
+        )
     except Exception:
         return set()
-    counts: Counter[str] = Counter()
-    for row in rows:
-        text = _strip_code_blocks(_value(row, "body", 0) or "")
-        spans = [(match.start(), match.end()) for match in _NAME_SEQUENCE_RE.finditer(text)]
-        for match in _SINGLE_NAME_RE.finditer(text):
-            if _valid_single_name(text, match) and not _inside_spans(match, spans):
-                counts[match.group(1)] += 1
-    return {name for name, count in counts.items() if count >= 3}
+    return {str(r[0]).casefold() for r in rows if r[0]}
 
 
 def _nearest_name_for_email(line: str, email: str) -> str | None:
+    """A name binds to a bare email only when it sits RIGHT before it
+    ("Kevin kevin@x.com", "Kevin - kevin@x.com"). A capitalized word further
+    back is usually sentence furniture ("Thursday ... hello@dentist.com")."""
     idx = line.lower().find(email.lower())
     if idx < 0:
         return None
-    before = line[max(0, idx - 80) : idx]
-    match = list(_NAME_SEQUENCE_RE.finditer(before))
-    if match:
-        return match[-1].group(1)
-    single = list(_SINGLE_NAME_RE.finditer(before))
-    if single:
-        return single[-1].group(1)
+    before = line[max(0, idx - 60) : idx]
+    matches = list(_NAME_SEQUENCE_RE.finditer(before)) or list(_SINGLE_NAME_RE.finditer(before))
+    if not matches:
+        return None
+    m = matches[-1]
+    # Only separators may sit between the name's end and the email's start.
+    if re.fullmatch(r"[\s\-–—:,(<\[]{0,4}", before[m.end():]):
+        return m.group(1)
     return None
 
 
@@ -445,26 +472,8 @@ def _valid_name(name: str) -> bool:
     return True
 
 
-def _valid_single_name(text: str, match: re.Match[str]) -> bool:
-    name = match.group(1)
-    if name in _GENERIC_WORDS:
-        return False
-    prefix = text[max(0, match.start() - 3) : match.start()]
-    if match.start() == 0 or re.search(r"(^|[.!?]\s)$", prefix):
-        return False
-    return True
-
-
 def _evidence(line: str) -> str:
     return re.sub(r"\s+", " ", line.strip())[:240]
-
-
-def _line_for_offset(text: str, offset: int) -> str:
-    start = text.rfind("\n", 0, offset) + 1
-    end = text.find("\n", offset)
-    if end < 0:
-        end = len(text)
-    return text[start:end]
 
 
 def _upsert_person(conn: Any, *, tenant_id: str, name: str, emails: list[str], seen_at: str) -> str:

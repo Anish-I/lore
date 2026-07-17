@@ -299,7 +299,7 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
             <img src="design/assets/sprites/lore-familiar.png" alt="" aria-hidden="true"
               style={{ display: 'block', width: 120, height: 120, margin: '0 auto 10px', objectFit: 'contain', filter: 'drop-shadow(0 6px 16px rgba(0,0,0,0.28))', pointerEvents: 'none', userSelect: 'none' }} />
             <p style={{ fontSize: 15.5, fontWeight: 600, color: 'var(--text-strong)', margin: '0 0 4px', textAlign: 'center' }}>
-              {ctx ? `Ask about “${ctx.title}”` : 'Ask across your pages.'}
+              {ctx ? (ctx.section ? `Ask within ${ctx.title}` : `Ask about “${ctx.title}”`) : 'Ask across your pages.'}
             </p>
             <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', margin: '0 0 16px', lineHeight: 1.5, textAlign: 'center' }}>Answers are drawn only from pages you can see, and every claim is cited.</p>
             {!identityReady && (
@@ -324,6 +324,8 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
           </div>
         )}
 
+        {/* Section chat: after each answer, curated "ask next" buttons built
+            from what the answer cited (host recomputes `suggestions`). */}
         {messages.map((m, i) => (
           m.role === 'user'
             ? <AkUserBubble key={i}>{m.text}</AkUserBubble>
@@ -359,6 +361,20 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
               </div>
             )
         ))}
+        {ctx && ctx.section && messages.length > 0 && !asking && (suggestions || []).length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '2px 0 12px 34px' }}>
+            {(suggestions || []).slice(0, 4).map((s) => (
+              <button key={s} onClick={() => send(s)} style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6, padding: '5px 11px',
+                border: '1px solid var(--border)', background: 'var(--surface-base)', borderRadius: 999,
+                color: 'var(--text-muted)', fontFamily: 'var(--font-sans)', fontSize: 12, cursor: 'pointer',
+              }}>
+                <AkIcon name="corner-down-right" size={12} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />
+                <span style={{ maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s}</span>
+              </button>
+            ))}
+          </div>
+        )}
        </div>
       </div>
 
@@ -369,15 +385,15 @@ function AskPanel({ messages, asking, suggestions, onSend, onClose, source, onSo
             value={draft} onChange={(e) => setDraft(e.target.value)} rows={2}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
             aria-label="Ask Lore question"
-            placeholder={identityReady ? (ctx ? `Ask about “${ctx.title}”…` : 'Ask anything about your pages…') : 'Finish setup to ask Lore…'}
+            placeholder={identityReady ? (ctx ? (ctx.section ? `Ask within ${ctx.title}…` : `Ask about “${ctx.title}”…`) : 'Ask anything about your pages…') : 'Finish setup to ask Lore…'}
             style={{ width: '100%', resize: 'none', border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-sans)', fontSize: 13.5, lineHeight: 1.5, color: 'var(--text-strong)' }}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginTop: 6, position: 'relative', minWidth: 0 }}>
             {/* Context chip: "About: {page}" (clearable) or "Looking in: {scope}" (cycles). */}
             {ctx ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0, padding: '3px 9px', borderRadius: 999, border: '1px solid var(--brand-soft-border)', background: 'var(--brand-soft-bg)', color: 'var(--brand-fg)', fontSize: 11 }}>
-                <AkIcon name="file-text" size={11} style={{ flexShrink: 0 }} />
-                <span style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>About: {ctx.title}</span>
+                <AkIcon name={ctx.section ? 'folder-open' : 'file-text'} size={11} style={{ flexShrink: 0 }} />
+                <span style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ctx.section ? 'Section' : 'About'}: {ctx.title}</span>
                 {onClearCtx && (
                   <span onClick={onClearCtx} title="Clear page context" style={{ display: 'inline-flex', cursor: 'pointer', opacity: 0.7 }}>
                     <AkIcon name="x" size={11} />

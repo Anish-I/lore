@@ -1311,7 +1311,8 @@ ipcMain.handle('wizards:catalog', () => {
   const cat = loadCatalog(), cfg = loadConfig() || {};
   const installed = cfg.installedWizards || {}, ratings = cfg.wizardRatings || {};
   return (cat.wizards || []).map((w) => ({
-    id: w.id, name: w.name, desc: w.desc, author: w.author, rating: w.rating, installs: w.installs,
+    id: w.id, name: w.name, desc: w.desc, author: w.author, installs: w.installs,
+    stars: w.stars, starsRepo: w.starsRepo, installsSource: w.installsSource,
     scope: w.scope, kind: w.kind || 'wizard', topics: w.topics || [], sources: w.sources || [],
     noteCount: (w.notes || []).length, installed: !!installed[w.id], myRating: ratings[w.id] || 0,
     // Titles only (bodies stay out of the IPC payload) — the detail view's "what's inside".

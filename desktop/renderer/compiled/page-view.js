@@ -141,7 +141,7 @@ function HistoryPanel({ relPath, onRestored, onClose }) {
 
 }
 
-function PageView({ note, editor, place, mode, connections, onBack, onChatAbout, onMove, onDelete, relPath, onRestored }) {
+function PageView({ note, editor, place, mode, connections, onBack, backLabel, onChatAbout, onMove, onDelete, relPath, onRestored }) {
   const meta = window.LorePlaceMeta[pvScopePlace(note && note.scope)] || window.LorePlaceMeta.my;
   const placeMeta = window.LorePlaceMeta[place] || meta;
   const [hoverBack, setHoverBack] = React.useState(false);
@@ -157,8 +157,8 @@ function PageView({ note, editor, place, mode, connections, onBack, onChatAbout,
         cursor: 'pointer', padding: 0, fontFamily: 'var(--font-sans)', fontSize: 12.5,
         color: hoverBack ? 'var(--text-strong)' : 'var(--text-subtle)'
       } }, /*#__PURE__*/
-    React.createElement(PvIcon, { name: "arrow-left", size: 14 }), "All ",
-    placeMeta.label, " pages"
+    React.createElement(PvIcon, { name: "arrow-left", size: 14 }),
+    backLabel || `All ${placeMeta.label} pages`
     ),
     mode === 'edit' && /*#__PURE__*/
     React.createElement("span", { style: { fontSize: 11.5, color: 'var(--text-faint)' } }, "Editing \u2014 click away to save"), /*#__PURE__*/

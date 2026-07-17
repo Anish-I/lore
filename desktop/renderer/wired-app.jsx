@@ -21,6 +21,53 @@ function BackBar({ label, onBack }) {
   );
 }
 
+// OneNote-style second column: the pages inside the selected section, plus a
+// pinned "Section chat" row on top. Selecting a section makes the scoped chat
+// the main surface; this rail is how you hop between its pages and back.
+function NotesRail({ section, notes, activeId, chatActive, noteMeta, onOpen, onChat }) {
+  return (
+    <div style={{
+      width: 232, flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: 0,
+      background: 'var(--surface-panel)', borderRight: '1px solid var(--border-subtle)',
+      padding: '12px 6px 8px',
+    }}>
+      <div style={{ padding: '2px 10px 8px', fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)', display: 'flex', alignItems: 'baseline', gap: 6 }}>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{section}</span>
+        <span style={{ fontSize: 10.5, color: 'var(--text-faint)', fontFamily: 'var(--font-mono)' }}>{notes.length}</span>
+      </div>
+      <button onClick={onChat} style={{
+        display: 'flex', alignItems: 'center', gap: 8, margin: '0 2px 8px', padding: '7px 9px',
+        border: '1px solid var(--border)', borderRadius: 'var(--radius-md)', cursor: 'pointer',
+        background: chatActive ? 'var(--surface-inset)' : 'var(--surface-base)',
+        color: chatActive ? 'var(--text-strong)' : 'var(--text-body)', fontFamily: 'var(--font-sans)', fontSize: 12.5,
+      }}>
+        {(() => { const I = (window.VaultDesignSystem_ffbf58 || {}).Icon; return I ? <I name="sparkles" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0 }} /> : null; })()}
+        <span style={{ fontWeight: 600 }}>Section chat</span>
+      </button>
+      <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 1 }}>
+        {notes.map((n) => {
+          const active = n.id === activeId;
+          const snippet = (noteMeta[n.id] || {}).snippet || '';
+          return (
+            <button key={n.id} onClick={() => onOpen(n.id)} title={n.name} style={{
+              textAlign: 'left', border: 'none', cursor: 'pointer', padding: '7px 10px',
+              borderRadius: 'var(--radius-sm)', background: active ? 'var(--surface-inset)' : 'transparent',
+              borderLeft: active ? '2px solid var(--brand-fg)' : '2px solid transparent',
+              fontFamily: 'var(--font-sans)', color: 'var(--text-body)',
+            }}>
+              <div style={{ fontSize: 12.5, fontWeight: active ? 600 : 500, color: active ? 'var(--text-strong)' : 'var(--text-body)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.name}</div>
+              {snippet && <div style={{ fontSize: 11, color: 'var(--text-faint)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{snippet}</div>}
+            </button>
+          );
+        })}
+        {!notes.length && (
+          <div style={{ padding: '6px 10px', fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>No pages here yet.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function toggleFolder(tree, id) {
   return tree.map((n) => n.id === id ? { ...n, open: !n.open }
     : (n.children ? { ...n, children: toggleFolder(n.children, id) } : n));
@@ -384,6 +431,8 @@ function App() {
   const noteMetaFetched = React.useRef(new Set());
   const toastTimer = React.useRef(null);
   const timer = React.useRef(null);
+  // Hoisted above onRailSelect (which resets threads on section switches).
+  const askThreadRef = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
   const progressDoneTimerRef = React.useRef(null);
 
@@ -652,10 +701,44 @@ function App() {
       .filter((s) => s.count > 0),
   [scopeFilteredTree]);
   const railActive = kbFilter.length === 1 ? kbFilter[0] : 'all';
-  const onRailSelect = React.useCallback((name) => {
-    setKbFilter(name === 'all' ? [] : [name]);
-    setHomeChat(false); // picking a section shows its pages, not the chat
+  // Fresh scoped thread on section switches: Kalshi-chat → Lore-chat must not
+  // carry Kalshi's conversation (or its anchor) along — that's the "it doesn't
+  // switch" bug. The old thread stays recoverable in the History drawer.
+  const resetChatThread = React.useCallback(() => {
+    clearInterval(timer.current);
+    setAsking(false);
+    askThreadRef.current = null;
+    setMessages([]);
   }, []);
+  const onRailSelect = React.useCallback((name) => {
+    if (name === 'all') {
+      setKbFilter([]); setHomeChat(false); setActiveId(null);
+      setAskCtx((c) => (c && c.section ? null : c)); // leaving a section drops its chat scope
+      return;
+    }
+    // OneNote flow: picking a section opens its notes rail + the SCOPED chat.
+    const switching = !(kbFilter.length === 1 && kbFilter[0] === name);
+    if (switching) resetChatThread();
+    setKbFilter([name]);
+    setActiveId(null);
+    setHomeChat(true);
+    setAskCtx({ id: null, title: name, section: true });
+  }, [kbFilter, resetChatThread]);
+  // Multi-select ("curate the RAG scope"): toggle sections in/out, then start
+  // one chat scoped to the whole selection.
+  const onRailToggleSelect = React.useCallback((name) => {
+    setKbFilter((f) => f.includes(name) ? f.filter((x) => x !== name) : [...f, name]);
+  }, []);
+  const startSelectionChat = React.useCallback(() => {
+    if (!kbFilter.length) return;
+    resetChatThread();
+    setActiveId(null);
+    setHomeChat(true);
+    setAskCtx({
+      id: null, section: true, sections: [...kbFilter],
+      title: kbFilter.length === 1 ? kbFilter[0] : `${kbFilter.length} sections`,
+    });
+  }, [kbFilter, resetChatThread]);
 
   // Card snippets — lazy readNote for the first 60 visible cards, ~6 at a time.
   // The fetched-set ref stops refetch loops; vault changes clear both caches.
@@ -1283,8 +1366,8 @@ function App() {
     return sourceScopes(persona.scopes, askSource);
   };
 
-  // One active thread; the History drawer lists/resumes/deletes past ones.
-  const askThreadRef = React.useRef(null);
+  // One active thread (askThreadRef hoisted near `timer` — onRailSelect needs it);
+  // the History drawer lists/resumes/deletes past ones.
   const [askThreads, setAskThreads] = React.useState(null);
   const persistTurn = (turn) => {
     // Fire-and-forget: history is a convenience, never a blocker for the answer.
@@ -1309,9 +1392,11 @@ function App() {
       setMessages((r.messages || []).map((m) => m.role === 'user'
         ? { role: 'user', text: m.text }
         : { role: 'answer', shown: [], streaming: false, text: m.text, citations: m.sources || [] }));
-      setAskOpen(true);
+      // Resume onto the surface the user is already on — popping the DOCKED
+      // panel while they're in the inline main chat reads as "nothing switched".
+      if (!homeChat) setAskOpen(true);
     } catch { /* thread gone — drawer refresh will show it */ }
-  }, [tenant]);
+  }, [tenant, homeChat]);
   const deleteAskThread = React.useCallback(async (threadId) => {
     if (!tenant || !window.lore?.askHistory?.remove) return;
     try { await window.lore.askHistory.remove(tenant, threadId); } catch { /* refresh below either way */ }
@@ -1363,9 +1448,15 @@ function App() {
       setAsking(false); return;
     }
     persistTurn({ role: 'user', text: q });
-    // "About: {page}" chip — /trace has no note-filter param, so v1 anchors the
-    // question to the page by name (TODO: real note_id filter backend-side).
-    const sendQ = askCtx && askCtx.title ? `Regarding the page "${askCtx.title}": ${q}` : q;
+    // "About: {page}" / section chips — /trace has no note-filter param, so v1
+    // anchors the question by name (TODO: real note_id/folder filter backend-side).
+    const sendQ = askCtx && askCtx.title
+      ? (askCtx.section
+        ? ((askCtx.sections && askCtx.sections.length > 1)
+          ? `Within the ${askCtx.sections.map((s) => `"${s}"`).join(', ')} sections of my notes: ${q}`
+          : `Within the "${askCtx.title}" section of my notes: ${q}`)
+        : `Regarding the page "${askCtx.title}": ${q}`)
+      : q;
     let trace;
     try { trace = await window.lore.ask(sendQ, scopes, tenant, model, history, provider); }
     catch (e) {
@@ -1477,8 +1568,33 @@ function App() {
     ...((b.topics || []).slice(0, 2).map((t) => `What's important about ${t}?`)),
     `What are the open risks or gaps in ${b.name}?`,
   ].slice(0, 4) : suggestions;
+  // Section chat curation: before the first answer, questions seeded from the
+  // section's own pages; after an answer, follow-ups built from what it cited —
+  // the "what should I ask next" buttons.
+  const sectionSuggestions = React.useMemo(() => {
+    if (!askCtx || !askCtx.section) return null;
+    const name = askCtx.title;
+    const last = [...messages].reverse().find((m) => m.role === 'answer' && !m.streaming && m.text);
+    const cited = ((last && last.citations) || [])
+      .map((c) => c.title).filter(Boolean).slice(0, 2);
+    if (cited.length) {
+      return [
+        ...cited.map((t) => `Go deeper on "${t}"`),
+        `What's still open or unresolved in ${name}?`,
+        `Summarize ${name} so far`,
+      ].slice(0, 4);
+    }
+    const pageNames = placeNotes.slice(0, 2).map((n) => n.name);
+    return [
+      `Summarize what's in ${name}`,
+      ...pageNames.map((t) => `What does "${t}" cover?`),
+      `What changed recently in ${name}?`,
+    ].slice(0, 4);
+  }, [askCtx, messages, placeNotes]);
   const askSuggestions = askCtx
-    ? ['Summarize this page', 'What are the key figures here?', 'What connects to this page?']
+    ? (askCtx.section
+      ? sectionSuggestions
+      : ['Summarize this page', 'What are the key figures here?', 'What connects to this page?'])
     : activeBucket ? bucketQuestions(activeBucket) : (identityReady ? personalPrompts : suggestions);
 
   // Citations card row click — resolve the cited note to a real file and open it;
@@ -1584,7 +1700,7 @@ function App() {
         onSignIn={signIn} onSignOut={signOut} />
       <Ribbon place={place} askOpen={askOpen} mapOpen={mapOpen} wizardsOpen={view === 'wizards'}
         canMove={Boolean(activeNote)}
-        onHome={() => { setMapOpen(false); setView('workspace'); setActiveId(null); setKbFilter([]); setHomeChat(false); }}
+        onHome={() => { setMapOpen(false); setView('workspace'); setActiveId(null); setKbFilter([]); setHomeChat(false); setAskCtx((c) => (c && c.section ? null : c)); }}
         onSearch={() => setSearchOpen(true)}
         onSettings={() => setView('settings')}
         onRefresh={async () => {
@@ -1614,15 +1730,35 @@ function App() {
                   <SectionRail sections={railSections} allCount={placeCounts[place]}
                     active={railActive} onSelect={onRailSelect} place={place} theme={theme}
                     view={view} wizardCount={wizardIds.size}
+                    selected={kbFilter} onToggleSelect={onRailToggleSelect} onChatSelection={startSelectionChat}
                     onPages={() => { setMapOpen(false); setView('workspace'); }}
-                    onWizards={() => { setMapOpen(false); setView('wizards'); }} 
+                    onWizards={() => { setMapOpen(false); setView('wizards'); }}
+                    onPeople={() => { setMapOpen(false); setView('people'); }}
                     onMoveSection={moveSection} sectionMoveBusy={sectionMoveBusy} />
+                )}
+                {kbFilter.length > 0 && !activeBucket && (
+                  <NotesRail section={kbFilter.length === 1 ? kbFilter[0] : `${kbFilter.length} sections`}
+                    notes={placeNotes} activeId={activeId}
+                    chatActive={homeChat && !editorNote} noteMeta={noteMeta}
+                    onOpen={openNote}
+                    onChat={startSelectionChat} />
                 )}
                 {activeBucket ? (
                   <Editor bucket={activeBucket} tabs={tabs} activeId={activeId} onTab={onTab} onCloseTab={closeTab} onCloseOthers={closeOtherTabs} hideTabs onOpen={() => setAskOpen(true)} />
                 ) : editorNote ? (
                   <PageView note={editorNote} place={place} mode={mode}
-                    onBack={() => setActiveId(null)}
+                    backLabel={kbFilter.length ? `${kbFilter.length === 1 ? kbFilter[0] : 'selection'} chat` : null}
+                    onBack={() => {
+                      setActiveId(null);
+                      // In the section flow, back returns to the SCOPED chat.
+                      if (kbFilter.length) {
+                        setHomeChat(true);
+                        setAskCtx((c) => c || {
+                          id: null, section: true, sections: [...kbFilter],
+                          title: kbFilter.length === 1 ? kbFilter[0] : `${kbFilter.length} sections`,
+                        });
+                      }
+                    }}
                     onChatAbout={() => { setAskCtx({ id: activeId, title: editorNote.title }); setAskOpen(true); }}
                     onMove={() => setMoveOpen(true)}
                     onDelete={window.lore?.trashNote ? async () => {
@@ -1714,14 +1850,22 @@ function App() {
               <SectionRail sections={railSections} allCount={placeCounts[place]}
                 active={railActive} onSelect={onRailSelect} place={place} theme={theme}
                 view={view} wizardCount={wizardIds.size}
+                selected={kbFilter} onToggleSelect={onRailToggleSelect} onChatSelection={startSelectionChat}
                 onPages={() => { setMapOpen(false); setView('workspace'); }}
-                onWizards={() => { setMapOpen(false); setView('wizards'); }} 
+                onWizards={() => { setMapOpen(false); setView('wizards'); }}
+                onPeople={() => { setMapOpen(false); setView('people'); }}
                     onMoveSection={moveSection} sectionMoveBusy={sectionMoveBusy} />
             )}
             <window.LoreWizardsView onBack={() => setView('workspace')}
               backLabel={(window.LorePlaceMeta[place] || {}).label}
               place={place} teamName={(appConfig && appConfig.team && appConfig.team.name) || null}
-              scopes={persona.scopes} onChanged={reloadAfterImport} />
+              scopes={persona.scopes} onChanged={reloadAfterImport}
+              onChatSkill={(s) => {
+                // App-store "Chat about it": open the main chat and demo-test the
+                // skill against the user's own knowledge base.
+                resetChatThread(); setAskCtx(null); setView('workspace'); setHomeChat(true);
+                ask(`What is the "${s.name}" Claude Code skill (${s.repo}${s.stars ? `, ${s.stars} GitHub stars` : ''}) and how could it help with what's in my knowledge base? Give a concrete demo idea using my notes.`);
+              }} />
             {askOpen && askPanel}
           </React.Fragment>
         )}

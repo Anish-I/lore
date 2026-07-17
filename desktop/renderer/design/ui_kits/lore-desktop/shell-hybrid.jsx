@@ -354,40 +354,105 @@ function SidebarTab({ icon, label, count, active, disabled, onClick }) {
 
 // Left section rail — Pages/Wizards tabs on top, then (in Pages mode) "Home" +
 // one row per top-level folder in this place.
-function SectionRail({ sections, allCount, active, onSelect, place, theme, view, onPages, onWizards, wizardCount, onMoveSection, sectionMoveBusy }) {
+function SectionRail({ sections, allCount, active, onSelect, place, theme, view, onPages, onWizards, onPeople, wizardCount, onMoveSection, sectionMoveBusy, selected, onToggleSelect, onChatSelection }) {
   const meta = sh2Places[place] || sh2Places.my;
   const onWizardsView = view === 'wizards';
+  const onPeopleView = view === 'people';
+  // Search + multi-select are rail-local UI state; the SELECTION itself lives
+  // in the host (kbFilter) so the notes rail, grid, and chat scope all follow.
+  const [query, setQuery] = React.useState('');
+  const [selectMode, setSelectMode] = React.useState(false);
+  const sel = selected || [];
+  const shownSections = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sections || [];
+    return (sections || []).filter((s) => s.name.toLowerCase().includes(q));
+  }, [sections, query]);
   return (
     <div style={{
       width: 'var(--sections-width)', flexShrink: 0, display: 'flex', flexDirection: 'column',
       background: 'var(--surface-panel)', borderRight: '1px solid var(--border-subtle)',
       padding: '14px 8px 10px',
     }}>
-      {/* Two top-level tabs: Pages ↔ Wizards. Wizards greys out at zero. */}
+      {/* Top-level tabs: Pages ↔ Wizards ↔ People. Wizards greys out at zero. */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 10, padding: '0 2px' }}>
-        <SidebarTab icon="files" label="Pages" active={!onWizardsView} onClick={onPages} />
+        <SidebarTab icon="files" label="Pages" active={!onWizardsView && !onPeopleView} onClick={onPages} />
         <SidebarTab icon="wand-2" label="Wizards" count={wizardCount} active={onWizardsView}
           disabled={!wizardCount} onClick={onWizards} />
+        {onPeople && <SidebarTab icon="users" label="People" active={onPeopleView} onClick={onPeople} />}
       </div>
+      {!onWizardsView && !onPeopleView && (
+        <div style={{ display: 'flex', gap: 5, alignItems: 'center', margin: '0 2px 8px' }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-base)' }}>
+            <Sh2Icon name="search" size={12} style={{ color: 'var(--text-faint)', flexShrink: 0 }} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search sections…"
+              aria-label="Search sections"
+              style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-sans)', fontSize: 12, color: 'var(--text-body)' }} />
+            {query && (
+              <span onClick={() => setQuery('')} style={{ display: 'inline-flex', cursor: 'pointer', color: 'var(--text-faint)' }}>
+                <Sh2Icon name="x" size={11} />
+              </span>
+            )}
+          </div>
+          <button onClick={() => setSelectMode((m) => !m)}
+            title={selectMode ? 'Done selecting' : 'Select sections to curate what the chat draws from'}
+            style={{
+              width: 27, height: 27, display: 'grid', placeItems: 'center', cursor: 'pointer',
+              border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+              background: selectMode ? 'var(--brand-soft-bg)' : 'var(--surface-base)',
+              color: selectMode ? 'var(--brand-fg)' : 'var(--text-muted)',
+            }}>
+            <Sh2Icon name={selectMode ? 'check' : 'list-checks'} size={13} />
+          </button>
+        </div>
+      )}
       <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
         {onWizardsView ? (
           <div style={{ padding: '4px 8px', fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
             {wizardCount} wizard{wizardCount === 1 ? '' : 's'}. Chat with a bundle of pages, or install more from the marketplace.
           </div>
+        ) : onPeopleView ? (
+          <div style={{ padding: '4px 8px', fontSize: 11.5, color: 'var(--text-faint)', lineHeight: 1.5 }}>
+            Names and interactions found across your notes and captures.
+          </div>
         ) : (
           <React.Fragment>
-            <RailRow icon="house" label="Home" count={allCount}
-              active={!active || active === 'all'} onClick={() => onSelect('all')} />
-            {(sections || []).map((s) => (
+            {!selectMode && (
+              <RailRow icon="house" label="Home" count={allCount}
+                active={!active || active === 'all'} onClick={() => onSelect('all')} />
+            )}
+            {shownSections.map((s) => (
               <SectionRow key={s.name} name={s.name} count={s.count}
                 color={window.LoreSectionColor ? window.LoreSectionColor(s.name, theme) : null}
-                active={active === s.name} onSelect={() => onSelect(s.name)}
+                active={selectMode ? sel.includes(s.name) : active === s.name}
+                onSelect={() => (selectMode ? (onToggleSelect && onToggleSelect(s.name)) : onSelect(s.name))}
                 busy={sectionMoveBusy === s.name}
                 onMove={(target) => onMoveSection && onMoveSection(s.name, target)} />
             ))}
+            {query && !shownSections.length && (
+              <div style={{ padding: '6px 10px', fontSize: 11.5, color: 'var(--text-faint)' }}>No section matches “{query}”.</div>
+            )}
           </React.Fragment>
         )}
       </div>
+      {selectMode && !onWizardsView && !onPeopleView && (
+        <div style={{ padding: '8px 2px 2px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <button onClick={() => { if (sel.length && onChatSelection) { onChatSelection(); setSelectMode(false); } }}
+            disabled={!sel.length}
+            style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '7px 10px',
+              border: '1px solid var(--brand-soft-border)', borderRadius: 'var(--radius-md)', cursor: sel.length ? 'pointer' : 'not-allowed',
+              background: sel.length ? 'var(--brand-soft-bg)' : 'var(--surface-base)',
+              color: sel.length ? 'var(--brand-fg)' : 'var(--text-faint)', fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 600,
+            }}>
+            <Sh2Icon name="sparkles" size={13} />
+            Chat with {sel.length || 'selected'} section{sel.length === 1 ? '' : 's'}
+          </button>
+          <div style={{ fontSize: 10.5, color: 'var(--text-faint)', lineHeight: 1.45, padding: '0 4px' }}>
+            Answers will draw only from the selected sections.
+          </div>
+        </div>
+      )}
       <div style={{ padding: '10px 10px 2px', borderTop: '1px solid var(--divider)', display: 'flex', gap: 7, alignItems: 'flex-start' }}>
         <Sh2Icon name={meta.icon} size={12} style={{ color: meta.fg, flexShrink: 0, marginTop: 1 }} />
         <span style={{ fontSize: 10.5, color: 'var(--text-faint)', lineHeight: 1.45 }}>{meta.footer}</span>

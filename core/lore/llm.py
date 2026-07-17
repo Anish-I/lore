@@ -33,11 +33,15 @@ def _grounded_prompt(question, chunks, history=None, style=None) -> str:
         # Recency/summary questions: the notes ARE the answer material — synthesize,
         # never refuse. The strict Q&A instruction below made the model say "the
         # context does not contain a summary" instead of just writing one.
+        # ANSWER THE QUESTION, don't inventory: "latest changes of lore" wants
+        # what changed in lore — not a categorized dump of everything recent.
         instruction = (
             "Below are the user's most recently updated notes, newest first. "
-            "Write a short digest of what they worked on: 3-6 bullet points, grouped by "
-            "topic, concrete and specific. Cite note titles in square brackets. "
-            "Synthesize from what the notes show — do NOT say the context lacks a summary."
+            "Answer the user's question DIRECTLY from them: lead with one sentence that "
+            "answers it, then 3-5 concrete bullets with specifics, newest first. Stay on "
+            "the question's subject — skip notes about other topics even if recent. "
+            "Cite note titles in square brackets. Synthesize from what the notes show — "
+            "do NOT say the context lacks a summary."
         )
     else:
         instruction = (

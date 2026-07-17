@@ -25,7 +25,7 @@ function WzButton({ icon, children, onClick, variant, disabled, style: extra }) 
 
 }
 
-function WizardCard({ name, meta, teamBadge, onChat, extraAction }) {
+function WizardCard({ name, meta, teamBadge, onChat, extraAction, icon }) {
   const [hover, setHover] = React.useState(false);
   return (/*#__PURE__*/
     React.createElement("div", { onMouseEnter: () => setHover(true), onMouseLeave: () => setHover(false),
@@ -36,7 +36,7 @@ function WizardCard({ name, meta, teamBadge, onChat, extraAction }) {
       } }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 11 } }, /*#__PURE__*/
     React.createElement("span", { style: { width: 36, height: 36, borderRadius: 10, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
-    React.createElement(WzIcon, { name: "wand-2", size: 17, style: { color: 'var(--brand-fg)' } })
+    React.createElement(WzIcon, { name: icon || 'wand-2', size: 17, style: { color: 'var(--brand-fg)' } })
     ), /*#__PURE__*/
     React.createElement("div", { style: { minWidth: 0, flex: 1 } }, /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, name), /*#__PURE__*/
@@ -207,6 +207,26 @@ function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) 
   const Builder = window.LoreWizardBuilder;
   const kbCatalog = (catalog || []).filter((w) => w.kind === 'wizard' && !w.installed);
 
+  // Skills & tools — the scraped catalog. Counters are REAL and sourced
+  // (GitHub stars via scripts/enrich-catalog.cjs, installs from the source
+  // marketplace); no synthetic ratings anywhere.
+  const [toolQ, setToolQ] = React.useState('');
+  const [toolsShown, setToolsShown] = React.useState(9);
+  const wzCompact = (n) => n >= 1e6 ? (n / 1e6).toFixed(n < 1e7 ? 1 : 0) + 'M' :
+  n >= 1e3 ? (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'k' : String(n);
+  const toolMeta = (w) => {
+    const parts = [];
+    if (w.stars != null) parts.push(`★ ${wzCompact(w.stars)} GitHub`);
+    if (w.installs != null) parts.push(`${wzCompact(w.installs)} installs`);
+    if (w.author) parts.push(w.author);
+    return parts.join(' · ') || w.desc;
+  };
+  const ql = toolQ.trim().toLowerCase();
+  const toolCatalog = (catalog || []).
+  filter((w) => w.kind === 'tool' && !w.installed).
+  filter((w) => !ql || (w.name + ' ' + (w.desc || '') + ' ' + (w.author || '') + ' ' + (w.topics || []).join(' ')).toLowerCase().includes(ql)).
+  sort((a, b) => (b.installs || 0) - (a.installs || 0) || (b.stars || 0) - (a.stars || 0));
+
   // Group personal wizards by the scope of the pages they wrap, so shared
   // wizards surface under Team/Company headings the same way pages do.
   const wzScope = (w) => w.scope === 'team' ? 'team' : w.scope === 'company' || w.scope === 'enterprise' ? 'company' : 'my';
@@ -290,7 +310,43 @@ function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) 
       ) }
     )
     )
+    ), /*#__PURE__*/
+
+
+
+
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 9, margin: '30px 0 4px' } }, /*#__PURE__*/
+    React.createElement("span", { style: { width: 26, height: 26, borderRadius: 8, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
+    React.createElement(WzIcon, { name: "plug-zap", size: 14, style: { color: 'var(--brand-fg)' } })
+    ), /*#__PURE__*/
+    React.createElement("h2", { style: { fontSize: 15, fontWeight: 600, color: 'var(--text-strong)', margin: 0 } }, "Skills & tools")
+    ), /*#__PURE__*/
+    React.createElement("p", { style: { fontSize: 12, color: 'var(--text-faint)', margin: '0 0 10px' } }, "Agent skills from the open ecosystem \u2014 star counts come from each skill\u2019s GitHub repo, install counts from its marketplace."
+
+    ), /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 7, maxWidth: 340, padding: '0 11px', height: 32, marginBottom: 14, background: 'var(--surface-inset)', border: '1px solid var(--border)', borderRadius: 8 } }, /*#__PURE__*/
+    React.createElement(WzIcon, { name: "search", size: 14, style: { color: 'var(--text-faint)' } }), /*#__PURE__*/
+    React.createElement("input", { value: toolQ, onChange: (e) => {setToolQ(e.target.value);setToolsShown(9);}, placeholder: "Search skills & tools\u2026",
+      style: { flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--text-strong)', fontFamily: 'var(--font-sans)', fontSize: 12.5 } })
+    ), /*#__PURE__*/
+    React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14 } },
+    toolCatalog.slice(0, toolsShown).map((w) => /*#__PURE__*/
+    React.createElement(WizardCard, { key: w.id, name: w.name, icon: "plug-zap", meta: toolMeta(w),
+      onChat: null,
+      extraAction: /*#__PURE__*/
+      React.createElement(WzButton, { icon: "download", onClick: () => install(w.id), disabled: installBusy === w.id, style: { flex: 1 } },
+      installBusy === w.id ? 'Installing…' : 'Install'
+      ) }
     )
+    )
+    ),
+    toolCatalog.length > toolsShown && /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', justifyContent: 'center', marginTop: 14 } }, /*#__PURE__*/
+    React.createElement(WzButton, { icon: "chevron-down", onClick: () => setToolsShown((n) => n + 18) }, "Show more (",
+    toolCatalog.length - toolsShown, " left)"
+    )
+    )
+
     ),
 
     chatWizard && /*#__PURE__*/React.createElement(WizardChatDrawer, { wizard: chatWizard, onClose: () => setChatWizard(null) }),

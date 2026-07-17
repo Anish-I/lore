@@ -90,6 +90,27 @@ function InstallActions({ w, onInstall, onUninstall }) {
   React.createElement(BkButton, { variant: "primary", size: "sm", icon: busy ? 'loader' : 'download', onClick: async () => {setBusy(true);await onInstall(w.id);setBusy(false);} }, busy ? 'Installing…' : 'Install');
 }
 
+// Real, sourced popularity signals only. The catalog no longer carries a
+// synthetic aggregate rating — stars come from the skill's GitHub repo and
+// installs from the marketplace it was scraped from (see scripts/enrich-catalog.cjs).
+// BkStars next to this is the user's OWN rating, not a fake average.
+const bkCompact = (n) => n >= 1e6 ? (n / 1e6).toFixed(n < 1e7 ? 1 : 0) + 'M' :
+n >= 1e3 ? (n / 1e3).toFixed(n < 1e4 ? 1 : 0) + 'k' : String(n);
+
+function SourcedMeta({ w, fontSize = 10.5 }) {
+  const parts = [];
+  if (w.stars != null) parts.push({ key: 'stars', text: `★ ${bkCompact(w.stars)} GitHub`, title: `github.com/${w.starsRepo}` });
+  if (w.installs != null) parts.push({ key: 'installs', text: `${bkCompact(w.installs)} installs`, title: w.installsSource ? `install count from ${w.installsSource}` : undefined });
+  if (!parts.length) return null;
+  return (/*#__PURE__*/
+    React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 8 } },
+    parts.map((p) => /*#__PURE__*/
+    React.createElement("span", { key: p.key, title: p.title, style: { fontFamily: 'var(--font-mono)', fontSize, color: 'var(--text-faint)' } }, p.text)
+    )
+    ));
+
+}
+
 function StoreCard({ w, onInstall, onRate, onUninstall, onOpen }) {
   const isTool = w.kind === 'tool';
   return (/*#__PURE__*/
@@ -106,8 +127,8 @@ function StoreCard({ w, onInstall, onRate, onUninstall, onOpen }) {
     React.createElement("p", { style: { margin: 0, fontSize: 13, lineHeight: 1.5, color: 'var(--text-muted)', minHeight: 38 } }, w.desc), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 5 } }, (w.topics || []).slice(0, 4).map((t) => /*#__PURE__*/React.createElement(BkBadge, { key: t, tone: "info" }, "#", t))), /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 } }, /*#__PURE__*/
-    React.createElement(BkStars, { value: w.myRating || Math.round(w.rating || 0), onRate: (s) => onRate(w.id, s) }), /*#__PURE__*/
-    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' } }, w.rating, " \xB7 ", (w.installs || 0).toLocaleString()), /*#__PURE__*/
+    React.createElement(BkStars, { value: w.myRating || 0, onRate: (s) => onRate(w.id, s) }), /*#__PURE__*/
+    React.createElement(SourcedMeta, { w: w }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1 } }), /*#__PURE__*/
     React.createElement(InstallActions, { w: w, onInstall: onInstall, onUninstall: onUninstall })
     )
@@ -255,8 +276,8 @@ function StoreDetail({ item, onBack, onChat, onInstall, onUninstall, onRate }) {
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, marginTop: 5, flexWrap: 'wrap' } },
     kind === 'catalog' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/
     React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' } }, w.author), /*#__PURE__*/
-    React.createElement(BkStars, { value: w.myRating || Math.round(w.rating || 0), onRate: (s) => onRate(w.id, s) }), /*#__PURE__*/
-    React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--text-faint)' } }, w.rating, " \xB7 ", (w.installs || 0).toLocaleString(), " installs")
+    React.createElement(BkStars, { value: w.myRating || 0, onRate: (s) => onRate(w.id, s) }), /*#__PURE__*/
+    React.createElement(SourcedMeta, { w: w, fontSize: 11 })
     ),
     kind === 'personal' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/
     React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)' } }, w.note_count, " note", w.note_count === 1 ? '' : 's', w.folder ? ` · ${w.folder}` : ''), /*#__PURE__*/
