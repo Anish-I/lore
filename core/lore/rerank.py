@@ -13,6 +13,7 @@ class VoyageReranker:
     def __init__(self, api_key, model=DEFAULT_MODEL):
         import voyageai
         self.client = voyageai.Client(api_key=api_key); self.model = model
+        self.model_name = model
     def rerank(self, query, docs):
         r = self.client.rerank(query, docs, model=self.model, top_k=len(docs))
         scores = [0.0]*len(docs)
@@ -34,6 +35,7 @@ class LocalReranker:
         if model not in LocalReranker._cache:
             LocalReranker._cache[model] = TextCrossEncoder(model_name=model)
         self.model = LocalReranker._cache[model]
+        self.model_name = model
     def rerank(self, query, docs):
         if not docs:
             return []

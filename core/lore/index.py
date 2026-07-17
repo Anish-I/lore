@@ -312,6 +312,10 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                 # raw restores precision while keeping the enriched-embedding recall.
                 # Measured on LoCoMo: r@1 0.239→0.503, r@10 held. Needs re-index to apply.
                 "note_id": source_id, "heading_path": c.heading_path, "text": c.text,
+                # Title carried in the payload so the exact-identifier lane can match
+                # IDs that only appear in the note title (the raw text no longer has
+                # the "From note '{title}'" prefix). Needs the same re-index.
+                "title": title,
                 "chunk_id": cid,
                 # Provenance for recall weighting: raw captured-session chunks get
                 # down-weighted vs distilled knowledge (see recall.SESSION_WEIGHT).

@@ -140,24 +140,33 @@ def search(vector, allowed_scope_ids, tenant_id, limit=40):
 
 
 def ensure_text_index():
-    """Add a full-text payload index on 'text' so exact identifier tokens are searchable.
+    """Add full-text payload indexes so exact identifier tokens are searchable.
+    'heading_path' and 'title' are indexed too: since two-stage retrieval the
+    'text' payload is the RAW chunk (no "From note '{title}', section" prefix),
+    so title/heading-only identifiers must be matched on their own fields.
     Idempotent; safe to call on an existing populated collection (indexes in place)."""
-    try:
-        _client.create_payload_index(
-            COLLECTION, "text",
-            field_schema=qm.TextIndexParams(type="text", tokenizer=qm.TokenizerType.WORD,
-                                            min_token_len=2, lowercase=True),
-        )
-    except Exception:
-        pass
+    for field in ("text", "heading_path", "title"):
+        try:
+            _client.create_payload_index(
+                COLLECTION, field,
+                field_schema=qm.TextIndexParams(type="text", tokenizer=qm.TokenizerType.WORD,
+                                                min_token_len=2, lowercase=True),
+            )
+        except Exception:
+            pass
 
 def search_exact(token, allowed_scope_ids, tenant_id, limit=10):
-    """Filter-only retrieval of chunks whose text literally contains the token
-    (used as an exact-identifier lane). ACL-filtered. Returns payload dicts."""
+    """Filter-only retrieval of chunks whose text, heading path, or note title
+    literally contains the token (used as an exact-identifier lane). ACL-filtered.
+    Returns payload dicts. Payloads written before the 'title' field existed still
+    match via the text clause."""
     flt = qm.Filter(must=[
         qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
         qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
+    ], should=[
         qm.FieldCondition(key="text", match=qm.MatchText(text=token)),
+        qm.FieldCondition(key="heading_path", match=qm.MatchText(text=token)),
+        qm.FieldCondition(key="title", match=qm.MatchText(text=token)),
     ])
     try:
         pts, _ = _client.scroll(COLLECTION, scroll_filter=flt, limit=limit, with_payload=True)
