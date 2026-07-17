@@ -930,7 +930,9 @@ def doctor_endpoint(tenant: Optional[str] = None):
     return _doctor.run_checks(_conn, tenant or "local")
 
 @app.get("/digest")
-def digest(tenant: Optional[str] = None, days: int = 7):
+def digest(tenant: Optional[str] = None, days: int = 7,
+           scopes: Optional[str] = None,
+           authorization: Optional[str] = Header(default=None)):
     """The Home tab's this-week digest: notes grouped by day × section.
 
     Section = the note's parent folder name (from source_path); DB-only notes
@@ -940,6 +942,16 @@ def digest(tenant: Optional[str] = None, days: int = 7):
     Query params:
         tenant: required.
         days:   window size, default 7 (clamped 1..31).
+        scopes: comma-separated scope_ids the viewer can see. Only notes in these
+                scopes are counted/titled (no scopes visible -> empty digest).
+
+    ACL: enforced the same way as /graph — a note contributes to the digest only
+    if its scope_id is in the caller's allowed set. In server mode the allowed set
+    is derived server-side from the caller's membership (the `scopes` param cannot
+    widen it); in local mode it is the `scopes` param, else the active profile's
+    personas. Previously /digest ran `select ... where tenant_id=%s` with no scope
+    filter at all, so it returned every note title in the tenant regardless of
+    scope — a cross-scope confidentiality leak.
 
     Response:
         {
@@ -951,9 +963,25 @@ def digest(tenant: Optional[str] = None, days: int = 7):
         }
     Rows are ordered newest day first, then by count descending.
     """
+    # Server-mode: authenticate + restrict scopes to the caller's own; the returned
+    # scopes replace whatever was requested. Local mode: passthrough.
+    if _server_mode():
+        _uid, srv_scopes, tenant = _authorize_read(authorization, scopes, tenant)
+        scopes = ",".join(srv_scopes)
     if not tenant:
         raise HTTPException(status_code=422, detail="tenant is required")
     days = max(1, min(days, 31))
+
+    # Resolve the caller's authorized scope set exactly like /graph: explicit
+    # `scopes` wins, else the active profile's personas; an empty set denies.
+    profile = active_profile()
+    if scopes:
+        allowed = [s.strip() for s in scopes.split(",") if s.strip()]
+    else:
+        allowed = list({s for p in profile.get("personas", []) for s in p.get("scopes", [])})
+    if not allowed:
+        return {"days": days, "rows": [], "sinceYesterday": 0, "total": 0}
+
     now = datetime.datetime.now(datetime.timezone.utc)
     cutoff = now - datetime.timedelta(days=days)
     yesterday = now - datetime.timedelta(days=1)
@@ -963,9 +991,11 @@ def digest(tenant: Optional[str] = None, days: int = 7):
             return None
         return ts.replace(tzinfo=datetime.timezone.utc) if ts.tzinfo is None else ts
 
+    frag, sparams = in_clause("scope_id", allowed)
     rows = _conn.execute(
-        "select title, source_path, created_at, updated_at from notes where tenant_id=%s",
-        (tenant,)).fetchall()
+        f"select title, source_path, created_at, updated_at from notes "
+        f"where tenant_id=%s and {frag}",
+        [tenant, *sparams]).fetchall()
 
     groups = {}
     since_yesterday = 0

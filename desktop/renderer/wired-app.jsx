@@ -1545,7 +1545,7 @@ function App() {
         history = (r && r.messages) || [];
       } catch { /* engine starting */ }
       try {
-        const d = window.lore?.digest ? await window.lore.digest(tenant, 7) : null;
+        const d = window.lore?.digest ? await window.lore.digest(tenant, 7, persona.scopes || []) : null;
         recentSection = (d && d.rows && d.rows[0] && d.rows[0].section) || null;
       } catch { /* engine starting */ }
       let sessionPrompts = [];

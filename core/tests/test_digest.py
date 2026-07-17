@@ -51,7 +51,7 @@ def test_digest_shape_and_day_grouping(tmp_path):
     conn = _conn()
     _seed(conn, tenant, tmp_path)
 
-    r = client.get("/digest", params={"tenant": tenant, "days": 7})
+    r = client.get("/digest", params={"tenant": tenant, "days": 7, "scopes": "private"})
     assert r.status_code == 200
     body = r.json()
     assert body["days"] == 7
@@ -84,7 +84,8 @@ def test_digest_since_yesterday_counts_only_fresh_creations(tmp_path):
     conn = _conn()
     _seed(conn, tenant, tmp_path)
 
-    body = client.get("/digest", params={"tenant": tenant, "days": 7}).json()
+    body = client.get("/digest",
+                      params={"tenant": tenant, "days": 7, "scopes": "private"}).json()
     # 3 notes created now; the backdated ones (3d / 40d) don't count.
     assert body["sinceYesterday"] == 3
 
@@ -94,7 +95,43 @@ def test_digest_requires_tenant_and_clamps_days(tmp_path):
     tenant = "digest-clamp"
     conn = _conn()
     _seed(conn, tenant, tmp_path)
-    body = client.get("/digest", params={"tenant": tenant, "days": 999}).json()
+    body = client.get("/digest",
+                      params={"tenant": tenant, "days": 999, "scopes": "private"}).json()
     assert body["days"] == 31
-    body = client.get("/digest", params={"tenant": tenant, "days": 0}).json()
+    body = client.get("/digest",
+                      params={"tenant": tenant, "days": 0, "scopes": "private"}).json()
     assert body["days"] == 1
+
+
+def test_digest_enforces_scope_acl(tmp_path):
+    """The leak fix: /digest must count only notes in the caller's authorized
+    scopes. Tenant alone (no scopes, no profile) can no longer surface content,
+    and a note in a scope the caller can't see never appears in the digest."""
+    tenant = "digest-acl"
+    conn = _conn()
+    _seed(conn, tenant, tmp_path)  # seeds everything under scope_id "private"
+
+    # Add one note in a DIFFERENT scope the caller will not request.
+    p = tmp_path / "Secret/hr-memo.md"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("# HR memo\n\nConfidential personnel note.\n", encoding="utf-8")
+    r = client.post("/reindex", json={"path": str(p), "owner_id": "hr",
+                                      "scope_id": "hr-restricted", "tenant_id": tenant})
+    assert r.status_code == 200
+
+    # Tenant param alone (no authorized scope, EMPTY_PROFILE) leaks nothing.
+    body = client.get("/digest", params={"tenant": tenant, "days": 7}).json()
+    assert body["rows"] == [] and body["total"] == 0
+
+    # Caller sees only "private" — the hr-restricted memo must not appear.
+    body = client.get("/digest",
+                      params={"tenant": tenant, "days": 7, "scopes": "private"}).json()
+    all_titles = [t for row in body["rows"] for t in row["topTitles"]]
+    assert "HR memo" not in all_titles
+    assert any("Roadmap" in t or "Pair sizing" in t or "Fed markets" in t for t in all_titles)
+
+    # A caller authorized for hr-restricted sees the memo (and only its scope).
+    body = client.get("/digest",
+                      params={"tenant": tenant, "days": 7, "scopes": "hr-restricted"}).json()
+    hr_titles = [t for row in body["rows"] for t in row["topTitles"]]
+    assert hr_titles == ["HR memo"]

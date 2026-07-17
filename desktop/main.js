@@ -1928,11 +1928,16 @@ ipcMain.handle('stats:get', async (_e, tenant) => {
 // created-since-yesterday count. Backend does the grouping (no LLM).
 ipcMain.handle('digest:get', async (_e, opts) => {
   const cfg = loadConfig() || {};
-  const { tenant, days } = opts || {};
+  const { tenant, days, scopes } = opts || {};
   const t = tenant || cfg.tenant || '';
   if (!t) return { rows: [], sinceYesterday: 0, total: 0 };
   try {
-    const r = await fetch(`${BACKEND_URL()}/digest?tenant=${encodeURIComponent(t)}&days=${encodeURIComponent(days || 7)}`,
+    const params = new URLSearchParams();
+    params.set('tenant', t);
+    params.set('days', String(days || 7));
+    const scopeStr = Array.isArray(scopes) ? scopes.join(',') : (scopes || '');
+    if (scopeStr) params.set('scopes', scopeStr);
+    const r = await fetch(`${BACKEND_URL()}/digest?${params.toString()}`,
       { headers: authHeaders() });
     if (!r.ok) return { rows: [], sinceYesterday: 0, total: 0, error: `backend ${r.status}` };
     return await r.json();

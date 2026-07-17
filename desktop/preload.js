@@ -158,7 +158,7 @@ contextBridge.exposeInMainWorld('lore', {
 
   // --- digest (Home tab: notes grouped by day × section + since-yesterday count) ---
   // digest(tenant, days) → {rows:[{day, section, count, topTitles}], sinceYesterday, total}
-  digest: (tenant, days) => ipcRenderer.invoke('digest:get', { tenant, days }),
+  digest: (tenant, days, scopes) => ipcRenderer.invoke('digest:get', { tenant, days, scopes }),
 
   // --- ask chat history (persisted threads for the main chat) ---
   // append(tenant, turn) → {ok, id}; turn = {thread_id, role, text, sources?, source?}
