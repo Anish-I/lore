@@ -305,7 +305,13 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                 named_vec["bm25"] = sparse_vecs[i]
             points.append({"id": qdrant_id, "vector": named_vec, "payload": {
                 "tenant_id": tenant_id, "owner_id": owner_id, "scope_ids": [scope_id],
-                "note_id": source_id, "heading_path": c.heading_path, "text": t,
+                # Two-stage retrieval (2026-07-10 campaign): the VECTOR embeds the
+                # context-enriched text (`t` = has_context_text) for recall, but the
+                # payload stores the RAW chunk text for the cross-encoder rerank —
+                # reranking on enriched text craters r@1 (near-dup blur); reranking
+                # raw restores precision while keeping the enriched-embedding recall.
+                # Measured on LoCoMo: r@1 0.239→0.503, r@10 held. Needs re-index to apply.
+                "note_id": source_id, "heading_path": c.heading_path, "text": c.text,
                 "chunk_id": cid,
                 # Provenance for recall weighting: raw captured-session chunks get
                 # down-weighted vs distilled knowledge (see recall.SESSION_WEIGHT).
