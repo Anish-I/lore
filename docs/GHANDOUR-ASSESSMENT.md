@@ -66,7 +66,7 @@ not acceptance tests for the knowledge-OS.
 |---|---|---|
 | **`/digest` cross-scope leak** — endpoint ran `select … from notes where tenant_id=%s` with **no ACL** and ignored the auth header; any caller got every note title in the tenant, any scope. Municipal build-agenda P0 ("live confidentiality gap"). | High | **FIXED** on this branch (`2ceb7cc`). Mirrors `/graph` ACL across backend → IPC → preload → renderer; new `test_digest_enforces_scope_acl` proves tenant-alone leaks nothing. 4/4 digest tests pass. |
 | **I3 — `/ask` local-mode scope trust** | Medium | **By design — do not patch.** `/ask` already fully enforces scopes in server mode (`LORE_SERVER_MODE=1` → membership-derived, client can't widen). Local passthrough is deliberate for the single-user, 127.0.0.1-bound desktop. Backlog: *"intentional for solo use today, not something to patch piecemeal."* The real fix is a **deployment** choice (run server mode for any hosted/multi-user install), not a code change. |
-| **`/ingest-url` TOCTOU** — small window between resolved-IP SSRF check and socket connect | Low | Open (local tool; low risk). Closable with a pin-to-validated-IP fetch. |
+| **`/ingest-url` TOCTOU** — resolved-IP SSRF check, then urllib re-resolved during fetch (DNS-rebinding window) | Low (desktop) / High (hosted) | **FIXED** on this branch (`0afceee`). Fetch now pins to the validated IP via custom HTTP(S) connection classes — no second lookup; TLS still verified against the real hostname. +pin test proves the dial target and single-resolve. |
 
 ## 5. Needs refinement
 
@@ -110,9 +110,10 @@ guessing wrong wastes weeks. Send **#1 and #2 at minimum**; the rest are downstr
 
 ## 7. Recommendation
 
-- **Ship now (no decision needed):** the `/digest` fix is done. The `/ingest-url` TOCTOU is
-  safe, in-scope hardening we can do on this branch without waiting on anyone. (The suspected
-  README recall-oversell was checked and is a non-issue — the copy already matches the code.)
+- **Shipped this pass (no decision needed):** `/digest` scope leak fixed; `/ingest-url` SSRF
+  rebinding TOCTOU closed. (The suspected README recall-oversell was checked and is a non-issue
+  — the copy already matches the code.) The knowledge-OS security surface is now clean of
+  known live gaps in local mode.
 - **Do not touch I3** — enforced in server mode, intentional locally.
 - **Get #1 and #2 answered before writing any municipal code.** Until then, the highest-leverage
   work is hardening + correcting the existing knowledge-OS, not building on a spec whose

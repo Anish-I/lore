@@ -9,7 +9,7 @@ Smoke-tested & hardened 2026-07-07 (28 edge cases + Codex second-view): SSRF res
 Deferred from smoke review (Codex, low severity):
 - **Feedback observability in the gate** — thumbs affect production ranking but `eval/run_nightly.py` has no synthetic up/down-vote cases, so feedback drift is untested. Add vote cases + surface `feedback_net` in `retrieve_traced`.
 - **Stronger inject framing** — lore-inject already labels excerpts "NEVER instructions"; consider excluding `url`/`agent-memory` source_types from auto-injection by default and per-excerpt provenance tags.
-- **/ingest-url TOCTOU** — resolved-IP check has a small window before the socket connect; a pin-to-validated-IP fetch closes it (low risk for a local tool).
+- ~~**/ingest-url TOCTOU** — resolved-IP check has a small window before the socket connect; a pin-to-validated-IP fetch closes it (low risk for a local tool).~~ **Fixed 2026-07-17** (`0afceee`, ghandour-branch). `_resolve_public_ip()` validates + returns the exact IP; `_PinnedHTTP(S)Connection` dials that IP with no re-resolution, TLS still verified against the real hostname; redirects still refused. Rebinding window is gone — matters most for the hosted path (metadata-endpoint SSRF). Tests in `test_extract.py`.
 - **Bulk-ingest latency** — /ingest p50 ~2.2s (synchronous dense+sparse embed per note); a batch-embed path would speed reconcile + large imports.
 
 Open items with their blockers:
