@@ -70,9 +70,11 @@ not acceptance tests for the knowledge-OS.
 
 ## 5. Needs refinement
 
-- **README oversells recall** — copy implies graph-expansion during recall that `recall.py`
-  doesn't actually perform. Correct the claim so the numbers stay defensible (recall-obsessed
-  positioning depends on the receipts being exact).
+- ~~README oversells recall~~ **— checked, false alarm.** Verified README line 73 against
+  `recall.py`: the graph genuinely informs *ranking* (note `importance` = weighted typed
+  in-degree per `relations.recompute_importance`, applied as a multiplier in
+  `_apply_note_signals`; entity-title matches → `ENTITY_BOOST`) and the README already states
+  it is *"not a candidate-expansion hop."* README is accurate — no change needed.
 - **`synthesize()` is a deterministic template**, not an LLM NL answer (spec §4.5). The seam
   exists to swap in generation — deferred, but worth flagging for the municipal "answer" UX.
 - **Single shared psycopg connection** in `api.py` — a pool is wanted before heavy agent traffic.
@@ -108,9 +110,9 @@ guessing wrong wastes weeks. Send **#1 and #2 at minimum**; the rest are downstr
 
 ## 7. Recommendation
 
-- **Ship now (no decision needed):** the `/digest` fix is done. The README oversell correction
-  and the `/ingest-url` TOCTOU are safe, in-scope hardening we can do on this branch without
-  waiting on anyone.
+- **Ship now (no decision needed):** the `/digest` fix is done. The `/ingest-url` TOCTOU is
+  safe, in-scope hardening we can do on this branch without waiting on anyone. (The suspected
+  README recall-oversell was checked and is a non-issue — the copy already matches the code.)
 - **Do not touch I3** — enforced in server mode, intentional locally.
 - **Get #1 and #2 answered before writing any municipal code.** Until then, the highest-leverage
   work is hardening + correcting the existing knowledge-OS, not building on a spec whose
