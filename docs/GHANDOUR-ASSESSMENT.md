@@ -108,13 +108,42 @@ guessing wrong wastes weeks. Send **#1 and #2 at minimum**; the rest are downstr
    request/response samples + source docs, and a specific city/agency (their retention rules,
    their FOIA statute) — or is this still generic?
 
+### 6a. Answers — locked 2026-07-17 (Anish)
+
+1. **The repo becomes an enterprise work-tool built ON TOP of the knowledge-OS.** Not a
+   municipal pivot; the knowledge-OS is not frozen. Core: **team scopes + wizards + plugins**
+   that automate "people work" (email → to-dos/tasks) over a **shared memory base**.
+   Municipal/FOIA is one *vertical*, not the product identity.
+2. **Embedding is tier-dependent (the collision was a false dichotomy).** Personal use =
+   **local embeds, always**. Team/enterprise **server = its own server-side embedding tool**.
+   This is exactly the existing `LORE_SERVER_MODE` boundary — no global cloud-vectorize switch.
+3. **We invent the scope scheme ourselves**, and tie identity/membership to **Okta SSO**
+   (SSO-group → scope mapping is ours to build).
+4. **Evolve the existing desktop UI toward simplicity — do NOT rebuild.** Reuse what's there,
+   simplify it for the wizard/plugin people-work flows.
+5. **No real docs exist.** Generate a **synthetic corpus** (fake email chains, documents,
+   presentations, excel sheets) — Anish suggests multi-agent generation — to build and
+   validate workflows against.
+
+**Net:** the product-direction conflict is resolved. Build target = enterprise work-tool
+(wizards/plugins over email + docs, team scopes, Okta SSO, memory base) on a simplified
+existing UI, validated against a synthetic corpus. The build-agenda P0→P4 stack still applies,
+reframed enterprise-general rather than municipal-only.
+
 ## 7. Recommendation
 
 - **Shipped this pass (no decision needed):** `/digest` scope leak fixed; `/ingest-url` SSRF
   rebinding TOCTOU closed. (The suspected README recall-oversell was checked and is a non-issue
   — the copy already matches the code.) The knowledge-OS security surface is now clean of
   known live gaps in local mode.
-- **Do not touch I3** — enforced in server mode, intentional locally.
-- **Get #1 and #2 answered before writing any municipal code.** Until then, the highest-leverage
-  work is hardening + correcting the existing knowledge-OS, not building on a spec whose
-  foundation (local vs. cloud) is unresolved.
+- **Do not touch I3** — enforced in server mode, intentional locally. Note it becomes live work
+  under the enterprise direction: server mode + Okta SSO is now the target, so `_authorize_read`'s
+  server path (and the Okta → scope mapping) is where multi-user auth gets built.
+- **Direction is now locked (§6a).** Next unblocked deliverables, in dependency order:
+  1. **Synthetic corpus generator** — nothing (workflows, wizards, demos) can be built or tested
+     without data, and it depends on no other decision. Highest-leverage first move.
+  2. **Okta SSO → scope mapping** on the server-mode auth path (turns I3 from "by design" into
+     the real multi-user gate).
+  3. **First real people-work wizard** (email chain → to-dos) validated against the synthetic
+     corpus — the concrete "one real thing," reframed enterprise-general.
+  4. **UI simplification pass** over the existing desktop app (evolve, don't rebuild).
