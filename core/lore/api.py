@@ -1,4 +1,4 @@
-import datetime, hashlib, json, os, re, time, uuid
+import datetime, hashlib, http.client, json, os, re, time, uuid
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse
@@ -1124,33 +1124,119 @@ class IngestUrlReq(BaseModel):
     tenant: str
 
 
-def _host_is_private(hostname: str) -> bool:
-    """True if the host resolves to any non-public address — closes decimal/
-    octal/hex IP encodings, IPv6, and DNS-rebinding that a hostname-regex misses,
-    by resolving and inspecting every returned address. (A TOCTOU window remains
-    between this check and the fetch; acceptable for a local, token-gated tool.)"""
+def _resolve_public_ip(hostname: str):
+    """Resolve a hostname to a single validated PUBLIC IP to pin the fetch to,
+    or None if the host is non-public/unresolvable.
+
+    Closes decimal/octal/hex IP encodings, IPv6, and (with the pinned fetch
+    below) DNS-rebinding that a hostname-regex misses: if ANY resolved address
+    is non-global we refuse outright, otherwise we return the first address so
+    the caller can connect to exactly the IP we validated — no re-resolution,
+    no TOCTOU window. Returns (ip_str, family) or None."""
     import ipaddress
     import socket
     if not hostname:
-        return True
+        return None
     # A literal IP in any encoding (2130706433, 0x7f.1, [::1]) parses here.
     try:
         ip = ipaddress.ip_address(hostname.strip("[]"))
-        return not ip.is_global
+        if not ip.is_global:
+            return None
+        fam = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+        return (str(ip), fam)
     except ValueError:
         pass
     try:
         infos = socket.getaddrinfo(hostname, None)
     except Exception:
-        return True  # unresolvable → refuse
-    for _f, _t, _p, _c, sockaddr in infos:
+        return None  # unresolvable → refuse
+    chosen = None
+    for fam, _t, _p, _c, sockaddr in infos:
         try:
             ip = ipaddress.ip_address(sockaddr[0])
         except ValueError:
-            return True
+            return None
         if not ip.is_global:
-            return True
-    return False
+            return None  # any non-global answer → refuse (rebinding safety)
+        if chosen is None:
+            chosen = (sockaddr[0], fam)
+    return chosen
+
+
+def _host_is_private(hostname: str) -> bool:
+    """Back-compat shim: True if the host is non-public/unresolvable."""
+    return _resolve_public_ip(hostname) is None
+
+
+class _PinnedHTTPConnection(http.client.HTTPConnection):
+    """HTTPConnection that connects to a pre-validated IP instead of re-resolving
+    self.host — while still sending the real hostname in the Host header."""
+    def __init__(self, host, pinned_ip, **kw):
+        super().__init__(host, **kw)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        import socket
+        self.sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address)
+        if self._tunnel_host:
+            self._tunnel()
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """HTTPS variant of the pinned connection. Connects to the validated IP but
+    keeps TLS verification (SNI + certificate) bound to the real hostname."""
+    def __init__(self, host, pinned_ip, **kw):
+        super().__init__(host, **kw)
+        self._pinned_ip = pinned_ip
+
+    def connect(self):
+        import socket
+        sock = socket.create_connection(
+            (self._pinned_ip, self.port), self.timeout, self.source_address)
+        if self._tunnel_host:
+            self.sock = sock
+            self._tunnel()
+            sock = self.sock
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+
+
+def _fetch_url_pinned(url: str, *, timeout: int, max_bytes: int) -> bytes:
+    """Fetch an http(s) URL connecting ONLY to a pre-validated public IP.
+
+    Closes the DNS-rebinding TOCTOU: the address checked is the exact address
+    used (no re-resolution between the guard and connect). Redirects are not
+    followed; TLS is verified against the real hostname."""
+    import ssl
+    import urllib.parse as _up
+    parsed = _up.urlparse(url)
+    pinned = _resolve_public_ip(parsed.hostname or "")
+    if pinned is None:
+        raise HTTPException(422, "private/loopback/unresolvable hosts are not fetchable")
+    pinned_ip, _fam = pinned
+    path = parsed.path or "/"
+    if parsed.query:
+        path += "?" + parsed.query
+    if parsed.scheme == "https":
+        conn = _PinnedHTTPSConnection(parsed.hostname, pinned_ip, port=parsed.port,
+                                      timeout=timeout, context=ssl.create_default_context())
+    else:
+        conn = _PinnedHTTPConnection(parsed.hostname, pinned_ip, port=parsed.port,
+                                     timeout=timeout)
+    try:
+        conn.request("GET", path, headers={
+            "User-Agent": "Lore/1.0 (+local knowledge OS)",
+            # identity so the bytes we hand to bs4 are not gzip/br-compressed.
+            "Accept-Encoding": "identity",
+        })
+        resp = conn.getresponse()
+        if resp.status in (301, 302, 303, 307, 308):
+            raise HTTPException(422, "redirects are not followed (SSRF guard)")
+        if resp.status >= 400:
+            raise HTTPException(502, f"fetch failed: HTTP {resp.status}")
+        return resp.read(max_bytes)
+    finally:
+        conn.close()
 
 
 @app.post("/ingest-url")
@@ -1164,25 +1250,16 @@ def ingest_url(req: IngestUrlReq, authorization: Optional[str] = Header(default=
     """
     owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant)
     import urllib.parse as _up
-    import urllib.request as _ur
     parsed = _up.urlparse(req.url)
     if parsed.scheme not in ("http", "https"):
         raise HTTPException(422, "only http(s) URLs are supported")
-    if _host_is_private(parsed.hostname or ""):
-        raise HTTPException(422, "private/loopback/unresolvable hosts are not fetchable")
     try:
-        # No-redirect opener: a 30x to a private host would bypass the pre-check.
-        class _NoRedirect(_ur.HTTPRedirectHandler):
-            def redirect_request(self, *a, **k):
-                return None
-        opener = _ur.build_opener(_NoRedirect)
-        r = opener.open(_ur.Request(req.url, headers={"User-Agent": "Lore/1.0 (+local knowledge OS)"}),
-                        timeout=15)
-        raw = r.read(2 * 1024 * 1024)
-    except _ur.HTTPError as e:
-        if e.code in (301, 302, 303, 307, 308):
-            raise HTTPException(422, "redirects are not followed (SSRF guard)")
-        raise HTTPException(502, f"fetch failed: HTTP {e.code}")
+        # Fetch pinned to a pre-validated public IP — the resolved-then-fetched
+        # address is identical, so a rebinding DNS answer cannot swap in a
+        # private host after the check. Redirects are refused inside the helper.
+        raw = _fetch_url_pinned(req.url, timeout=15, max_bytes=2 * 1024 * 1024)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"fetch failed: {e}")
     try:

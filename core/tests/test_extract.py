@@ -104,3 +104,39 @@ def test_ingest_url_guards():
     assert r.status_code == 422
     r = client.post("/ingest-url", json={"url": "http://169.254.169.254/latest/meta-data", **base})
     assert r.status_code == 422
+
+
+def test_resolve_public_ip_refuses_nonpublic():
+    from lore import api
+    for host in ("127.0.0.1", "localhost", "169.254.169.254", "192.168.1.10",
+                 "10.0.0.5", "2130706433", "[::1]", ""):
+        assert api._resolve_public_ip(host) is None, host
+    got = api._resolve_public_ip("1.1.1.1")  # a public literal resolves to itself
+    assert got is not None and got[0] == "1.1.1.1"
+
+
+def test_ingest_url_pins_validated_ip(monkeypatch):
+    """Rebinding TOCTOU fix: the fetch must dial the exact IP that was validated
+    and never re-resolve the hostname (a rebinding server could poison a 2nd lookup)."""
+    import socket as _socket
+    from lore import api
+
+    public_ip = "93.184.216.34"
+    # Validation resolves once to a public IP; record every _resolve call.
+    calls = {"n": 0}
+    def _fake_resolve(host):
+        calls["n"] += 1
+        return (public_ip, _socket.AF_INET)
+    monkeypatch.setattr(api, "_resolve_public_ip", _fake_resolve)
+
+    dialed = {}
+    def _spy_connect(address, *a, **k):
+        dialed["addr"] = address
+        raise RuntimeError("stop-before-network")  # only the dial target matters
+    monkeypatch.setattr(_socket, "create_connection", _spy_connect)
+
+    r = client.post("/ingest-url", json={"url": "http://rebind.example/x",
+                                         "scope": "s", "owner": "o", "tenant": "pin-t"})
+    assert dialed.get("addr", (None,))[0] == public_ip  # dialed the validated IP
+    assert calls["n"] == 1                              # resolved exactly once
+    assert r.status_code == 502                         # aborted at the socket layer
