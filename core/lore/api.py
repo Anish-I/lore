@@ -14,6 +14,7 @@ from .redact import redact
 from . import llm
 from . import auth, mailer, tenancy
 from . import supersede
+from . import todos as todos_mod
 
 app = FastAPI(title="Lore Core")
 
@@ -246,6 +247,26 @@ def _authorize_read(authorization, requested_scopes, tenant):
     if not tenant:
         raise HTTPException(status_code=422, detail="tenant is required")
     return user_id, allowed, tenant
+
+
+def _resolve_read_scopes(authorization, scopes, tenant):
+    """Shared read-ACL scope resolution for scope-filtered read endpoints
+    (/digest, /todos, ...). Server mode: the allowed set is derived from the
+    caller's membership and the `scopes` param cannot widen it. Local mode: the
+    `scopes` param, else the active profile's personas. Returns
+    (tenant, allowed_scopes_list); an EMPTY list means 'deny — show nothing'.
+    Raises 422 when tenant is missing."""
+    if _server_mode():
+        _uid, srv_scopes, tenant = _authorize_read(authorization, scopes, tenant)
+        scopes = ",".join(srv_scopes)
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    if scopes:
+        allowed = [s.strip() for s in scopes.split(",") if s.strip()]
+    else:
+        profile = active_profile()
+        allowed = list({s for p in profile.get("personas", []) for s in p.get("scopes", [])})
+    return tenant, allowed
 
 
 def _authorize_write(authorization, scope, owner, tenant):
@@ -963,22 +984,11 @@ def digest(tenant: Optional[str] = None, days: int = 7,
         }
     Rows are ordered newest day first, then by count descending.
     """
-    # Server-mode: authenticate + restrict scopes to the caller's own; the returned
-    # scopes replace whatever was requested. Local mode: passthrough.
-    if _server_mode():
-        _uid, srv_scopes, tenant = _authorize_read(authorization, scopes, tenant)
-        scopes = ",".join(srv_scopes)
-    if not tenant:
-        raise HTTPException(status_code=422, detail="tenant is required")
+    # Authenticate + resolve the caller's authorized scope set (server mode derives
+    # it from membership; local mode uses the scopes param / active profile). An
+    # empty set denies — the same ACL as /graph.
+    tenant, allowed = _resolve_read_scopes(authorization, scopes, tenant)
     days = max(1, min(days, 31))
-
-    # Resolve the caller's authorized scope set exactly like /graph: explicit
-    # `scopes` wins, else the active profile's personas; an empty set denies.
-    profile = active_profile()
-    if scopes:
-        allowed = [s.strip() for s in scopes.split(",") if s.strip()]
-    else:
-        allowed = list({s for p in profile.get("personas", []) for s in p.get("scopes", [])})
     if not allowed:
         return {"days": days, "rows": [], "sinceYesterday": 0, "total": 0}
 
@@ -1025,6 +1035,102 @@ def digest(tenant: Optional[str] = None, days: int = 7,
         out.append({"day": day, "section": section, "count": g["count"], "topTitles": top})
     out.sort(key=lambda r: (r["day"], r["count"]), reverse=True)
     return {"days": days, "rows": out, "sinceYesterday": since_yesterday, "total": total}
+
+
+# --- People-work wizard: thread -> action items (to-dos) ---------------------
+# The first "wizard" in the enterprise sense: a work thread in, structured to-dos
+# out, persisted with a pending -> confirmed/dismissed lifecycle (the Test-3
+# confirm/dismiss UX). Extraction inherits the source note's scope; reads are
+# scope-filtered with the same ACL as /digest and /graph.
+
+class ExtractTodosReq(BaseModel):
+    tenant_id: Optional[str] = None
+    text: Optional[str] = None
+    note_id: Optional[str] = None
+    scope: Optional[str] = None
+    owner: Optional[str] = None
+
+
+class TodoStatusReq(BaseModel):
+    tenant_id: Optional[str] = None
+    scopes: Optional[str] = None
+
+
+@app.post("/wizards/extract-todos")
+def wizards_extract_todos(req: ExtractTodosReq,
+                          authorization: Optional[str] = Header(default=None)):
+    """Extract action items from a work thread and persist them as `pending` to-dos.
+
+    Source is either raw `text` or an ingested thread `note_id` (its body + scope
+    are used). Extraction uses the configured LLM when available, else a
+    deterministic heuristic. Write-authorized: in server mode the scope must be one
+    the caller may write and owner is forced to the caller. A to-do must live in a
+    scope so it can be governed — provide `scope`, or a `note_id` whose scope is
+    inherited. Returns {todos:[...], count}.
+    """
+    text = (req.text or "").strip()
+    scope = req.scope
+    source_note_id = None
+    if req.note_id:
+        row = _conn.execute(
+            "select body, scope_id from notes where tenant_id=%s and id=%s",
+            (req.tenant_id, req.note_id)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="note not found")
+        body, note_scope = row
+        text = (body or "").strip()
+        source_note_id = req.note_id
+        if not scope:
+            scope = note_scope
+    if not text:
+        raise HTTPException(status_code=422, detail="provide text or a note_id with a body")
+    if not scope:
+        raise HTTPException(status_code=422,
+                            detail="scope is required (pass scope, or a note_id whose scope is used)")
+    owner, scope, tenant = _authorize_write(authorization, scope, req.owner, req.tenant_id)
+    items = todos_mod.extract_todos(text, me=owner)
+    created = todos_mod.create_todos(_conn, tenant, items, scope=scope,
+                                     owner=owner, source_note_id=source_note_id)
+    return {"todos": created, "count": len(created)}
+
+
+@app.get("/todos")
+def todos_list(tenant: Optional[str] = None, scopes: Optional[str] = None,
+               status: Optional[str] = None,
+               authorization: Optional[str] = Header(default=None)):
+    """List to-dos visible to the caller, scope-filtered like /digest. Optional
+    `status` filter (pending/confirmed/dismissed). Returns {todos:[...], count}."""
+    tenant, allowed = _resolve_read_scopes(authorization, scopes, tenant)
+    if status and status not in ("pending", "confirmed", "dismissed"):
+        raise HTTPException(status_code=422, detail="invalid status")
+    rows = todos_mod.list_todos(_conn, tenant, allowed, status=status)
+    return {"todos": rows, "count": len(rows)}
+
+
+def _todo_transition(todo_id, status, authorization, req):
+    """Shared confirm/dismiss: resolve the caller's scopes, then move the todo only
+    if it lives in a scope the caller can see. 404 (not 403) when it isn't, so the
+    endpoint never reveals that a todo exists in a scope the caller can't read."""
+    tenant, allowed = _resolve_read_scopes(authorization, req.scopes, req.tenant_id)
+    todo = todos_mod.get_todo(_conn, tenant, todo_id)
+    if not todo or todo["scope_id"] not in allowed:
+        raise HTTPException(status_code=404, detail="todo not found")
+    todos_mod.set_status(_conn, tenant, todo_id, status)
+    return {"id": todo_id, "status": status}
+
+
+@app.post("/todos/{todo_id}/confirm")
+def todos_confirm(todo_id: str, req: TodoStatusReq,
+                  authorization: Optional[str] = Header(default=None)):
+    """Confirm a to-do (scope-checked). 404 if not visible to the caller."""
+    return _todo_transition(todo_id, "confirmed", authorization, req)
+
+
+@app.post("/todos/{todo_id}/dismiss")
+def todos_dismiss(todo_id: str, req: TodoStatusReq,
+                  authorization: Optional[str] = Header(default=None)):
+    """Dismiss a to-do (scope-checked). 404 if not visible to the caller."""
+    return _todo_transition(todo_id, "dismissed", authorization, req)
 
 
 @app.get("/config/retrieval")

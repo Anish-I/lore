@@ -296,6 +296,22 @@ create table if not exists query_log(
   query_hash text,
   hits integer);
 create index if not exists query_log_ts on query_log(tenant_id, ts desc);
+create table if not exists todos(
+  id text primary key,
+  tenant_id text not null,
+  scope_id text,
+  owner_id text,
+  assignee text,
+  task text not null,
+  due text,
+  due_text text,
+  source text,
+  source_note_id text,
+  status text not null default 'pending',
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  constraint todos_status_check check (status in ('pending','confirmed','dismissed')));
+create index if not exists todos_tenant on todos(tenant_id, status);
 """
 
 # PG migration note: personal_wizards / personal_wizard_chats / ask_history are NEW tables, so the
@@ -489,6 +505,22 @@ create table if not exists query_log(
   query_hash text,
   hits integer);
 create index if not exists query_log_ts on query_log(tenant_id, ts desc);
+create table if not exists todos(
+  id text primary key,
+  tenant_id text not null,
+  scope_id text,
+  owner_id text,
+  assignee text,
+  task text not null,
+  due text,
+  due_text text,
+  source text,
+  source_note_id text,
+  status text not null default 'pending',
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp,
+  constraint todos_status_check check (status in ('pending','confirmed','dismissed')));
+create index if not exists todos_tenant on todos(tenant_id, status);
 """
 
 
