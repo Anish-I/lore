@@ -139,11 +139,14 @@ reframed enterprise-general rather than municipal-only.
 - **Do not touch I3** — enforced in server mode, intentional locally. Note it becomes live work
   under the enterprise direction: server mode + Okta SSO is now the target, so `_authorize_read`'s
   server path (and the Okta → scope mapping) is where multi-user auth gets built.
-- **Direction is now locked (§6a).** Next unblocked deliverables, in dependency order:
-  1. **Synthetic corpus generator** — nothing (workflows, wizards, demos) can be built or tested
-     without data, and it depends on no other decision. Highest-leverage first move.
-  2. **Okta SSO → scope mapping** on the server-mode auth path (turns I3 from "by design" into
-     the real multi-user gate).
-  3. **First real people-work wizard** (email chain → to-dos) validated against the synthetic
-     corpus — the concrete "one real thing," reframed enterprise-general.
-  4. **UI simplification pass** over the existing desktop app (evolve, don't rebuild).
+- **Direction is now locked (§6a).** Deliverables, in dependency order:
+  1. ~~**Synthetic corpus generator**~~ **— DONE** (`a7f07fe`). `synth/` generates two scenarios
+     (enterprise + municipal slice) across email/docx/xlsx/pdf, with ground-truth to-dos; also
+     added xlsx ingestion to the extractor (gap found while building it).
+  2. ~~**First real people-work wizard** (thread → to-dos)~~ **— DONE** (`cb5cf43`). Extraction
+     (LLM seam + deterministic fallback) + `todos` table + confirm/dismiss lifecycle, scope-
+     filtered like `/digest`. Verified end-to-end over HTTP; 21/21 tests.
+  3. **Okta SSO → scope mapping** on the server-mode auth path (turns I3 from "by design" into
+     the real multi-user gate). *Likely blocked on Okta app credentials — confirm with Anish.*
+  4. **UI simplification pass** over the existing desktop app (evolve, don't rebuild) — surface
+     the to-dos wizard in the Home/People flow.
