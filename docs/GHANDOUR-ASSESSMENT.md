@@ -160,6 +160,15 @@ reframed enterprise-general rather than municipal-only.
      behind I3: run server mode (`LORE_SERVER_MODE=1`) with the `OKTA_*` env set and the data
      plane is Okta-authorized. 6 tests added (grant/revoke reconciliation, login, endpoint);
      19/19 auth tests pass. **Config is env-only — no secret in the repo.**
-     *Ops note: the shared client secret must be rotated in Okta (it was sent over chat), and the
-     desktop still needs its Okta OIDC loopback flow to obtain the ID token it POSTs to
-     `/auth/okta` (the server-side gate is complete; the desktop sign-in button is the follow-on).*
+     *Ops note: the shared client secret must be rotated in Okta (it was sent over chat).*
+
+     **Desktop sign-in shipped too.** `desktop/lib/okta-oauth.js` is the Okta analog of the
+     Google PKCE loopback: browser → Okta consent → localhost `/callback` → code exchange →
+     Okta `id_token`, which `main.js` (`auth:login-okta`) POSTs to `/auth/okta` and stores the
+     returned session JWT (same safeStorage path as Google). The auth modal now offers
+     **"Continue with Okta SSO"** beside Google (`window.lore.auth.loginOkta`). Okta config is
+     **env-first** (`OKTA_ISSUER`/`OKTA_CLIENT_ID`/`OKTA_CLIENT_SECRET`/`OKTA_SCOPES`), falling
+     back to a **gitignored** `secrets/okta_client.json` — no secret in the repo. The `groups`
+     scope is requested by default so the token carries the claim the server maps to team scopes.
+     Register `http://127.0.0.1/callback` as a redirect URI in the Okta app. 3 loopback unit
+     tests (`desktop/tests/okta-oauth.test.js`) pass. The full identity path is now end-to-end.

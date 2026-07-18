@@ -10,6 +10,7 @@ const installer    = require('./hooks-installer');
 const mcpInstaller = require('./mcp-installer');
 const cliInstaller = require('./cli-installer');
 const googleOauth  = require('./lib/google-oauth');
+const oktaOauth    = require('./lib/okta-oauth');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
 const backupMirror = require('./lib/backup-mirror');
@@ -1237,6 +1238,63 @@ ipcMain.handle('auth:login', async () => {
     saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes });
     // Persist the display name as the owner so the UI shows the real name (this is
     // the "sign-in changed nothing" fix — the name now propagates to config).
+    try {
+      const c = loadConfig() || {};
+      if (name) c.owner = name;
+      if (email) c.ownerEmail = email;
+      saveConfig(c);
+    } catch { /* non-fatal */ }
+    return { ok: true, user_id: body.user_id, email, name, scopes: body.scopes };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+});
+
+// The Okta client config. Env-first (OKTA_ISSUER / OKTA_CLIENT_ID /
+// OKTA_CLIENT_SECRET / OKTA_SCOPES) so the secret stays out of the repo — matching
+// the server's env-only policy — falling back to a gitignored
+// <repo>/secrets/okta_client.json for local dev. Returns null when issuer or
+// client_id is missing so callers can surface a clean "not configured" message.
+// The client_secret is optional (a native/public Okta app uses PKCE only).
+function loadOktaClient() {
+  let cfg = {
+    issuer: process.env.OKTA_ISSUER,
+    client_id: process.env.OKTA_CLIENT_ID,
+    client_secret: process.env.OKTA_CLIENT_SECRET,
+    scope: process.env.OKTA_SCOPES,
+  };
+  if (!cfg.issuer || !cfg.client_id) {
+    const p = process.env.OKTA_CLIENT_FILE || path.join(__dirname, '..', 'secrets', 'okta_client.json');
+    try {
+      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
+      cfg = { issuer: data.issuer, client_id: data.client_id, client_secret: data.client_secret, scope: data.scope, ...data };
+    } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  }
+  if (!cfg.issuer || !cfg.client_id) return null;
+  return cfg;
+}
+
+// Sign in with Okta SSO: run the loopback flow → get the Okta id_token → exchange
+// at the Lore server (`/auth/okta`) for a session JWT → store it. The server
+// verifies the token and reconciles team scopes from the token's group claim;
+// the desktop only carries the id_token across. Mirrors auth:login (Google).
+ipcMain.handle('auth:login-okta', async () => {
+  try {
+    const clientCfg = loadOktaClient();
+    if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Okta SSO isn’t configured in this build.' };
+    const tokens = await oktaOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url));
+    if (!tokens.id_token) return { ok: false, reason: 'no id_token from Okta' };
+    const claims = decodeJwtClaims(tokens.id_token);
+    const r = await fetch(`${BACKEND_URL()}/auth/okta`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ id_token: tokens.id_token }),
+    });
+    const body = await r.json();
+    if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
+    const email = body.email || claims.email || null;
+    const name = body.name || claims.name || (email ? email.split('@')[0] : null);
+    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes });
     try {
       const c = loadConfig() || {};
       if (name) c.owner = name;
