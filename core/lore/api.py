@@ -12,7 +12,7 @@ from .index import index_note, index_document, backfill_created_at
 from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
-from . import auth, mailer, tenancy
+from . import auth, mailer, tenancy, okta
 from . import supersede
 from . import todos as todos_mod
 
@@ -180,6 +180,26 @@ def auth_google(req: GoogleLoginReq):
     """
     try:
         return auth.login_with_google(_conn, req.id_token)
+    except auth.AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+class OktaLoginReq(BaseModel):
+    id_token: str
+
+
+@app.post("/auth/okta")
+def auth_okta(req: OktaLoginReq):
+    """Exchange an Okta ID token (from the desktop OIDC loopback flow) for a Lore
+    session JWT, reconciling team membership from the token's `groups` claim.
+
+    Body: {id_token}. Returns {token, user_id, email, scopes, groups}. 401 on bad
+    identity. The Okta ID token is cryptographically verified (RS256 signature +
+    issuer + audience); scopes are derived from SSO-group membership, never from
+    the client. See `lore.okta` for the group→scope mapping (OKTA_* env config).
+    """
+    try:
+        return okta.login_with_okta(_conn, req.id_token)
     except auth.AuthError as e:
         raise HTTPException(status_code=401, detail=str(e))
 

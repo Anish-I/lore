@@ -151,6 +151,15 @@ reframed enterprise-general rather than municipal-only.
      that pastes a thread → extracts → confirm/dismiss, with Pending/Confirmed/Dismissed tabs
      (full stateful lifecycle). IPC (`todos:*`) forwards scopes on the `digest:get` template;
      new to-dos file under the current place's scope, reads use the viewer's full scope set.
-  4. **Okta SSO → scope mapping** on the server-mode auth path (turns I3 from "by design" into
-     the real multi-user gate) — **the remaining roadmap item.** *Blocked on an Okta app/tenant
-     to build against — confirm with Anish before this is more than scaffolding.*
+  4. ~~**Okta SSO → scope mapping**~~ **— DONE** (Anish provided the Okta app; client_id
+     `0oa15cs51goDdEdok698`). `core/lore/okta.py` mirrors the Google login path: `POST /auth/okta`
+     verifies an Okta ID token (RS256 via Okta JWKS + issuer + audience), upserts the user, and
+     **reconciles team membership from the token's `groups` claim** through `OKTA_GROUP_SCOPE_MAP`
+     (SSO owns exactly the mapped teams; invite-based joins are left untouched). Scopes are
+     re-derived from membership — never trusted from the client. This is the real multi-user gate
+     behind I3: run server mode (`LORE_SERVER_MODE=1`) with the `OKTA_*` env set and the data
+     plane is Okta-authorized. 6 tests added (grant/revoke reconciliation, login, endpoint);
+     19/19 auth tests pass. **Config is env-only — no secret in the repo.**
+     *Ops note: the shared client secret must be rotated in Okta (it was sent over chat), and the
+     desktop still needs its Okta OIDC loopback flow to obtain the ID token it POSTs to
+     `/auth/okta` (the server-side gate is complete; the desktop sign-in button is the follow-on).*
