@@ -185,6 +185,8 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
   const [status, setStatus] = React.useState('pending'); // pending | confirmed | dismissed
   const [loading, setLoading] = React.useState(true);
   const [busy, setBusy] = React.useState(false);         // extract in flight
+  const [syncing, setSyncing] = React.useState(false);   // mail-folder sync in flight
+  const [note, setNote] = React.useState(null);          // sync result summary
   const [acting, setActing] = React.useState(null);      // id being confirmed/dismissed
   const [err, setErr] = React.useState(null);
 
@@ -222,6 +224,26 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
     setBusy(false);
   };
 
+  // Import from a mail-export folder: pick a folder of .eml files, the backend
+  // extracts to-dos from each new message (idempotent — re-syncing skips ones
+  // already imported). Lands in the Pending list, same as pasting a thread.
+  const syncFolder = async () => {
+    if (syncing || !window.lore?.todos?.syncMailbox) return;
+    setSyncing(true); setErr(null); setNote(null);
+    try {
+      const r = await window.lore.todos.syncMailbox({ scope: writeScope });
+      if (r && r.cancelled) { /* user closed the picker */ }
+      else if (r && r.error) { setErr(r.error); }
+      else {
+        const seen = r.processed || 0, made = r.todos_created || 0, skip = r.skipped || 0;
+        setNote(`Synced ${seen} new message${seen === 1 ? '' : 's'} → ${made} to-do${made === 1 ? '' : 's'}`
+          + (skip ? ` (${skip} already imported)` : '') + '.');
+        if (status !== 'pending') setStatus('pending'); else await load('pending');
+      }
+    } catch (e) { setErr(String(e && e.message || e)); }
+    setSyncing(false);
+  };
+
   const act = async (id, kind) => {
     setActing(id);
     try {
@@ -255,7 +277,7 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>To-dos from a thread</div>
-            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>Paste an email chain or notes — get action items you can confirm.</div>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>Paste a thread or sync a mail folder — get action items you can confirm.</div>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', padding: 4 }}>
             <WzIcon name="x" size={16} />
@@ -275,6 +297,22 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
               </WzButton>
             </div>
           </div>
+
+          {/* Or pull to-dos straight from a folder of exported emails. */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0' }}>
+            <div style={{ flex: 1, height: 1, background: 'var(--divider)' }} />
+            <span style={{ fontSize: 10.5, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: 0.4 }}>or</span>
+            <div style={{ flex: 1, height: 1, background: 'var(--divider)' }} />
+          </div>
+          <WzButton icon="inbox" onClick={syncFolder} disabled={syncing}
+            style={{ width: '100%', height: 36 }}>
+            {syncing ? 'Syncing mail folder…' : 'Sync a mail folder (.eml)'}
+          </WzButton>
+          {note && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, fontSize: 11.5, color: 'var(--text-subtle)', lineHeight: 1.45 }}>
+              <WzIcon name="check-circle-2" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0, marginTop: 1 }} />{note}
+            </div>
+          )}
         </div>
 
         {/* Lifecycle tabs */}
@@ -289,7 +327,7 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
           {loading && <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)', padding: 8 }}>loading…</div>}
           {!loading && items.length === 0 && (
             <div style={{ padding: '22px 10px', textAlign: 'center', fontSize: 12.5, color: 'var(--text-subtle)', lineHeight: 1.5 }}>
-              {status === 'pending' ? 'No pending to-dos. Paste a thread above to extract some.' : `Nothing ${status}.`}
+              {status === 'pending' ? 'No pending to-dos. Paste a thread or sync a mail folder above.' : `Nothing ${status}.`}
             </div>
           )}
           {items.map((t) => (

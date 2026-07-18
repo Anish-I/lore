@@ -173,6 +173,12 @@ reframed enterprise-general rather than municipal-only.
      messages" step differs; extraction, persistence, scoping, and the watermark are done.
      Blocked-for-live piece is just the provider OAuth creds (BACKLOG M6). 8 tests
      (`core/tests/test_connectors.py`); verified against the synth corpus.
+     **Surfaced in the desktop UI too** (evolved, not rebuilt): the existing "To-dos from a
+     thread" drawer gains a **"Sync a mail folder (.eml)"** action beside the paste box
+     (`todos:sync-mailbox` IPC → folder picker → `/connectors/mailbox/sync`; scope forwarded on
+     the `todos:extract` template). Imported items land in the same Pending list; a re-sync
+     reports how many were already imported. So the whole path — folder → to-dos → confirm —
+     is reachable from the app with no creds.
 
      **Desktop sign-in shipped too.** `desktop/lib/okta-oauth.js` is the Okta analog of the
      Google PKCE loopback: browser → Okta consent → localhost `/callback` → code exchange →

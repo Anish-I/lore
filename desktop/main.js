@@ -2089,6 +2089,38 @@ function todoTransition(action) {
 ipcMain.handle('todos:confirm', todoTransition('confirm'));
 ipcMain.handle('todos:dismiss', todoTransition('dismiss'));
 
+// Connector: pick a mail-export folder, then sync every new .eml in it into
+// pending to-dos (idempotent server-side via the connector_seen watermark). The
+// folder is read by the local backend — same local-first model as reindex. Scope
+// falls back to the current place's scope, exactly like todos:extract. Returns the
+// sync summary {processed, skipped, todos_created} or {cancelled:true}.
+ipcMain.handle('todos:sync-mailbox', async (_e, opts) => {
+  const cfg = loadConfig() || {};
+  const { scope, owner, tenant } = opts || {};
+  const pick = await dialog.showOpenDialog(win, {
+    title: 'Sync a mail folder (.eml exports) into to-dos',
+    properties: ['openDirectory'],
+  });
+  if (pick.canceled || !pick.filePaths || !pick.filePaths.length) return { cancelled: true };
+  const body = {
+    tenant_id: tenant || cfg.tenant || '',
+    folder: pick.filePaths[0],
+    scope: scope || cfg.scope || null,
+    owner: owner || cfg.owner || null,
+  };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/connectors/mailbox/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return { error: `backend ${r.status}` };
+    return { ...(await r.json()), folder: pick.filePaths[0] };
+  } catch (e) {
+    return { error: String(e) };
+  }
+});
+
 // ---------- boot-time disk<->index reconcile ----------
 // A store swap (e.g. Postgres -> SQLite) or a fresh machine can leave the on-disk
 // vault far ahead of what's actually indexed, with nothing that ever re-scans
