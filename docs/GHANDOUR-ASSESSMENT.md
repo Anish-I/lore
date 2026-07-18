@@ -146,7 +146,11 @@ reframed enterprise-general rather than municipal-only.
   2. ~~**First real people-work wizard** (thread → to-dos)~~ **— DONE** (`cb5cf43`). Extraction
      (LLM seam + deterministic fallback) + `todos` table + confirm/dismiss lifecycle, scope-
      filtered like `/digest`. Verified end-to-end over HTTP; 21/21 tests.
-  3. **Okta SSO → scope mapping** on the server-mode auth path (turns I3 from "by design" into
-     the real multi-user gate). *Likely blocked on Okta app credentials — confirm with Anish.*
-  4. **UI simplification pass** over the existing desktop app (evolve, don't rebuild) — surface
-     the to-dos wizard in the Home/People flow.
+  3. ~~**Surface the to-dos wizard in the desktop UI**~~ **— DONE** (`c53d405`). Evolved the
+     existing Wizards view (per §6a #4): a built-in "To-dos from a thread" card opens a drawer
+     that pastes a thread → extracts → confirm/dismiss, with Pending/Confirmed/Dismissed tabs
+     (full stateful lifecycle). IPC (`todos:*`) forwards scopes on the `digest:get` template;
+     new to-dos file under the current place's scope, reads use the viewer's full scope set.
+  4. **Okta SSO → scope mapping** on the server-mode auth path (turns I3 from "by design" into
+     the real multi-user gate) — **the remaining roadmap item.** *Blocked on an Okta app/tenant
+     to build against — confirm with Anish before this is more than scaffolding.*
