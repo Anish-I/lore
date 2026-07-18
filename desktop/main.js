@@ -1959,6 +1959,78 @@ ipcMain.handle('graph:get', async (_e, opts) => {
   return r.json();
 });
 
+// ---------- IPC: to-dos wizard (thread -> action items) ----------
+// The first enterprise "people-work" wizard: extract action items from a pasted
+// thread (or an ingested note), then confirm/dismiss them. Scope is forwarded
+// exactly like digest:get/graph:get — the backend enforces the ACL in server
+// mode and trusts the forwarded scopes locally. tenant/scope/owner fall back to
+// the configured identity so the renderer only has to pass what the user typed.
+ipcMain.handle('todos:extract', async (_e, opts) => {
+  const cfg = loadConfig() || {};
+  const { text, note_id, scope, owner, tenant } = opts || {};
+  const body = {
+    tenant_id: tenant || cfg.tenant || '',
+    text: text || null,
+    note_id: note_id || null,
+    scope: scope || cfg.scope || null,
+    owner: owner || cfg.owner || null,
+  };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/wizards/extract-todos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) return { todos: [], count: 0, error: `backend ${r.status}` };
+    return await r.json();
+  } catch (e) {
+    return { todos: [], count: 0, error: String(e) };
+  }
+});
+
+ipcMain.handle('todos:list', async (_e, opts) => {
+  const cfg = loadConfig() || {};
+  const { tenant, scopes, status } = opts || {};
+  const t = tenant || cfg.tenant || '';
+  if (!t) return { todos: [], count: 0 };
+  try {
+    const params = new URLSearchParams();
+    params.set('tenant', t);
+    const scopeStr = Array.isArray(scopes) ? scopes.join(',') : (scopes || '');
+    if (scopeStr) params.set('scopes', scopeStr);
+    if (status) params.set('status', status);
+    const r = await fetch(`${BACKEND_URL()}/todos?${params.toString()}`,
+      { headers: authHeaders() });
+    if (!r.ok) return { todos: [], count: 0, error: `backend ${r.status}` };
+    return await r.json();
+  } catch (e) {
+    return { todos: [], count: 0, error: String(e) };
+  }
+});
+
+// confirm/dismiss share one shape: POST /todos/{id}/{action} with {tenant_id, scopes}.
+function todoTransition(action) {
+  return async (_e, opts) => {
+    const cfg = loadConfig() || {};
+    const { id, tenant, scopes } = opts || {};
+    if (!id) return { error: 'missing todo id' };
+    const scopeStr = Array.isArray(scopes) ? scopes.join(',') : (scopes || '');
+    try {
+      const r = await fetch(`${BACKEND_URL()}/todos/${encodeURIComponent(id)}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ tenant_id: tenant || cfg.tenant || '', scopes: scopeStr || null }),
+      });
+      if (!r.ok) return { error: `backend ${r.status}` };   // 404 = not visible in caller's scopes
+      return await r.json();
+    } catch (e) {
+      return { error: String(e) };
+    }
+  };
+}
+ipcMain.handle('todos:confirm', todoTransition('confirm'));
+ipcMain.handle('todos:dismiss', todoTransition('dismiss'));
+
 // ---------- boot-time disk<->index reconcile ----------
 // A store swap (e.g. Postgres -> SQLite) or a fresh machine can leave the on-disk
 // vault far ahead of what's actually indexed, with nothing that ever re-scans

@@ -175,10 +175,152 @@ function WizardChatDrawer({ wizard, onClose }) {
 
 }
 
+// Right drawer — the to-dos "people-work" wizard. Paste a thread (or it loads an
+// ingested one), extract action items, then confirm/dismiss them. `writeScope` is
+// the scope new to-dos are filed under (the current place); `readScopes` is what
+// the viewer may see — both forwarded to the scope-enforced backend.
+function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
+  const [thread, setThread] = React.useState('');
+  const [items, setItems] = React.useState([]); // pending to-dos (the working set)
+  const [status, setStatus] = React.useState('pending'); // pending | confirmed | dismissed
+  const [loading, setLoading] = React.useState(true);
+  const [busy, setBusy] = React.useState(false); // extract in flight
+  const [acting, setActing] = React.useState(null); // id being confirmed/dismissed
+  const [err, setErr] = React.useState(null);
+
+  const load = React.useCallback(async (st) => {
+    setLoading(true);setErr(null);
+    try {
+      const r = window.lore?.todos?.list ?
+      await window.lore.todos.list({ scopes: readScopes, status: st }) : { todos: [] };
+      setItems(r && r.todos || []);
+      if (r && r.error) setErr(r.error);
+    } catch (e) {setItems([]);setErr(String(e && e.message || e));}
+    setLoading(false);
+  }, [readScopes]);
+  React.useEffect(() => {load(status);}, [load, status]);
+  React.useEffect(() => {
+    const onKey = (e) => {if (e.key === 'Escape') onClose();};
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const extract = async () => {
+    const text = thread.trim();
+    if (!text || busy) return;
+    setBusy(true);setErr(null);
+    try {
+      const r = await window.lore.todos.extract({ text, scope: writeScope });
+      if (r && r.error) {setErr(r.error);} else
+      {
+        setThread('');
+        // Newly-extracted items are pending; show them if we're on that tab,
+        // else jump there so the user sees what was just created.
+        if (status !== 'pending') setStatus('pending');else await load('pending');
+      }
+    } catch (e) {setErr(String(e && e.message || e));}
+    setBusy(false);
+  };
+
+  const act = async (id, kind) => {
+    setActing(id);
+    try {
+      const fn = kind === 'confirm' ? window.lore.todos.confirm : window.lore.todos.dismiss;
+      const r = await fn(id, readScopes);
+      if (r && r.error) setErr(r.error);else
+      setItems((xs) => xs.filter((t) => t.id !== id)); // leaves the current (status) view
+    } catch (e) {setErr(String(e && e.message || e));}
+    setActing(null);
+  };
+
+  const Tab = ({ id, label }) => /*#__PURE__*/
+  React.createElement("button", { onClick: () => setStatus(id), style: {
+      border: 'none', background: status === id ? 'var(--brand-soft-bg)' : 'transparent',
+      color: status === id ? 'var(--brand-fg)' : 'var(--text-subtle)', cursor: 'pointer',
+      fontFamily: 'var(--font-sans)', fontSize: 12, fontWeight: 600, padding: '5px 11px', borderRadius: 7
+    } }, label);
+
+
+  return (/*#__PURE__*/
+    React.createElement("div", { style: { position: 'fixed', inset: 0, zIndex: 50, display: 'flex', justifyContent: 'flex-end' } }, /*#__PURE__*/
+    React.createElement("div", { onClick: onClose, style: { position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.35)' } }), /*#__PURE__*/
+    React.createElement("div", { style: {
+        position: 'relative', height: '100%', width: 424, background: 'var(--surface-panel)',
+        borderLeft: '1px solid var(--border-subtle)', boxShadow: 'var(--shadow-drawer)',
+        display: 'flex', flexDirection: 'column', animation: 'lore-fade-in 160ms ease'
+      } }, /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--divider)', flexShrink: 0 } }, /*#__PURE__*/
+    React.createElement("span", { style: { width: 30, height: 30, borderRadius: 9, flexShrink: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-soft-bg)', border: '1px solid var(--brand-soft-border)' } }, /*#__PURE__*/
+    React.createElement(WzIcon, { name: "list-checks", size: 15, style: { color: 'var(--brand-fg)' } })
+    ), /*#__PURE__*/
+    React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' } }, "To-dos from a thread"), /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 11, color: 'var(--text-faint)', marginTop: 1 } }, "Paste an email chain or notes \u2014 get action items you can confirm.")
+    ), /*#__PURE__*/
+    React.createElement("button", { onClick: onClose, "aria-label": "Close", style: { border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', padding: 4 } }, /*#__PURE__*/
+    React.createElement(WzIcon, { name: "x", size: 16 })
+    )
+    ), /*#__PURE__*/
+
+
+    React.createElement("div", { style: { padding: '12px 14px 0', flexShrink: 0 } }, /*#__PURE__*/
+    React.createElement("div", { style: { border: '1px solid var(--border-field)', borderRadius: 12, background: 'var(--surface-canvas)', padding: 10 } }, /*#__PURE__*/
+    React.createElement("textarea", { value: thread, onChange: (e) => setThread(e.target.value), rows: 5,
+      "aria-label": "Paste a thread", placeholder: 'Paste a thread…\nFrom: Dana Ruiz <dana@…>\n- Marcus, send the plan by Friday.',
+      style: { width: '100%', resize: 'vertical', border: 'none', outline: 'none', background: 'transparent', fontFamily: 'var(--font-sans)', fontSize: 13, lineHeight: 1.5, color: 'var(--text-strong)' } }), /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 } }, /*#__PURE__*/
+    React.createElement("span", { style: { fontSize: 11, color: 'var(--text-faint)' } }, "Filed under ", /*#__PURE__*/React.createElement("b", { style: { color: 'var(--text-subtle)' } }, writeScope)), /*#__PURE__*/
+    React.createElement(WzButton, { variant: "amber-ghost", icon: "sparkles", onClick: extract, disabled: busy || !thread.trim() },
+    busy ? 'Extracting…' : 'Extract to-dos'
+    )
+    )
+    )
+    ), /*#__PURE__*/
+
+
+    React.createElement("div", { style: { display: 'flex', gap: 4, padding: '12px 14px 6px', flexShrink: 0 } }, /*#__PURE__*/
+    React.createElement(Tab, { id: "pending", label: "Pending" }), /*#__PURE__*/
+    React.createElement(Tab, { id: "confirmed", label: "Confirmed" }), /*#__PURE__*/
+    React.createElement(Tab, { id: "dismissed", label: "Dismissed" })
+    ), /*#__PURE__*/
+
+    React.createElement("div", { style: { flex: 1, overflowY: 'auto', padding: '4px 14px 16px' } },
+    err && /*#__PURE__*/React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 11, color: 'var(--danger-fg, #e5484d)', padding: '6px 2px' } }, err),
+    loading && /*#__PURE__*/React.createElement("div", { style: { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-faint)', padding: 8 } }, "loading\u2026"),
+    !loading && items.length === 0 && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '22px 10px', textAlign: 'center', fontSize: 12.5, color: 'var(--text-subtle)', lineHeight: 1.5 } },
+    status === 'pending' ? 'No pending to-dos. Paste a thread above to extract some.' : `Nothing ${status}.`
+    ),
+
+    items.map((t) => /*#__PURE__*/
+    React.createElement("div", { key: t.id, style: { padding: 12, marginBottom: 10, borderRadius: 12, border: '1px solid var(--border)', background: 'var(--surface-inset)' } }, /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 13.5, fontWeight: 600, color: 'var(--text-strong)', lineHeight: 1.4 } }, t.task), /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6, fontSize: 11.5, color: 'var(--text-faint)' } },
+    t.assignee && /*#__PURE__*/React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, /*#__PURE__*/React.createElement(WzIcon, { name: "user", size: 12 }), t.assignee),
+    (t.due_text || t.due) && /*#__PURE__*/React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, /*#__PURE__*/React.createElement(WzIcon, { name: "calendar", size: 12 }), t.due_text || t.due),
+    t.source && /*#__PURE__*/React.createElement("span", { style: { display: 'inline-flex', alignItems: 'center', gap: 4 } }, /*#__PURE__*/React.createElement(WzIcon, { name: "quote", size: 12 }), t.source)
+    ),
+    status === 'pending' && /*#__PURE__*/
+    React.createElement("div", { style: { display: 'flex', gap: 8, marginTop: 10 } }, /*#__PURE__*/
+    React.createElement(WzButton, { variant: "amber-ghost", icon: "check", onClick: () => act(t.id, 'confirm'), disabled: acting === t.id, style: { flex: 1 } },
+    acting === t.id ? '…' : 'Confirm'
+    ), /*#__PURE__*/
+    React.createElement(WzButton, { icon: "x", onClick: () => act(t.id, 'dismiss'), disabled: acting === t.id, style: { flex: 1 } }, "Dismiss")
+    )
+
+    )
+    )
+    )
+    )
+    ));
+
+}
+
 function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) {
   const [personal, setPersonal] = React.useState(null);
   const [catalog, setCatalog] = React.useState([]);
   const [chatWizard, setChatWizard] = React.useState(null);
+  const [todoOpen, setTodoOpen] = React.useState(false);
   const [builderOpen, setBuilderOpen] = React.useState(false);
   const [installBusy, setInstallBusy] = React.useState(null);
   const [hoverBack, setHoverBack] = React.useState(false);
@@ -233,6 +375,9 @@ function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) 
   const groups = { my: [], team: [], company: [] };
   for (const w of personal || []) groups[wzScope(w)].push(w);
   const teamHeading = teamName ? `Team ${teamName} wizards` : 'Team wizards';
+  // New to-dos are filed under the scope of the place you're viewing; reads use
+  // the viewer's full scope set (so confirmed/dismissed items stay visible).
+  const todoWriteScope = place === 'team' ? 'team' : place === 'company' ? 'company' : 'private';
 
   // A titled block of wizard cards (used for Your/Team/Company sections).
   const Section = ({ icon, tint, border, fg, title, subtitle, children }) => /*#__PURE__*/
@@ -260,6 +405,18 @@ function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) 
     React.createElement("h1", { style: { fontSize: 23, fontWeight: 700, letterSpacing: '-0.01em', color: 'var(--text-strong)', margin: '0 0 6px' } }, "Wizards"), /*#__PURE__*/
     React.createElement("p", { style: { fontSize: 13, color: 'var(--text-subtle)', margin: '0 0 20px', lineHeight: 1.55, maxWidth: 560 } }, "A Wizard is a bundle of pages you can chat with \u2014 its answers come only from what\u2019s inside it. Pages stay where they are; a Wizard is a view over them."
 
+    ), /*#__PURE__*/
+
+
+    React.createElement("div", { style: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 14, marginBottom: 14 } }, /*#__PURE__*/
+    React.createElement(WizardCard, { name: "To-dos from a thread", icon: "list-checks",
+      meta: "Paste an email chain \u2192 confirm/dismiss action items",
+      onChat: null,
+      extraAction: /*#__PURE__*/
+      React.createElement(WzButton, { variant: "amber-ghost", icon: "sparkles", onClick: () => setTodoOpen(true), style: { flex: 1 } }, "Open"
+
+      ) }
+    )
     ), /*#__PURE__*/
 
 
@@ -350,6 +507,7 @@ function WizardsView({ onBack, backLabel, scopes, onChanged, place, teamName }) 
     ),
 
     chatWizard && /*#__PURE__*/React.createElement(WizardChatDrawer, { wizard: chatWizard, onClose: () => setChatWizard(null) }),
+    todoOpen && /*#__PURE__*/React.createElement(TodoWizardDrawer, { writeScope: todoWriteScope, readScopes: scopes, onClose: () => setTodoOpen(false) }),
     builderOpen && Builder && /*#__PURE__*/
     React.createElement(Builder, { scopes: scopes, onClose: () => setBuilderOpen(false),
       onCreated: (w) => {setBuilderOpen(false);loadPersonal();if (onChanged) onChanged();if (w) setChatWizard(w);} })

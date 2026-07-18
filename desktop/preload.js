@@ -160,6 +160,17 @@ contextBridge.exposeInMainWorld('lore', {
   // digest(tenant, days) → {rows:[{day, section, count, topTitles}], sinceYesterday, total}
   digest: (tenant, days, scopes) => ipcRenderer.invoke('digest:get', { tenant, days, scopes }),
 
+  // --- to-dos wizard (thread → action items, confirm/dismiss) ---
+  // extract({text|note_id, scope?, owner?}) → {todos:[{id, assignee, task, due, due_text, source, status, scope_id}], count}
+  // list({scopes, status?})   → {todos:[...], count} (scope-filtered like digest)
+  // confirm/dismiss({id, scopes}) → {id, status} | {error} (404 when not in caller's scopes)
+  todos: {
+    extract: (opts)          => ipcRenderer.invoke('todos:extract', opts || {}),
+    list:    (opts)          => ipcRenderer.invoke('todos:list', opts || {}),
+    confirm: (id, scopes)    => ipcRenderer.invoke('todos:confirm', { id, scopes }),
+    dismiss: (id, scopes)    => ipcRenderer.invoke('todos:dismiss', { id, scopes }),
+  },
+
   // --- ask chat history (persisted threads for the main chat) ---
   // append(tenant, turn) → {ok, id}; turn = {thread_id, role, text, sources?, source?}
   // thread(tenant, threadId) → {messages:[...]} oldest first
