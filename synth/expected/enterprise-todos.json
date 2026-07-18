@@ -1,0 +1,41 @@
+{
+  "scenario": "enterprise",
+  "source": "enterprise/emails/q3-budget-thread.eml",
+  "todos": [
+    {
+      "assignee": "Marcus Bell",
+      "task": "Send revised engineering headcount plan",
+      "due": "2026-07-17",
+      "due_text": "Friday EOD",
+      "source": "Dana Ruiz, 15 Jul 17:42"
+    },
+    {
+      "assignee": "Priya Nair",
+      "task": "Pause the two open backend reqs until reforecast",
+      "due": null,
+      "due_text": null,
+      "source": "Dana Ruiz, 15 Jul 17:42"
+    },
+    {
+      "assignee": "Mahmoud Hafez",
+      "task": "Book the finance review room for Thursday 2pm",
+      "due": "2026-07-16",
+      "due_text": "Thursday 2pm",
+      "source": "Dana Ruiz, 15 Jul 17:42"
+    },
+    {
+      "assignee": "Mahmoud Hafez",
+      "task": "Circulate the Q3 review deck before Thursday",
+      "due": "2026-07-16",
+      "due_text": "before Thursday",
+      "source": "Dana Ruiz, 15 Jul 17:42"
+    },
+    {
+      "assignee": "Dana Ruiz",
+      "task": "Update the board on the Q3 opex plan",
+      "due": "2026-07-20",
+      "due_text": "Monday",
+      "source": "Dana Ruiz, 15 Jul 17:42"
+    }
+  ]
+}

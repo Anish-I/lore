@@ -31,6 +31,9 @@ dist/
 build/
 desktop/dist/
 
+# synthetic corpus — materialized files are a build artifact (run synth/generate.py)
+synth/out/
+
 # editor / tooling
 .cursor/
 .idea/

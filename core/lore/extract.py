@@ -1,8 +1,11 @@
-"""Text extraction for non-markdown sources (M4): PDF and DOCX.
+"""Text extraction for non-markdown sources (M4): PDF, DOCX, and XLSX.
 
 PDF via PyMuPDF (fitz) — already a dependency of the local stack.
 DOCX via stdlib zipfile + XML (a .docx is a zip; word/document.xml holds the
 runs) — no python-docx dependency needed.
+XLSX via openpyxl (read-only stream) — spreadsheets are core "people-work"
+content for the enterprise tool; cells render as pipe-delimited rows so the
+chunker keeps header<->value structure.
 
 extract_text(path) -> (title, text) or None when the format is unsupported.
 Output is markdown-ish plain text with a leading H1 so the chunker has
@@ -13,7 +16,11 @@ import re
 import zipfile
 from xml.etree import ElementTree
 
-EXTRACTABLE_EXTS = {".pdf", ".docx"}
+EXTRACTABLE_EXTS = {".pdf", ".docx", ".xlsx"}
+
+# Bound a decompression-bomb spreadsheet: openpyxl read-only streams rows so
+# memory stays flat, but cap total cells anyway so a crafted sheet can't spin.
+_XLSX_MAX_CELLS = 200_000
 
 _W_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -64,6 +71,28 @@ def _docx_text(path: str) -> str:
     return "\n\n".join(paras)
 
 
+def _xlsx_text(path: str) -> str:
+    from openpyxl import load_workbook
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        blocks = []
+        cells = 0
+        for ws in wb.worksheets:
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                vals = ["" if v is None else str(v) for v in row]
+                cells += len(vals)
+                if cells > _XLSX_MAX_CELLS:
+                    raise ValueError(f"xlsx too large (> {_XLSX_MAX_CELLS} cells)")
+                if any(v.strip() for v in vals):
+                    rows.append(" | ".join(vals).rstrip(" |"))
+            if rows:
+                blocks.append(f"## {ws.title}\n" + "\n".join(rows))
+        return "\n\n".join(blocks)
+    finally:
+        wb.close()
+
+
 def extract_text(path: str):
     """Return (title, markdown_text) for supported binary formats, else None.
 
@@ -73,7 +102,12 @@ def extract_text(path: str):
     if ext not in EXTRACTABLE_EXTS:
         return None
     try:
-        body = _pdf_text(path) if ext == ".pdf" else _docx_text(path)
+        if ext == ".pdf":
+            body = _pdf_text(path)
+        elif ext == ".docx":
+            body = _docx_text(path)
+        else:
+            body = _xlsx_text(path)
     except Exception:
         return None
     body = re.sub(r"\n{3,}", "\n\n", body or "").strip()

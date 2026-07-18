@@ -94,6 +94,31 @@ def test_docx_with_dtd_entity_bomb_rejected(tmp_path):
     assert got is None or "lollollol" not in (got[1] if got else "")
 
 
+def test_xlsx_extraction(tmp_path):
+    """Spreadsheets ingest as pipe-delimited rows (header<->value structure kept)."""
+    from openpyxl import Workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Budget"
+    ws.append(["Dept", "Actual", "Variance %"])
+    ws.append(["Engineering", 214000, "18.9%"])
+    ws.append([None, None, None])          # blank row is dropped
+    ws.append(["TOTAL", 501000, "12.6%"])
+    p = tmp_path / "q3.xlsx"
+    wb.save(str(p))
+
+    got = extract.extract_text(str(p))
+    assert got is not None
+    title, text = got
+    assert title == "q3"
+    assert "## Budget" in text
+    assert "Dept | Actual | Variance %" in text
+    assert "Engineering | 214000 | 18.9%" in text
+    assert "TOTAL | 501000 | 12.6%" in text
+    # blank row produced no line
+    assert " |  | " not in text
+
+
 def test_ingest_url_guards():
     base = {"scope": "s", "owner": "o", "tenant": "url-tenant"}
     r = client.post("/ingest-url", json={"url": "file:///etc/passwd", **base})

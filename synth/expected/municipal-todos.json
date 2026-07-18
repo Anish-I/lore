@@ -1,0 +1,27 @@
+{
+  "scenario": "municipal",
+  "source": "municipal/emails/foia-2026-0417-thread.eml",
+  "todos": [
+    {
+      "assignee": "Alan Woods",
+      "task": "Review responsive records for exemptions/redactions (CJIS-adjacent)",
+      "due": "2026-07-24",
+      "due_text": "by July 24",
+      "source": "Sofia Marin, 16 Jul 09:12"
+    },
+    {
+      "assignee": "Sofia Marin",
+      "task": "Log FOIA request #2026-0417 in the FOIA register",
+      "due": "2026-07-16",
+      "due_text": "today",
+      "source": "Sofia Marin, 16 Jul 09:12"
+    },
+    {
+      "assignee": "Mahmoud Hafez",
+      "task": "Send response letter + released records to requester",
+      "due": "2026-07-31",
+      "due_text": "by July 31 (statutory deadline)",
+      "source": "Sofia Marin, 16 Jul 09:12"
+    }
+  ]
+}
