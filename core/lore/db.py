@@ -312,6 +312,14 @@ create table if not exists todos(
   updated_at timestamptz default now(),
   constraint todos_status_check check (status in ('pending','confirmed','dismissed')));
 create index if not exists todos_tenant on todos(tenant_id, status);
+create table if not exists connector_seen(
+  tenant_id text not null,
+  source text not null,
+  external_id text not null,
+  scope_id text,
+  todo_count integer default 0,
+  seen_at timestamptz default now(),
+  primary key (tenant_id, source, external_id));
 """
 
 # PG migration note: personal_wizards / personal_wizard_chats / ask_history are NEW tables, so the
@@ -521,6 +529,14 @@ create table if not exists todos(
   updated_at timestamp default current_timestamp,
   constraint todos_status_check check (status in ('pending','confirmed','dismissed')));
 create index if not exists todos_tenant on todos(tenant_id, status);
+create table if not exists connector_seen(
+  tenant_id text not null,
+  source text not null,
+  external_id text not null,
+  scope_id text,
+  todo_count integer default 0,
+  seen_at timestamp default current_timestamp,
+  primary key (tenant_id, source, external_id));
 """
 
 

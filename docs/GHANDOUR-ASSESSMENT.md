@@ -161,6 +161,18 @@ reframed enterprise-general rather than municipal-only.
      plane is Okta-authorized. 6 tests added (grant/revoke reconciliation, login, endpoint);
      19/19 auth tests pass. **Config is env-only — no secret in the repo.**
      *Ops note: the shared client secret must be rotated in Okta (it was sent over chat).*
+  5. **First connector — mailbox → to-dos** *(beyond the locked roadmap; opens the M6
+     connector track)*. `core/lore/connectors.py` + `POST /connectors/mailbox/sync` point
+     the to-dos wizard at a **folder of `.eml` files** (a Gmail/Outlook export, a Maildir,
+     or `synth/`): each new message is parsed (stdlib `email`, plain/HTML body), run through
+     the same `extract_todos`/`create_todos` path, and **watermarked** (`connector_seen`,
+     keyed by tenant+source+Message-ID) so re-sync is idempotent. Write-authorized and
+     scope-governed exactly like the wizard; the folder is read on the server's own
+     filesystem, same local-first model as `/reindex` (no data leaves the box). This is the
+     shared substrate a Gmail/Slack **API** connector slots into later — only the "fetch next
+     messages" step differs; extraction, persistence, scoping, and the watermark are done.
+     Blocked-for-live piece is just the provider OAuth creds (BACKLOG M6). 8 tests
+     (`core/tests/test_connectors.py`); verified against the synth corpus.
 
      **Desktop sign-in shipped too.** `desktop/lib/okta-oauth.js` is the Okta analog of the
      Google PKCE loopback: browser → Okta consent → localhost `/callback` → code exchange →

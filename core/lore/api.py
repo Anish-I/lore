@@ -15,6 +15,7 @@ from . import llm
 from . import auth, mailer, tenancy, okta
 from . import supersede
 from . import todos as todos_mod
+from . import connectors
 
 app = FastAPI(title="Lore Core")
 
@@ -1151,6 +1152,37 @@ def todos_dismiss(todo_id: str, req: TodoStatusReq,
                   authorization: Optional[str] = Header(default=None)):
     """Dismiss a to-do (scope-checked). 404 if not visible to the caller."""
     return _todo_transition(todo_id, "dismissed", authorization, req)
+
+
+class MailboxSyncReq(BaseModel):
+    tenant_id: Optional[str] = None
+    folder: str
+    scope: str
+    owner: Optional[str] = None
+    provider: Optional[str] = None
+    limit: Optional[int] = None
+
+
+@app.post("/connectors/mailbox/sync")
+def connectors_mailbox_sync(req: MailboxSyncReq,
+                            authorization: Optional[str] = Header(default=None)):
+    """Pull every *new* `.eml` from a local mailbox folder → extract to-dos →
+    persist them `pending`, idempotently (a re-sync skips already-seen messages).
+
+    Write-authorized like the extract-todos wizard: the scope must be one the
+    caller may write, and owner is forced to the caller in server mode. The folder
+    is read on the server's own filesystem — same local-first model as `/reindex`
+    (the desktop points it at a local Gmail/Outlook export or a Maildir); nothing
+    leaves the box. A hosted, multi-tenant deployment would use a provider API
+    connector instead of exposing filesystem paths. Returns the sync summary.
+    """
+    if not (req.folder or "").strip() or not (req.scope or "").strip():
+        raise HTTPException(status_code=422, detail="folder and scope are required")
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant_id)
+    if not os.path.isdir(req.folder):
+        raise HTTPException(status_code=404, detail="folder not found")
+    return connectors.sync_mailbox(_conn, tenant, scope, req.folder,
+                                   owner=owner, provider=req.provider, limit=req.limit)
 
 
 @app.get("/config/retrieval")
