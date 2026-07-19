@@ -49,6 +49,8 @@ Everything ships self-contained — no Python, no database, no API keys required
   nodes** automatically, folding their content under topics and keeping the graph topic-centric over time.
 - **🪝 Lore Hooks** — one-click auto-capture from Claude Code / Codex / Copilot straight into your graph
   (redacted, debounced, fully local) so your AI work becomes searchable knowledge.
+- **🐙 GitHub `.lore` packages** — opt shared notes into a compressed, content-addressed
+  `.lore/package.json`; teammates import them into Lore after pull without materializing or overwriting files.
 - **🧙 Wizards (installable knowledge bases)** — an app-store of curated KBs you can install, rate, and
   sync into your library.
 - **🔌 MCP server + CLI** — expose your Lore to any AI tool (`lore_ask`, `lore_search`, `lore_graph`) and
@@ -124,11 +126,12 @@ Postgres + Qdrant services, plus Electron main-process syntax and renderer JSX v
 
 - Bundle the Python/Qdrant sidecar for a true standalone signed `.exe`
 - Broader ingestion (Docling / Marker / OCR)
-- GitHub `.lore` packages — commit a tiny bundle of a repo's notes that decompresses into Lore on pull
+- Signed package provenance and package-level note removal reconciliation
 - Team / enterprise cross-vault scopes + auth
 - Edge agent: local watch/distill/embed with a durable server as source of truth
 
 See `docs/superpowers/specs/` for the design spec and `docs/BACKLOG.md` for the backlog.
+See [`docs/GITHUB_PACKAGES.md`](docs/GITHUB_PACKAGES.md) for the portable package format and workflow.
 
 ## 📜 License
 

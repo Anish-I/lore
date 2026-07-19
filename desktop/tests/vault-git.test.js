@@ -28,7 +28,8 @@ describe('vault-git', () => {
     const second = await vaultGit.ensureRepo(root);
     expect(second.created).toBe(false);
     const gi = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
-    expect(gi).toContain('.lore');
+    expect(gi).toContain('.lore/*');
+    expect(gi).toContain('!.lore/package.json');
     expect(gi).toContain('*.lore-tmp');
   });
 

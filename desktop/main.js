@@ -2,6 +2,7 @@
 // Owns the OS: file explorer (fs), spawns the Python `lore` retrieval backend,
 // and serves IPC for the renderer's window.lore bridge.
 const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, clipboard, nativeImage } = require('electron');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
@@ -12,6 +13,7 @@ const cliInstaller = require('./cli-installer');
 const googleOauth  = require('./lib/google-oauth');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
+const githubPackage = require('./lib/github-package');
 const backupMirror = require('./lib/backup-mirror');
 
 // Backend URL/port are wiring values, not constants: resolved lazily (env var > cfg
@@ -154,9 +156,9 @@ function authHeaders() {
   return t ? { 'X-Lore-Token': t } : {};
 }
 
-// ---------- .lore manifests (per-folder discovery/breadcrumb cache) ----------
+// ---------- .lore/manifest.json (per-folder discovery/breadcrumb cache) ----------
 // After every scrape / reconcile / upkeep / import / section change, each library
-// root gets its `.lore` manifest refreshed + a worklog entry appended, so a fresh
+// root gets its local manifest refreshed + a worklog entry appended, so a fresh
 // startup can rediscover where Lore has worked (see discoverLibraries below).
 function postJSON(url, body) {
   return fetch(url, {
@@ -194,7 +196,8 @@ async function refreshManifests(action, summaryText) {
 }
 
 // Scan the configured roots (and their immediate subfolders, plus the default
-// library parent) for `.lore` files — lightweight: reads manifests only, never
+// library parent) for `.lore/manifest.json` (plus the legacy file) — lightweight:
+// reads manifests only, never
 // re-walks note trees. Powers the renderer's "reopen a known library" surface.
 function discoverLibraries() {
   const found = new Map();
@@ -231,6 +234,167 @@ function discoverLibraries() {
 
 ipcMain.handle('libraries:discovered', () => {
   try { return discoverLibraries(); } catch { return []; }
+});
+
+// ---------- portable GitHub `.lore` packages ----------
+// `.lore/manifest.json` is local-only; `.lore/package.json` is the sole
+// committable artifact. Export is explicit and includes only Markdown carrying
+// `share: github` frontmatter. Import writes directly through /ingest, so a pull
+// never overwrites or materializes files in the repository working tree.
+function _githubPackageRoot() {
+  const cfg = loadConfig() || {};
+  const root = (Array.isArray(cfg.roots) && cfg.roots[0]) || ENV_VAULT_ROOT;
+  if (!root) throw new Error('No library root configured');
+  pathGuard(root);
+  return root;
+}
+
+function _githubSourceId(packageId, relPath) {
+  const relHash = crypto.createHash('sha256').update(relPath).digest('hex').slice(0, 32);
+  return `github-package:${packageId}:${relHash}`;
+}
+
+function githubPackageStatus() {
+  const root = _githubPackageRoot();
+  const st = githubPackage.status(root);
+  const cfg = loadConfig() || {};
+  const prior = st.packageId && cfg.githubPackageImports && cfg.githubPackageImports[st.packageId];
+  return {
+    ok: true,
+    root,
+    ...st,
+    importedAt: prior ? prior.importedAt || null : null,
+    importedDigest: prior ? prior.contentSha256 || null : null,
+    autoImport: !!(prior && prior.autoImport),
+    needsImport: !!(st.valid && (!prior || prior.contentSha256 !== st.contentSha256)),
+  };
+}
+
+async function importGithubPackage({ automatic = false } = {}) {
+  const root = _githubPackageRoot();
+  const decoded = githubPackage.read(root);
+  if (!decoded) return { ok: false, error: 'No .lore/package.json found.' };
+  const cfg = loadConfig() || {};
+  if (!cfg.tenant || !cfg.owner || !cfg.scope) {
+    return { ok: false, error: 'Finish Lore setup before importing a GitHub package.' };
+  }
+  const envelope = decoded.envelope;
+  const previous = (cfg.githubPackageImports || {})[envelope.packageId] || {};
+  const previousPaths = new Set(Array.isArray(previous.importedPaths) ? previous.importedPaths : []);
+  const importedPaths = new Set(previous.contentSha256 === envelope.contentSha256 ? previousPaths : []);
+  let imported = 0, local = 0, unchanged = 0;
+  const failures = [];
+
+  for (const note of decoded.notes) {
+    // If the original Markdown is present, the normal file index remains the
+    // source of truth. Do not create a second, package-provenance copy.
+    const localPath = path.join(root, ...note.path.split('/'));
+    if (fs.existsSync(localPath)) { local++; continue; }
+    if (previous.contentSha256 === envelope.contentSha256 && previousPaths.has(note.path)) {
+      unchanged++;
+      continue;
+    }
+    try {
+      const r = await postJSON(`${BACKEND_URL()}/ingest`, {
+        source_id: _githubSourceId(envelope.packageId, note.path),
+        title: note.title,
+        text: note.body,
+        scope: cfg.scope,
+        owner: cfg.owner,
+        tenant: cfg.tenant,
+        source_type: 'github-package',
+        content_hash: note.sha256,
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.detail || `backend ${r.status}`);
+      importedPaths.add(note.path);
+      imported++;
+    } catch (e) {
+      failures.push({ path: note.path, error: String(e.message || e) });
+    }
+  }
+
+  if (failures.length) {
+    return {
+      ok: false, partial: imported > 0, automatic, imported, local, unchanged,
+      failed: failures.length, failures: failures.slice(0, 10), packageId: envelope.packageId,
+    };
+  }
+
+  const next = loadConfig() || {};
+  next.githubPackageImports = { ...(next.githubPackageImports || {}) };
+  next.githubPackageImports[envelope.packageId] = {
+    contentSha256: envelope.contentSha256,
+    importedAt: new Date().toISOString(),
+    root,
+    // A manual first import establishes trust; subsequent pulled revisions may
+    // auto-import on launch. Preserve an explicit later opt-out.
+    autoImport: previous.autoImport === false ? false : (!automatic || previous.autoImport === true),
+    importedPaths: [...importedPaths].sort(),
+  };
+  saveConfig(next);
+  try {
+    loreManifest.appendWorklog(root, {
+      action: 'github-package-import',
+      summary: `imported ${imported} packaged note(s); ${local} already local`,
+    });
+  } catch { /* local breadcrumb only */ }
+  return {
+    ok: true, automatic, imported, local, unchanged, failed: 0,
+    packageId: envelope.packageId, contentSha256: envelope.contentSha256,
+    noteCount: decoded.notes.length,
+  };
+}
+
+async function maybeAutoImportGithubPackage() {
+  try {
+    const st = githubPackageStatus();
+    if (!st.valid || !st.packageId) return;
+    const cfg = loadConfig() || {};
+    const prior = cfg.githubPackageImports && cfg.githubPackageImports[st.packageId];
+    if (!prior || prior.autoImport !== true) return;
+    const r = await importGithubPackage({ automatic: true });
+    if (!r.ok) console.warn('[github-package] auto-import incomplete:', r.failures || r.error);
+    else if (r.imported) console.log('[github-package] auto-imported', r.imported, 'note(s)');
+  } catch (e) { console.warn('[github-package] auto-import failed (non-fatal):', e.message); }
+}
+
+ipcMain.handle('github-package:status', () => {
+  try { return githubPackageStatus(); }
+  catch (e) { return { ok: false, exists: false, error: String(e.message || e) }; }
+});
+
+ipcMain.handle('github-package:export', () => {
+  try {
+    const root = _githubPackageRoot();
+    const result = githubPackage.write(root);
+    try {
+      loreManifest.appendWorklog(root, {
+        action: 'github-package-export',
+        summary: `${result.changed ? 'updated' : 'checked'} GitHub package (${result.noteCount} note(s))`,
+      });
+    } catch { /* local breadcrumb only */ }
+    return { ...githubPackageStatus(), export: result };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
+ipcMain.handle('github-package:import', async () => {
+  try { return await importGithubPackage({ automatic: false }); }
+  catch (e) { return { ok: false, error: String(e.message || e) }; }
+});
+
+ipcMain.handle('github-package:set-auto-import', (_e, enabled) => {
+  try {
+    const st = githubPackageStatus();
+    if (!st.valid || !st.packageId) return { ok: false, error: 'No valid GitHub package found.' };
+    const cfg = loadConfig() || {};
+    const prior = cfg.githubPackageImports && cfg.githubPackageImports[st.packageId];
+    if (!prior) return { ok: false, error: 'Import this package once before enabling automatic updates.' };
+    cfg.githubPackageImports = { ...(cfg.githubPackageImports || {}) };
+    cfg.githubPackageImports[st.packageId] = { ...prior, autoImport: enabled === true };
+    saveConfig(cfg);
+    return { ok: true, autoImport: enabled === true };
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
 });
 
 // ---------- backend lifecycle ----------
@@ -2152,7 +2316,13 @@ app.whenReady().then(async () => {
   // Once the backend resolves, kick off the async disk<->index reconcile in the
   // background (see reconcileIndex above) — never awaited, never blocks the window.
   ensureBackend()
-    .then((status) => { reconcileIndex(status).catch((e) => console.error('[reconcile] uncaught', e)); })
+    .then((status) => {
+      // Avoid concurrent local-embed/Qdrant writes: package import follows the
+      // normal disk reconcile, but neither operation blocks the window.
+      reconcileIndex(status)
+        .catch((e) => console.error('[reconcile] uncaught', e))
+        .finally(() => maybeAutoImportGithubPackage());
+    })
     .catch((e) => console.error('backend startup error', e));
   await createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

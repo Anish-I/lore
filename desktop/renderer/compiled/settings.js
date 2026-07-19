@@ -109,6 +109,9 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const [backupDir, setBackupDir] = React.useState('');
   const [backupStatus, setBackupStatus] = React.useState(null);
   const [backupBusy, setBackupBusy] = React.useState(false);
+  const [ghPackage, setGhPackage] = React.useState(null);
+  const [ghPackageBusy, setGhPackageBusy] = React.useState('');
+  const [ghPackageResult, setGhPackageResult] = React.useState(null);
   const [auditOpen, setAuditOpen] = React.useState(false);
   const [auditEntries, setAuditEntries] = React.useState(null);
   const [autoFileObvious, setAutoFileObvious] = React.useState(false); // default OFF; only explicit true enables
@@ -199,6 +202,9 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     }
     if (window.lore && window.lore.backup && window.lore.backup.status) {
       window.lore.backup.status().then((b) => setBackupStatus(b || null)).catch(() => {});
+    }
+    if (window.lore && window.lore.githubPackage && window.lore.githubPackage.status) {
+      window.lore.githubPackage.status().then((p) => setGhPackage(p || null)).catch(() => {});
     }
   }, []);
 
@@ -352,6 +358,39 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     setBackupBusy(true);
     try {await window.lore.backup.run();const b = await window.lore.backup.status();setBackupStatus(b || null);} finally
     {setBackupBusy(false);}
+  };
+
+  const stRefreshGithubPackage = async () => {
+    if (!window.lore || !window.lore.githubPackage) return null;
+    const p = await window.lore.githubPackage.status();
+    setGhPackage(p || null);
+    return p;
+  };
+  const stExportGithubPackage = async () => {
+    if (!window.lore || !window.lore.githubPackage) return;
+    setGhPackageBusy('export');setGhPackageResult(null);
+    try {
+      const r = await window.lore.githubPackage.export();
+      setGhPackage(r || null);
+      setGhPackageResult(r && r.ok ? { kind: 'export', ...(r.export || {}) } : { kind: 'error', error: r && r.error || 'Export failed' });
+    } catch (e) {setGhPackageResult({ kind: 'error', error: String(e && e.message || e) });} finally
+    {setGhPackageBusy('');}
+  };
+  const stImportGithubPackage = async () => {
+    if (!window.lore || !window.lore.githubPackage) return;
+    setGhPackageBusy('import');setGhPackageResult(null);
+    try {
+      const r = await window.lore.githubPackage.import();
+      setGhPackageResult(r && r.ok ? { kind: 'import', ...r } : { kind: 'error', error: r && (r.error || `${r.failed || 0} note(s) failed`) || 'Import failed' });
+      await stRefreshGithubPackage();
+    } catch (e) {setGhPackageResult({ kind: 'error', error: String(e && e.message || e) });} finally
+    {setGhPackageBusy('');}
+  };
+  const stSetGithubAutoImport = async (enabled) => {
+    if (!window.lore || !window.lore.githubPackage) return;
+    const r = await window.lore.githubPackage.setAutoImport(!!enabled);
+    if (r && r.ok) setGhPackage((p) => ({ ...(p || {}), autoImport: !!enabled }));else
+    setGhPackageResult({ kind: 'error', error: r && r.error || 'Could not update automatic imports' });
   };
 
   const stLoadAudit = async () => {
@@ -526,6 +565,47 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     ), /*#__PURE__*/
     React.createElement(StButton, { variant: "secondary", size: "sm", onClick: stRunBackup, disabled: backupBusy }, backupBusy ? 'Backing up…' : 'Back up now')
     )
+    )
+
+    ), /*#__PURE__*/
+
+    React.createElement(Section, { icon: "github", title: "GitHub package" }, /*#__PURE__*/
+    React.createElement(Row, {
+      label: "Portable .lore package",
+      hint: "Commit .lore/package.json with a repository so teammates can pull its shared knowledge into Lore. Local account IDs, tags, and worklog stay in ignored .lore/manifest.json." }, /*#__PURE__*/
+
+    React.createElement(StBadge, { tone: ghPackage && ghPackage.valid ? 'success' : ghPackage && ghPackage.exists ? 'warning' : 'neutral', dot: !!(ghPackage && ghPackage.valid) },
+    !ghPackage ? 'checking…' : ghPackage.valid ? `${ghPackage.noteCount || 0} shared note${ghPackage.noteCount === 1 ? '' : 's'}` : ghPackage.exists ? 'invalid package' : 'not created'
+    )
+    ), /*#__PURE__*/
+    React.createElement(Row, {
+      label: "Update package",
+      hint: "Only notes with `share: github` in YAML frontmatter are included. Recognizable tokens are redacted, secret-dominated files are skipped, and unchanged exports do not rewrite the file. Review the diff before committing." }, /*#__PURE__*/
+
+    React.createElement(StButton, { variant: "secondary", size: "sm", icon: "upload", onClick: stExportGithubPackage, disabled: !!ghPackageBusy },
+    ghPackageBusy === 'export' ? 'Packaging…' : ghPackage && ghPackage.exists ? 'Update package' : 'Create package'
+    )
+    ),
+    ghPackage && ghPackage.valid && /*#__PURE__*/
+    React.createElement(Row, {
+      label: "Import shared notes",
+      hint: ghPackage.needsImport ? 'This package has knowledge not yet imported on this machine. Existing repository files remain the source of truth and are never overwritten.' : ghPackage.importedAt ? `Current · imported ${stAgo(ghPackage.importedAt)}` : 'Imports into Lore’s local index without creating or overwriting repository files.' }, /*#__PURE__*/
+
+    React.createElement(StButton, { variant: ghPackage.needsImport ? 'primary' : 'secondary', size: "sm", icon: "download", onClick: stImportGithubPackage, disabled: !!ghPackageBusy },
+    ghPackageBusy === 'import' ? 'Importing…' : ghPackage.needsImport ? 'Import update' : 'Import'
+    )
+    ),
+
+    ghPackage && ghPackage.importedAt && /*#__PURE__*/
+    React.createElement(Row, { label: "Import updates on launch", hint: "After you trust a package once, Lore can detect a changed content digest after git pull and import the revision automatically." }, /*#__PURE__*/
+    React.createElement(StSwitch, { checked: !!ghPackage.autoImport, onChange: stSetGithubAutoImport })
+    ),
+
+    ghPackageResult && /*#__PURE__*/
+    React.createElement("div", { style: { padding: '10px 16px 12px', borderTop: '1px solid var(--divider)', fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.6, color: ghPackageResult.kind === 'error' ? 'var(--clay-400)' : 'var(--text-muted)' } },
+    ghPackageResult.kind === 'export' && `${ghPackageResult.changed ? 'Package updated' : 'Package already current'} · ${ghPackageResult.noteCount || 0} shared · ${ghPackageResult.redacted || 0} redacted · ${(ghPackageResult.skipped || []).length} excluded`,
+    ghPackageResult.kind === 'import' && `Import complete · ${ghPackageResult.imported || 0} added · ${ghPackageResult.local || 0} already local · ${ghPackageResult.unchanged || 0} unchanged`,
+    ghPackageResult.kind === 'error' && `GitHub package: ${ghPackageResult.error}`
     )
 
     ), /*#__PURE__*/

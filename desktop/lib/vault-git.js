@@ -43,7 +43,12 @@ function hasRepo(root) {
   return fs.existsSync(path.join(root, '.git'));
 }
 
-const GITIGNORE_LINES = ['.lore', '.obsidian/workspace*', '*.lore-tmp', '.lore-backup-manifest.json'];
+// Keep the local breadcrumb private while allowing the explicit portable package
+// to be committed. The negation is inert until `.lore/package.json` exists.
+const GITIGNORE_LINES = [
+  '!.lore/', '.lore/*', '!.lore/package.json',
+  '.obsidian/workspace*', '*.lore-tmp', '.lore-backup-manifest.json',
+];
 
 async function ensureRepo(root) {
   const existed = hasRepo(root);

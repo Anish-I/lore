@@ -315,11 +315,19 @@ contextBridge.exposeInMainWorld('lore', {
     undo:    (id) => ipcRenderer.invoke('sections:undo', id),
   },
 
-  // --- libraries discovered via `.lore` manifests ---
+  // --- libraries discovered via `.lore/manifest.json` ---
   // discovered() → [{root, name, tenant, indexed, topics, tags, lastWork}] for
-  // every folder (configured roots + immediate subfolders) carrying a .lore file.
+  // every folder (configured roots + immediate subfolders) carrying a manifest.
   libraries: {
     discovered: () => ipcRenderer.invoke('libraries:discovered'),
+  },
+
+  // --- portable GitHub `.lore/package.json` ---
+  githubPackage: {
+    status:        ()          => ipcRenderer.invoke('github-package:status'),
+    export:        ()          => ipcRenderer.invoke('github-package:export'),
+    import:        ()          => ipcRenderer.invoke('github-package:import'),
+    setAutoImport: (enabled)   => ipcRenderer.invoke('github-package:set-auto-import', enabled),
   },
 
   // --- upkeep ---
