@@ -4,7 +4,19 @@
 on top of the ceiling/clustering gap docs. All artifacts in
 `eval/history/scenario-*-2026-07-20.json`; datasets regenerable via
 `eval/scenarios/gen_scenario.py` (seed 7); harness `eval/scenarios/run_scenario_eval.py`.
-**Authors:** Claude (Fable 5); Sol (Codex) authored the generators and reviews this doc.
+**Authors:** Claude (Fable 5); Sol (Codex) authored the generators and reviewed this
+doc (task `codex-1784582547-45bb` — approved with wording guards, applied).
+
+## Decisions (read this first)
+
+1. **Topic-merge v2 ACCEPTED** — mutual-NN gates hold at precision 1.000 / 0 false
+   on all three domains (committed `e340b6e`).
+2. **G2/G3 flags STAY OFF** — metric-neutral on synthetic corpora; their gate is
+   G1 real-vault buckets + LoCoMo, not this suite.
+3. **G9 experiment FILED** — intent-conditional superseded penalty (evidence in
+   finding 3; leading mechanism, not proven root cause).
+4. **Next production work** — title-index TTL cache in `index_document`, then the
+   fresh-store delete path (the two measured ingest pathologies).
 
 ## What was run
 
@@ -46,11 +58,13 @@ supersedes edges formed by the relations extractor at index time).
    (learned fusion) and G6-class tie-breaking, NOT to first-stage work.
 3. **Office temporal r@1 = 0.50 with r@5 = 1.0** (both versions always
    retrieved, wrong one first half the time; all 20 supersedes edges verified
-   present). Leading mechanism, now G9 evidence: the `superseded ×0.80`
-   penalty is applied UNCONDITIONALLY — a "what was X before…" query penalizes
-   exactly the version it asks for. Proposed experiment: make the penalty
-   conditional on temporal intent (skip when intent=past), gated on the
-   temporal bucket.
+   present). Leading mechanism — not proven root cause — now G9 evidence: the
+   `superseded ×0.80` penalty is applied UNCONDITIONALLY — a "what was X
+   before…" query penalizes exactly the version it asks for. Residual
+   confound (Sol): office's clone-heavy subject strings may blur version cues
+   independent of the penalty. The experiment discriminates cleanly: skip the
+   penalty when `temporal_intent=past`; the temporal bucket must move while
+   latest-state behavior stays stable.
 4. **G2/G3 moved nothing on synthetic data** — all four ablation variants are
    metric-identical (townclerk qp1: −0.5pp = one query). Read: (a) neither fill
    regresses anything (required before any default-flip), (b) with corpus-unique
@@ -92,6 +106,13 @@ Under auto-apply sections (now default-ON), merge precision is the difference
 between duplicate *proposals* and wrongly merged *folders* — 1.000/≤5% gate
 holds on all three domains, but C2 (canonical vocabulary) remains the
 root-cause fix; v2 is the repair loop.
+
+Known v2 failure modes to monitor (Sol, review): a tiny true fragment whose
+centroid is dominated by one large note can NN to a big adjacent hub, and in
+3+-way families two satellites can contend for the same anchor while the
+anchor reciprocates only one. No min-size guard yet — it would discard
+legitimate tiny fragments; if observed in practice, the fallback is
+reciprocal top-k with stricter unique-evidence requirements.
 
 ## Systems findings (the stress suite's biggest wins)
 
