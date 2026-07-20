@@ -223,5 +223,20 @@
       "topics": 96
     },
     "merge_seconds": 30.7
+  },
+  "clustering_v2": {
+    "algorithm": "mutual-NN + margin 0.02 + distinctive-token evidence + floor_distinct 0.94",
+    "gold_topics": 34,
+    "variant_topics": 135,
+    "merge_proposals": 21,
+    "false_merges": 0,
+    "merge_precision": 1.0,
+    "before": {
+      "pairwise_f1": 0.542
+    },
+    "after": {
+      "pairwise_f1": 0.633,
+      "topics": 114
+    }
   }
 }

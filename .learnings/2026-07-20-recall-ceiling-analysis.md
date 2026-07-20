@@ -35,12 +35,16 @@
    run, an undo that returns state to 'proposed' is re-applied next run — undo must
    transition to a sticky terminal state or the system fights the user.
 
-7. **Embedded-Qdrant bulk indexing is quadratic via `delete_note`** — measured on
-   the insurance 5000-note run: 18 → 8 → 6 notes/s at 500/1000/1500 notes. Every
-   `index_document` calls `qdrant_store.delete_note` (unindexed payload scan in
-   local mode, O(collection)); on a FRESH store it deletes nothing and can be
-   skipped (harness `fresh_store=True` monkeypatch). This is live G12 evidence:
-   the desktop vault pays this scan on every re-index and every watcher update.
+7. **Bulk indexing had TWO quadratic terms, confirmed by elimination** on the
+   insurance 5000-note runs: (a) `qdrant_store.delete_note` — unindexed payload
+   scan per note in embedded local mode (18→6 notes/s); after bypassing it the
+   curve STILL bent (21→5 notes/s), exposing (b) `index.py:350` rebuilding
+   `relations.build_title_index` per ingested note — one compiled regex per
+   existing title, all run over each body: ~25M compiles at 5k notes. With both
+   bypassed, throughput is FLAT at 21-22 notes/s through 3000+ notes (linear).
+   Production fix candidates: fresh-store fast path for (a); api.py-style TTL
+   title-index cache shared into index_document for (b). Live G12 evidence —
+   the desktop vault pays both on every bulk reconcile.
 
 8. **Token-economics reality check (progressive disclosure #5)**: compact ID-first
    search index beats FULL-NOTE injection 2.7× (search+hydrate-one: 2.0×), but is
