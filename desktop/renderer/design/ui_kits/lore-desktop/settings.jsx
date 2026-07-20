@@ -74,6 +74,95 @@ function stAgo(iso) {
   return `${Math.round(s / 86400)}d ago`;
 }
 
+function stInt(value, fallback = 0) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function stFmtInt(value) {
+  return stInt(value, 0).toLocaleString();
+}
+
+function stLearnTodayRuns(status) {
+  return stInt(
+    status && (
+      status.today_runs ?? status.todays_runs ?? status.runs_today ?? status.todayRuns
+      ?? (status.today && (status.today.runs ?? status.today.count))
+    ),
+    0,
+  );
+}
+
+function stLearnEstTokens(status) {
+  return stInt(
+    status && (
+      status.est_tokens ?? status.estimated_tokens ?? status.tokens_est ?? status.today_est_tokens
+      ?? (status.today && (status.today.est_tokens ?? status.today.estimated_tokens))
+    ),
+    0,
+  );
+}
+
+function stLearnRecentRuns(status) {
+  if (!status || typeof status !== 'object') return [];
+  const runs = status.runs || status.recent_runs || status.recentRuns || status.last_runs;
+  return Array.isArray(runs) ? runs : [];
+}
+
+function stLearnEnabled(status) {
+  if (!status || typeof status !== 'object') return null;
+  if (typeof status.enabled === 'boolean') return status.enabled;
+  const raw = status.status || status.state || status.mode;
+  if (typeof raw !== 'string') return null;
+  if (/disabled|off|unavailable/i.test(raw)) return false;
+  if (/enabled|ready|active|ok|on/i.test(raw)) return true;
+  return null;
+}
+
+function stLearnPendingSkills(pending) {
+  if (!pending || typeof pending !== 'object') return [];
+  const skills = pending.skills || pending.pending || pending.items || pending.results;
+  return Array.isArray(skills) ? skills : [];
+}
+
+function stLearnPendingCount(status, pending) {
+  if (status && typeof status === 'object') {
+    const n = status.pending_count ?? status.pendingCount ?? status.skills_pending;
+    if (Number.isFinite(Number(n))) return Number(n);
+  }
+  return stLearnPendingSkills(pending).length;
+}
+
+function stLearnBudgetNotice(status) {
+  const recent = stLearnRecentRuns(status);
+  const budgetRun = recent.find((run) => String(run && (run.skip_reason || run.skipReason || '')).toLowerCase() === 'budget');
+  if (budgetRun) return 'Daily Learn budget reached; new reviews are being skipped until tomorrow.';
+  const msg = status && (status.notice || status.warning || status.message);
+  return typeof msg === 'string' ? msg : '';
+}
+
+function stLearnDiffText(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const direct = payload.diff || payload.patch || payload.unified_diff || payload.unifiedDiff;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  const pendingBody = payload.pending_body || payload.pendingBody || payload.body || payload.proposed_body || payload.proposedBody;
+  const currentBody = payload.current_body || payload.currentBody || payload.active_body || payload.activeBody;
+  if (typeof pendingBody === 'string' && typeof currentBody === 'string') {
+    return `--- current\n${currentBody}\n\n--- pending\n${pendingBody}`;
+  }
+  if (typeof pendingBody === 'string' && pendingBody.trim()) return pendingBody.trim();
+  return '';
+}
+
+function stLearnSkillName(skill) {
+  return String((skill && (skill.name || skill.id || skill.skill_name)) || '').trim();
+}
+
+function stLearnSkillSummary(skill) {
+  if (!skill || typeof skill !== 'object') return '';
+  return String(skill.description || skill.summary || skill.reason || skill.note || '').trim();
+}
+
 function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSetup }) {
   const s = {
     account: {},
@@ -114,6 +203,24 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const [autoFileObvious, setAutoFileObvious] = React.useState(false); // default OFF; only explicit true enables
   const [retrieval, setRetrieval] = React.useState(null); // {embeddingModel, reranker, contextualRetrieval, localFallback} | {error} | null while loading
   const [importResult, setImportResult] = React.useState(null); // {ok, applied, ignored} | {ok:false, reason}
+  const [learnStatus, setLearnStatus] = React.useState(null);
+  const [learnPending, setLearnPending] = React.useState(null);
+  const [learnError, setLearnError] = React.useState('');
+  const [learnPendingOpen, setLearnPendingOpen] = React.useState(false);
+  const [learnSelected, setLearnSelected] = React.useState('');
+  const [learnDiffs, setLearnDiffs] = React.useState({});
+  const [learnDiffLoading, setLearnDiffLoading] = React.useState('');
+  const [learnActionBusy, setLearnActionBusy] = React.useState('');
+  const [personalDocs, setPersonalDocs] = React.useState([]);
+  const [personalDrafts, setPersonalDrafts] = React.useState({ user: '', memory: '' });
+  const [personalBusy, setPersonalBusy] = React.useState('');
+  const [personalError, setPersonalError] = React.useState('');
+  const [personalNotice, setPersonalNotice] = React.useState('');
+  const [personalHistory, setPersonalHistory] = React.useState({ kind: '', versions: [] });
+  const [pastOpen, setPastOpen] = React.useState(false);
+  const [pastSessions, setPastSessions] = React.useState([]);
+  const [pastQuery, setPastQuery] = React.useState('');
+  const [pastBusy, setPastBusy] = React.useState(false);
 
   // Lore CLI install state
   const [cliStatus, setCliStatus] = React.useState(null); // {installed, path, onPath, hint?} | null while checking
@@ -127,6 +234,9 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const [upkeepStatusLine, setUpkeepStatusLine] = React.useState('');
   // Automatic organization knobs: propose Sections when N+ related notes cluster.
   const [autoClassify, setAutoClassify] = React.useState(!!(config && config.autoClassify));
+  // Auto-apply (default ON): detected Sections create their folder and move notes
+  // immediately — no Enable click. Off = classic propose→review flow.
+  const [autoApplySections, setAutoApplySections] = React.useState(!(config && config.autoApplySections === false));
   const [sectionThreshold, setSectionThreshold] = React.useState((config && config.sectionThreshold) || 5);
   const [lastTidied, setLastTidied] = React.useState((config && config.upkeepLastRun) || null);
   // Folder read-scope: which top-level folders Lore is allowed to read/index.
@@ -173,6 +283,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           setAutoFileObvious(!!(c && c.autoFileObvious === true));
           setUpkeepAuto(!(c && c.upkeepAuto === false));
           setAutoClassify(!!(c && c.autoClassify === true));
+          setAutoApplySections(!(c && c.autoApplySections === false));
           setSectionThreshold((c && c.sectionThreshold) || 5);
           setLastTidied((c && c.upkeepLastRun) || null);
           setExcludes((c && c.excludes) || []);
@@ -201,6 +312,241 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
       window.lore.backup.status().then((b) => setBackupStatus(b || null)).catch(() => {});
     }
   }, []);
+
+  const stRefreshLearn = async (tenantOverride) => {
+    const tenant = tenantOverride || (cfg && cfg.tenant) || '';
+    if (!tenant) {
+      setLearnStatus(null);
+      setLearnPending(null);
+      setLearnError('');
+      setLearnPendingOpen(false);
+      setLearnSelected('');
+      return;
+    }
+    if (!(window.lore && window.lore.learn)) {
+      setLearnStatus(null);
+      setLearnPending(null);
+      setLearnError('Learn review bridge unavailable in this build.');
+      setLearnPendingOpen(false);
+      setLearnSelected('');
+      return;
+    }
+    setLearnError('');
+    const [statusRes, pendingRes] = await Promise.allSettled([
+      window.lore.learn.status(tenant, cfg && cfg.scope),
+      window.lore.learn.pending(tenant, cfg && cfg.scope),
+    ]);
+    if (statusRes.status === 'fulfilled') setLearnStatus(statusRes.value || {});
+    else setLearnStatus(null);
+    if (pendingRes.status === 'fulfilled') {
+      const nextPending = pendingRes.value || {};
+      const nextSkills = stLearnPendingSkills(nextPending);
+      setLearnPending(nextPending);
+      if (learnSelected && !nextSkills.some((skill) => stLearnSkillName(skill) === learnSelected)) {
+        setLearnSelected('');
+      }
+      if (!nextSkills.length) setLearnPendingOpen(false);
+    } else {
+      setLearnPending(null);
+    }
+    const fail = [statusRes, pendingRes].find((res) => res.status === 'rejected');
+    if (fail) {
+      const msg = fail.reason && (fail.reason.message || fail.reason.detail || String(fail.reason));
+      setLearnError(msg || 'Lore Learn is unavailable.');
+    }
+  };
+
+  const stRefreshPersonal = async (identity = cfg) => {
+    if (!(identity && identity.tenant && identity.owner && identity.scope
+      && window.lore && window.lore.personalMemory)) {
+      setPersonalDocs([]);
+      setPersonalDrafts({ user: '', memory: '' });
+      return;
+    }
+    setPersonalError('');
+    try {
+      const result = await window.lore.personalMemory.list(
+        identity.tenant, identity.owner, identity.scope);
+      const docs = (result && result.documents) || [];
+      const drafts = { user: '', memory: '' };
+      docs.forEach((doc) => { if (doc && drafts[doc.kind] !== undefined) drafts[doc.kind] = doc.text || ''; });
+      setPersonalDocs(docs);
+      setPersonalDrafts(drafts);
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+  };
+
+  const stSavePersonal = async (kind) => {
+    if (!(cfg && window.lore && window.lore.personalMemory)) return;
+    setPersonalBusy(kind);
+    setPersonalError('');
+    setPersonalNotice('');
+    try {
+      await window.lore.personalMemory.replace(
+        kind, personalDrafts[kind], cfg.tenant, cfg.owner, cfg.scope);
+      await stRefreshPersonal(cfg);
+      setPersonalHistory({ kind: '', versions: [] });
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+    setPersonalBusy('');
+  };
+
+  const stUndoPersonal = async (kind) => {
+    if (!(cfg && window.lore && window.lore.personalMemory)) return;
+    setPersonalBusy(`undo:${kind}`);
+    setPersonalError('');
+    setPersonalNotice('');
+    try {
+      const result = await window.lore.personalMemory.history(
+        kind, cfg.tenant, cfg.owner, cfg.scope);
+      const versions = (result && result.versions) || [];
+      if (versions.length < 2) throw new Error('No earlier version to restore.');
+      await window.lore.personalMemory.rollback(
+        kind, versions[1].version, cfg.tenant, cfg.owner, cfg.scope);
+      await stRefreshPersonal(cfg);
+      setPersonalHistory({ kind: '', versions: [] });
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+    setPersonalBusy('');
+  };
+
+  const stForgetPersonal = async (kind) => {
+    if (!(cfg && window.lore && window.lore.personalMemory)) return;
+    setPersonalBusy(`forget:${kind}`);
+    setPersonalError('');
+    setPersonalNotice('');
+    try {
+      await window.lore.personalMemory.forget(
+        kind, cfg.tenant, cfg.owner, cfg.scope);
+      await stRefreshPersonal(cfg);
+      setPersonalHistory({ kind: '', versions: [] });
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+    setPersonalBusy('');
+  };
+
+  const stShowPersonalHistory = async (kind) => {
+    if (!(cfg && window.lore && window.lore.personalMemory)) return;
+    if (personalHistory.kind === kind) {
+      setPersonalHistory({ kind: '', versions: [] });
+      return;
+    }
+    setPersonalBusy(`history:${kind}`);
+    setPersonalError('');
+    setPersonalNotice('');
+    try {
+      const result = await window.lore.personalMemory.history(
+        kind, cfg.tenant, cfg.owner, cfg.scope);
+      setPersonalHistory({ kind, versions: (result && result.versions) || [] });
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+    setPersonalBusy('');
+  };
+
+  const stRestorePersonal = async (kind, version) => {
+    if (!(cfg && window.lore && window.lore.personalMemory)) return;
+    setPersonalBusy(`restore:${kind}:${version}`);
+    setPersonalError('');
+    setPersonalNotice('');
+    try {
+      await window.lore.personalMemory.rollback(
+        kind, version, cfg.tenant, cfg.owner, cfg.scope);
+      await stRefreshPersonal(cfg);
+      setPersonalHistory({ kind: '', versions: [] });
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+    setPersonalBusy('');
+  };
+
+  const stExportPersonal = async () => {
+    if (!(cfg && window.lore && window.lore.personalMemory)) return;
+    setPersonalBusy('export');
+    setPersonalError('');
+    setPersonalNotice('');
+    try {
+      const result = await window.lore.personalMemory.export(
+        cfg.tenant, cfg.owner, cfg.scope);
+      if (result && result.ok) setPersonalNotice('Export complete.');
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+    setPersonalBusy('');
+  };
+
+  const stLoadPast = async (mode = 'browse') => {
+    if (!(cfg && cfg.tenant && cfg.scope && window.lore && window.lore.sessions)) return;
+    setPastBusy(true);
+    try {
+      const result = await window.lore.sessions.recall(mode, {
+        tenant: cfg.tenant, scopes: [cfg.scope], query: pastQuery || null, limit: 8,
+      });
+      setPastSessions((result && result.sessions) || []);
+      setPastOpen(true);
+    } catch (e) {
+      setPersonalError(String((e && e.message) || e));
+    }
+    setPastBusy(false);
+  };
+
+  React.useEffect(() => {
+    const tenant = (cfg && cfg.tenant) || '';
+    if (!tenant) {
+      setLearnStatus(null);
+      setLearnPending(null);
+      setLearnError('');
+      setLearnPendingOpen(false);
+      setLearnSelected('');
+      return;
+    }
+    stRefreshLearn(tenant).catch((e) => setLearnError(String((e && e.message) || e)));
+  }, [cfg ? cfg.tenant : '']);
+
+  React.useEffect(() => {
+    stRefreshPersonal(cfg);
+  }, [cfg ? `${cfg.tenant || ''}:${cfg.owner || ''}:${cfg.scope || ''}` : '']);
+
+  const stOpenLearnReview = async (skill) => {
+    const name = stLearnSkillName(skill);
+    if (!name || !(window.lore && window.lore.learn)) return;
+    setLearnPendingOpen(true);
+    setLearnSelected(name);
+    if (learnDiffs[name]) return;
+    setLearnDiffLoading(name);
+    try {
+      const diff = await window.lore.learn.diff(name, cfg && cfg.tenant, cfg && cfg.scope);
+      setLearnDiffs((prev) => ({ ...prev, [name]: diff || {} }));
+    } catch (e) {
+      setLearnDiffs((prev) => ({ ...prev, [name]: { error: String((e && e.message) || e) } }));
+    }
+    setLearnDiffLoading('');
+  };
+
+  const stResolveLearn = async (skill, action) => {
+    const name = typeof skill === 'string' ? skill : stLearnSkillName(skill);
+    if (!name || !(window.lore && window.lore.learn) || !cfg || !cfg.tenant) return;
+    setLearnActionBusy(`${action}:${name}`);
+    setLearnError('');
+    try {
+      if (action === 'approve') await window.lore.learn.approve(name, cfg.tenant, cfg.scope, cfg.owner);
+      else await window.lore.learn.reject(name, cfg.tenant, cfg.scope, cfg.owner);
+      setLearnDiffs((prev) => {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      });
+      if (learnSelected === name) setLearnSelected('');
+      await stRefreshLearn(cfg.tenant);
+    } catch (e) {
+      setLearnError(String((e && e.message) || e));
+    }
+    setLearnActionBusy('');
+  };
 
   const stSignIn = async () => {
     if (!window.lore || !window.lore.auth) return;
@@ -291,6 +637,13 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     setAutoClassify(v);
     if (window.lore && window.lore.config && window.lore.config.set) {
       window.lore.config.set({ autoClassify: !!v }).catch(() => {});
+    }
+  };
+
+  const stSetAutoApplySections = (v) => {
+    setAutoApplySections(v);
+    if (window.lore && window.lore.config && window.lore.config.set) {
+      window.lore.config.set({ autoApplySections: !!v }).catch(() => {});
     }
   };
 
@@ -456,6 +809,31 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     && authUser.scopes.some((s) => /enterprise|company/i.test(String(s))))
     ? 'Enterprise' : 'Personal — on this computer';
   const displayNone = (v) => stText(v, 'None');
+  const learnPendingSkills = stLearnPendingSkills(learnPending);
+  const learnPendingCount = stLearnPendingCount(learnStatus, learnPending);
+  const learnTodayRuns = stLearnTodayRuns(learnStatus);
+  const learnEstTokens = stLearnEstTokens(learnStatus);
+  const learnEnabled = stLearnEnabled(learnStatus);
+  const learnNotice = stLearnBudgetNotice(learnStatus);
+  const learnSelectedDiff = learnSelected ? learnDiffs[learnSelected] : null;
+  const learnSelectedText = stLearnDiffText(learnSelectedDiff);
+  const learnSelectedSummary = learnPendingSkills.find((skill) => stLearnSkillName(skill) === learnSelected) || null;
+  const learnConfigured = Boolean(cfg && cfg.tenant);
+  const learnTone = !learnConfigured ? 'neutral'
+    : learnError ? 'neutral'
+      : learnEnabled === false ? 'neutral'
+        : learnEnabled === true ? 'success'
+          : 'info';
+  const learnLabel = !learnConfigured ? 'configure account'
+    : learnError ? 'unavailable'
+      : learnEnabled === false ? 'disabled'
+        : learnEnabled === true ? 'enabled'
+          : 'checking';
+  const personalConfigured = Boolean(cfg && cfg.tenant && cfg.owner && cfg.scope);
+  const personalVersion = (kind) => {
+    const doc = personalDocs.find((item) => item && item.kind === kind);
+    return doc ? Number(doc.version || 0) : 0;
+  };
 
   return (
     <div style={stS.wrap}>
@@ -562,6 +940,116 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           )}
         </Section>
 
+        <Section icon="user-round" title="What Lore knows">
+          <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 16px', borderBottom: '1px solid var(--divider)' }}>
+            <StButton variant="secondary" size="sm" icon="download" disabled={!personalConfigured || !!personalBusy} onClick={stExportPersonal}>
+              {personalBusy === 'export' ? 'Exporting...' : 'Export'}
+            </StButton>
+          </div>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--divider)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>About you</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-subtle)', marginTop: 2 }}>Preferences and facts Lore should use when helping you.</div>
+              </div>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                {(personalDrafts.user || '').length}/1375
+              </span>
+            </div>
+            <textarea
+              value={personalDrafts.user}
+              maxLength={1375}
+              disabled={!personalConfigured || personalBusy === 'user'}
+              onChange={(e) => setPersonalDrafts((prev) => ({ ...prev, user: e.target.value }))}
+              placeholder="For example: I prefer concise answers with verification details."
+              style={{ width: '100%', minHeight: 78, resize: 'vertical', boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', padding: '9px 10px', fontFamily: 'var(--font-sans)', fontSize: 12.5, lineHeight: 1.5 }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}>
+              {personalVersion('user') > 0 && <StButton variant="ghost" size="sm" icon="history" disabled={!!personalBusy} onClick={() => stShowPersonalHistory('user')}>History</StButton>}
+              {personalVersion('user') > 0 && <StButton variant="ghost" size="sm" disabled={!!personalBusy} onClick={() => stForgetPersonal('user')}>Forget</StButton>}
+              {personalVersion('user') > 1 && <StButton variant="ghost" size="sm" disabled={!!personalBusy} onClick={() => stUndoPersonal('user')}>Undo last change</StButton>}
+              <StButton variant="primary" size="sm" disabled={!personalConfigured || !!personalBusy || !(personalDrafts.user || '').trim()} onClick={() => stSavePersonal('user')}>
+                {personalBusy === 'user' ? 'Saving...' : 'Save'}
+              </StButton>
+            </div>
+          </div>
+          <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--divider)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, marginBottom: 6 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>Working context</div>
+                <div style={{ fontSize: 11.5, color: 'var(--text-subtle)', marginTop: 2 }}>Current priorities and context to carry into future conversations.</div>
+              </div>
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                {(personalDrafts.memory || '').length}/2200
+              </span>
+            </div>
+            <textarea
+              value={personalDrafts.memory}
+              maxLength={2200}
+              disabled={!personalConfigured || personalBusy === 'memory'}
+              onChange={(e) => setPersonalDrafts((prev) => ({ ...prev, memory: e.target.value }))}
+              placeholder="For example: We are preparing the desktop beta and testing upgrade paths."
+              style={{ width: '100%', minHeight: 92, resize: 'vertical', boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', padding: '9px 10px', fontFamily: 'var(--font-sans)', fontSize: 12.5, lineHeight: 1.5 }}
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6, marginTop: 8 }}>
+              {personalVersion('memory') > 0 && <StButton variant="ghost" size="sm" icon="history" disabled={!!personalBusy} onClick={() => stShowPersonalHistory('memory')}>History</StButton>}
+              {personalVersion('memory') > 0 && <StButton variant="ghost" size="sm" disabled={!!personalBusy} onClick={() => stForgetPersonal('memory')}>Forget</StButton>}
+              {personalVersion('memory') > 1 && <StButton variant="ghost" size="sm" disabled={!!personalBusy} onClick={() => stUndoPersonal('memory')}>Undo last change</StButton>}
+              <StButton variant="primary" size="sm" disabled={!personalConfigured || !!personalBusy || !(personalDrafts.memory || '').trim()} onClick={() => stSavePersonal('memory')}>
+                {personalBusy === 'memory' ? 'Saving...' : 'Save'}
+              </StButton>
+            </div>
+          </div>
+          {!!personalHistory.kind && (
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--divider)' }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)', marginBottom: 4 }}>
+                {personalHistory.kind === 'user' ? 'About you history' : 'Working context history'}
+              </div>
+              {personalHistory.versions.map((version, index) => (
+                <div key={version.version} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '7px 0', borderTop: index ? '1px solid var(--divider)' : 'none' }}>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                      Version {version.version} · {stAgo(version.created_at) || 'saved'} · {version.origin || 'user'}
+                    </div>
+                    <div style={{ marginTop: 2, fontSize: 11.5, color: 'var(--text-subtle)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {version.text || ''}
+                    </div>
+                  </div>
+                  {index > 0 && <StButton variant="secondary" size="sm" disabled={!!personalBusy} onClick={() => stRestorePersonal(personalHistory.kind, version.version)}>Restore</StButton>}
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ padding: '12px 16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <input
+                value={pastQuery}
+                onChange={(e) => setPastQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') stLoadPast(pastQuery.trim() ? 'discovery' : 'browse'); }}
+                placeholder="Find past work"
+                style={{ flex: 1, minWidth: 0, height: 32, boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-inset)', color: 'var(--text-body)', padding: '0 9px', fontFamily: 'var(--font-sans)', fontSize: 12.5 }}
+              />
+              <StButton variant="secondary" size="sm" icon="search" disabled={!personalConfigured || pastBusy} onClick={() => stLoadPast(pastQuery.trim() ? 'discovery' : 'browse')}>
+                {pastBusy ? 'Searching...' : 'Search'}
+              </StButton>
+            </div>
+            {pastOpen && (
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column' }}>
+                {!pastSessions.length && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>No matching past work.</div>}
+                {pastSessions.map((session, index) => (
+                  <div key={`${session.note_id || 'session'}:${index}`} style={{ padding: '8px 0', borderTop: index ? '1px solid var(--divider)' : 'none' }}>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)' }}>{session.title || 'Past conversation'}</div>
+                    <div style={{ marginTop: 2, fontSize: 11.5, lineHeight: 1.45, color: 'var(--text-subtle)' }}>{session.excerpt || session.text || ''}</div>
+                    {(session.why || session.heading_path) && <div style={{ marginTop: 3, fontSize: 10.5, color: 'var(--text-faint)' }}>{[session.why, session.heading_path].filter(Boolean).join(' · ')}</div>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {personalNotice && <div style={{ padding: '0 16px 10px', color: 'var(--jade-400)', fontSize: 12 }}>{personalNotice}</div>}
+          {personalError && <div style={{ padding: '0 16px 12px', color: 'var(--clay-400)', fontSize: 12 }}>{personalError}</div>}
+        </Section>
+
         <Section icon="cpu" title="Remembering">
           <Row label="Remember changes automatically" hint="Refresh a note's memory automatically when its file changes on disk. Off: refresh manually (right-click a note → Refresh).">
             <StSwitch checked={autoIndexOnSave} onChange={stSetAutoIndex} />
@@ -569,6 +1057,117 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           <Row label="Auto-file obvious notes" hint="While tidying, a note that unambiguously belongs to one of your existing sections is moved into that folder automatically — undoable, logged to the library worklog. Off (default): every move stays a suggestion you approve." last>
             <StSwitch checked={autoFileObvious} onChange={stSetAutoFile} />
           </Row>
+        </Section>
+
+        <Section icon="sparkles" title="Lore Learn">
+          <Row label="Status" hint={learnConfigured ? 'Post-session review worker for staged skill learning.' : 'Configure your library identity first so Learn can scope runs to a tenant.'}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StBadge tone={learnTone} dot={learnEnabled === true}>{learnLabel}</StBadge>
+              <StButton variant="secondary" size="sm" icon="refresh-cw" disabled={!learnConfigured} onClick={() => stRefreshLearn(cfg && cfg.tenant)}>
+                Refresh
+              </StButton>
+            </div>
+          </Row>
+          <Row label="Today's runs">
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stFmtInt(learnTodayRuns)}</span>
+          </Row>
+          <Row label="Estimated tokens">
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-muted)' }}>{stFmtInt(learnEstTokens)}</span>
+          </Row>
+          <Row label="Pending skills" hint={learnPendingCount ? 'Pending Lore-created skills waiting for human review.' : 'No staged skills waiting for review.'} last={!learnPendingOpen && !learnNotice && !learnError}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StBadge tone={learnPendingCount ? 'info' : 'neutral'}>{stFmtInt(learnPendingCount)}</StBadge>
+              <StButton variant="secondary" size="sm" disabled={!learnConfigured} onClick={() => setLearnPendingOpen((open) => !open)}>
+                {learnPendingOpen ? 'Hide review' : 'Review'}
+              </StButton>
+            </div>
+          </Row>
+          {(learnNotice || learnError || learnPendingOpen) && (
+            <div style={{ padding: '10px 16px 14px', borderTop: '1px solid var(--divider)', background: 'var(--surface-base)' }}>
+              {learnNotice && (
+                <div style={{ marginBottom: learnError || learnPendingOpen ? 10 : 0, fontSize: 12, color: 'var(--text-subtle)', lineHeight: 1.5 }}>
+                  {learnNotice}
+                </div>
+              )}
+              {learnError && (
+                <div style={{ marginBottom: learnPendingOpen ? 10 : 0, fontSize: 12, color: 'var(--clay-400)', lineHeight: 1.5 }}>
+                  {learnError}
+                </div>
+              )}
+              {learnPendingOpen && (
+                <React.Fragment>
+                  {!learnPendingSkills.length && (
+                    <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>No pending skill proposals.</div>
+                  )}
+                  {learnPendingSkills.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                      {learnPendingSkills.map((skill) => {
+                        const name = stLearnSkillName(skill);
+                        const summary = stLearnSkillSummary(skill);
+                        const selected = learnSelected === name;
+                        const diffBusy = learnDiffLoading === name;
+                        const approveBusy = learnActionBusy === `approve:${name}`;
+                        const rejectBusy = learnActionBusy === `reject:${name}`;
+                        const meta = [];
+                        if (skill.version || skill.pending_version) meta.push(`v${skill.pending_version || skill.version}`);
+                        if (skill.updated_at || skill.created_at) meta.push(stAgo(skill.updated_at || skill.created_at));
+                        return (
+                          <div key={name} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', background: 'var(--surface-panel)' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 12px' }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text-strong)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {name}
+                                </div>
+                                {summary && (
+                                  <div style={{ marginTop: 2, fontSize: 11.5, color: 'var(--text-subtle)', lineHeight: 1.45 }}>
+                                    {summary}
+                                  </div>
+                                )}
+                                {meta.length > 0 && (
+                                  <div style={{ marginTop: 4, fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--text-faint)' }}>
+                                    {meta.join(' · ')}
+                                  </div>
+                                )}
+                              </div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                <StButton variant={selected ? 'primary' : 'secondary'} size="sm" onClick={() => stOpenLearnReview(skill)} disabled={diffBusy || approveBusy || rejectBusy}>
+                                  {diffBusy ? 'Loadingâ€¦' : selected ? 'Reviewing' : 'Review'}
+                                </StButton>
+                                <StButton variant="secondary" size="sm" onClick={() => stResolveLearn(skill, 'approve')} disabled={approveBusy || rejectBusy || diffBusy}>
+                                  {approveBusy ? 'Approvingâ€¦' : 'Approve'}
+                                </StButton>
+                                <StButton variant="ghost" size="sm" onClick={() => stResolveLearn(skill, 'reject')} disabled={approveBusy || rejectBusy || diffBusy}>
+                                  {rejectBusy ? 'Rejectingâ€¦' : 'Reject'}
+                                </StButton>
+                              </div>
+                            </div>
+                            {selected && (
+                              <div style={{ borderTop: '1px solid var(--divider)', background: 'var(--surface-inset)', padding: '10px 12px' }}>
+                                <div style={{ fontSize: 11, color: 'var(--text-faint)', marginBottom: 6 }}>
+                                  {learnSelectedSummary && stLearnSkillSummary(learnSelectedSummary) ? 'Pending diff' : 'Pending body'}
+                                </div>
+                                {learnSelectedDiff && learnSelectedDiff.error && (
+                                  <div style={{ fontSize: 12, color: 'var(--clay-400)' }}>{learnSelectedDiff.error}</div>
+                                )}
+                                {!learnSelectedDiff && diffBusy && (
+                                  <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Loading diffâ€¦</div>
+                                )}
+                                {learnSelectedDiff && !learnSelectedDiff.error && (
+                                  <pre style={{ margin: 0, maxHeight: 260, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.55, color: 'var(--text-muted)' }}>
+                                    {learnSelectedText || 'No diff returned by backend.'}
+                                  </pre>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </React.Fragment>
+              )}
+            </div>
+          )}
         </Section>
 
         <Section icon="refresh-cw" title="Sync & storage">
@@ -764,7 +1363,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
         <Section icon="refresh-ccw" title={
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
             Tidy up & auto-organize
-            {window.LoreHelpHint && <window.LoreHelpHint tip="Lore keeps your library tidy on its own: it folds throwaway date/session notes into durable topic pages, and when enough pages cluster around one subject it proposes grouping them into a Section (a folder/column). You stay in control — proposals only apply when you accept them." />}
+            {window.LoreHelpHint && <window.LoreHelpHint tip="Lore keeps your library tidy on its own: it folds throwaway date/session notes into durable topic pages, and when enough pages cluster around one subject it groups them into a Section (a folder/column). With auto-apply on, Sections happen on their own — Undo always puts everything back. Turn auto-apply off to review each Section first." />}
           </span>
         }>
           <Row label="Tidy automatically" hint={identityReady ? 'Lore folds date/session notes into durable topic notes automatically after each capture.' : 'Finish setup before enabling automatic tidying.'}>
@@ -773,10 +1372,18 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
           <Row label={
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
               Suggest Sections automatically
-              {window.LoreHelpHint && <window.LoreHelpHint tip="When on, Lore watches for pages that cluster around the same subject and proposes a Section (a folder/column) to group them. Nothing moves until you accept the suggestion." />}
+              {window.LoreHelpHint && <window.LoreHelpHint tip="When on, Lore watches for pages that cluster around the same subject and detects a Section (a folder/column) to group them. Whether it applies itself or waits for your OK is the next toggle." />}
             </span>
-          } hint="Propose grouping related pages into Sections (columns) as your library grows.">
+          } hint="Detect groups of related pages as your library grows.">
             <StSwitch checked={autoClassify} onChange={stSetAutoClassify} disabled={!identityReady} />
+          </Row>
+          <Row label={
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+              Apply Sections automatically
+              {window.LoreHelpHint && <window.LoreHelpHint tip="Detected Sections create their folder and move their notes right away — no approval step. Undo on a Section puts every note back where it was and retires that Section for good. Turn this off to review each Section before anything moves." />}
+            </span>
+          } hint="Sections happen on their own; Undo always restores the original layout.">
+            <StSwitch checked={autoApplySections && autoClassify && identityReady} onChange={stSetAutoApplySections} disabled={!identityReady || !autoClassify} />
           </Row>
           <Row label={`Group into a Section after ${sectionThreshold} related pages`}
             hint="How many pages must cluster around a subject before Lore proposes a Section for them.">

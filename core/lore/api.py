@@ -1,4 +1,4 @@
-import datetime, hashlib, json, os, re, time, uuid
+import datetime, hashlib, json, os, re, threading, time, uuid
 from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, Header
 from fastapi.responses import HTMLResponse
@@ -13,7 +13,7 @@ from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
 from . import auth, mailer, tenancy
-from . import supersede
+from . import supersede, personal_memory, sessions
 
 app = FastAPI(title="Lore Core")
 
@@ -1051,6 +1051,25 @@ class CaptureReq(BaseModel):
     tenant: str
     mode: Optional[str] = None  # reserved for future routing; unused in M1
 
+
+class LearnEnqueueReq(BaseModel):
+    session_id: str
+    transcript_path: str
+    cwd: str = ""
+    scope: str
+    owner: str
+    tenant: str
+
+
+class LearnMutationReq(BaseModel):
+    tenant: str
+    scope: Optional[str] = None
+    owner: Optional[str] = None
+
+
+class LearnRollbackReq(LearnMutationReq):
+    version: int
+
 def _session_note_id(session_id: str) -> str:
     """Stable note_id derived from session_id (SHA-1, first 16 hex chars)."""
     return hashlib.sha1(session_id.encode()).hexdigest()[:16]
@@ -1085,6 +1104,103 @@ def capture(req: CaptureReq, authorization: Optional[str] = Header(default=None)
     _maybe_propose_supersessions(tenant, note_id)
     _maybe_extract_people(tenant, note_id)
     return {"ok": True, "note_id": note_id, "chunks": n}
+
+
+# --- Lore Learn (bounded post-session skill review) -------------------------
+
+@app.post("/learn/enqueue")
+def learn_enqueue(req: LearnEnqueueReq, authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not req.tenant or not req.transcript_path:
+        raise HTTPException(status_code=422, detail="tenant and transcript_path are required")
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant)
+    if _server_mode():
+        raise HTTPException(status_code=403, detail="learn transcript review is local-mode only")
+    result = learn.enqueue(
+        _conn, session_id=req.session_id, transcript_path=req.transcript_path, cwd=req.cwd,
+        scope=scope, owner=owner, tenant=tenant,
+    )
+    if not result.get("duplicate") or result.get("status") in {"failed", "timeout"}:
+        threading.Thread(
+            target=learn.run_queued,
+            args=(result["run_id"], req.transcript_path),
+            name=f"lore-learn-{result['run_id'][:8]}",
+            daemon=True,
+        ).start()
+    return {key: result[key] for key in ("ok", "run_id", "status", "duplicate")}
+
+
+@app.get("/learn/status")
+def learn_status(tenant: Optional[str] = None, scopes: Optional[str] = None,
+                 authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    _authorize_read(authorization, scopes, tenant)
+    return learn.status(_conn, tenant)
+
+
+@app.get("/learn/skills")
+def learn_skills(tenant: Optional[str] = None, pending: bool = True,
+                 scopes: Optional[str] = None,
+                 authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    _authorize_read(authorization, scopes, tenant)
+    return {"skills": learn.list_skills(_conn, tenant, pending_only=pending)}
+
+
+@app.get("/learn/skills/{name}/diff")
+def learn_skill_diff(name: str, tenant: Optional[str] = None, scopes: Optional[str] = None,
+                     authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    _authorize_read(authorization, scopes, tenant)
+    try:
+        return learn.skill_diff(_conn, tenant, name)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _learn_authorized(req: LearnMutationReq, authorization: Optional[str]):
+    if not req.tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return _authorize_write(authorization, req.scope, req.owner, req.tenant)
+
+
+@app.post("/learn/skills/{name}/approve")
+def learn_skill_approve(name: str, req: LearnMutationReq,
+                        authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    _learn_authorized(req, authorization)
+    try:
+        return learn.approve_skill(_conn, req.tenant, name)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/learn/skills/{name}/reject")
+def learn_skill_reject(name: str, req: LearnMutationReq,
+                       authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    _learn_authorized(req, authorization)
+    try:
+        return learn.reject_skill(_conn, req.tenant, name)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/learn/skills/{name}/rollback")
+def learn_skill_rollback(name: str, req: LearnRollbackReq,
+                         authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    _learn_authorized(req, authorization)
+    try:
+        return learn.rollback_skill(_conn, req.tenant, name, req.version)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 # --- URL ingestion (M4) -------------------------------------------------------
 class IngestUrlReq(BaseModel):
@@ -1532,7 +1648,7 @@ def context_pack(req: ContextPackReq, embedder=Depends(get_embedder),
         parts.append(block)
         items.append({
             "note_id": h.note_id, "title": title, "heading_path": h.heading_path,
-            "score": round(h.score, 4), "tokens": t,
+            "score": round(h.score, 4), "tokens": t, "why": h.why,
         })
         if used >= budget:
             break
@@ -1677,6 +1793,9 @@ class SectionApplyReq(BaseModel):
 
 class SectionReq(BaseModel):
     tenant: str
+    # undo only: land in 'dismissed' (sticky) instead of 'proposed'. Auto-apply
+    # mode sets this so an undone section is not re-applied on the next upkeep run.
+    dismiss: bool = False
 
 class SectionCreateReq(BaseModel):
     tenant: str
@@ -1709,6 +1828,181 @@ def sections_apply(section_id: str, req: SectionApplyReq):
         raise HTTPException(status_code=409, detail=str(e))
 
 
+# --- User-owned memory documents -------------------------------------------
+
+class PersonalMemoryWriteReq(BaseModel):
+    tenant: str
+    owner: str
+    scope: str
+    text: str
+    origin_session: Optional[str] = None
+
+
+class PersonalMemoryMutationReq(BaseModel):
+    tenant: str
+    owner: str
+    scope: str
+
+
+class PersonalMemoryRollbackReq(PersonalMemoryMutationReq):
+    version: int
+
+
+@app.get("/learn/memory")
+def personal_memory_list(tenant: str, owner: str, scopes: str,
+                         authorization: Optional[str] = Header(default=None)):
+    user_id, effective_scopes, tenant = _authorize_read(
+        authorization, _as_scope_list(scopes), tenant)
+    effective_owner = user_id or owner
+    if not effective_owner:
+        raise HTTPException(status_code=422, detail="owner is required")
+    return {"documents": personal_memory.list_documents(
+        _conn, tenant, effective_owner, effective_scopes)}
+
+
+@app.get("/learn/memory/export")
+def personal_memory_export(tenant: str, owner: str, scope: str,
+                           authorization: Optional[str] = Header(default=None)):
+    user_id, effective_scopes, tenant = _authorize_read(
+        authorization, [scope], tenant)
+    if scope not in effective_scopes:
+        raise HTTPException(status_code=403, detail="scope not authorized")
+    effective_owner = user_id or owner
+    if not effective_owner:
+        raise HTTPException(status_code=422, detail="owner is required")
+    return personal_memory.export_bundle(
+        _conn, tenant=tenant, owner=effective_owner, scope=scope)
+
+
+@app.put("/learn/memory/{kind}")
+def personal_memory_replace(kind: str, req: PersonalMemoryWriteReq,
+                            authorization: Optional[str] = Header(default=None)):
+    owner, scope, tenant = _authorize_write(
+        authorization, req.scope, req.owner, req.tenant)
+    try:
+        return personal_memory.replace_document(
+            _conn, tenant=tenant, owner=owner, scope=scope, kind=kind,
+            text=req.text, origin_session=req.origin_session,
+            embedder=_local_embedder(), sparse_embedder=_local_sparse())
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/learn/memory/{kind}/history")
+def personal_memory_history(kind: str, tenant: str, owner: str, scope: str,
+                            authorization: Optional[str] = Header(default=None)):
+    user_id, effective_scopes, tenant = _authorize_read(
+        authorization, [scope], tenant)
+    if scope not in effective_scopes:
+        raise HTTPException(status_code=403, detail="scope not authorized")
+    try:
+        versions = personal_memory.history(
+            _conn, tenant=tenant, owner=user_id or owner, scope=scope, kind=kind)
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"versions": versions}
+
+
+@app.post("/learn/memory/{kind}/rollback")
+def personal_memory_rollback(kind: str, req: PersonalMemoryRollbackReq,
+                             authorization: Optional[str] = Header(default=None)):
+    owner, scope, tenant = _authorize_write(
+        authorization, req.scope, req.owner, req.tenant)
+    try:
+        return personal_memory.rollback_document(
+            _conn, tenant=tenant, owner=owner, scope=scope, kind=kind,
+            version=req.version, embedder=_local_embedder(),
+            sparse_embedder=_local_sparse())
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete("/learn/memory/{kind}")
+def personal_memory_delete(kind: str, req: PersonalMemoryMutationReq,
+                           authorization: Optional[str] = Header(default=None)):
+    owner, scope, tenant = _authorize_write(
+        authorization, req.scope, req.owner, req.tenant)
+    try:
+        deleted = personal_memory.delete_document(
+            _conn, tenant=tenant, owner=owner, scope=scope, kind=kind)
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True, "deleted": deleted}
+
+
+# --- First-class captured-session recall -----------------------------------
+
+class SessionRecallReq(BaseModel):
+    mode: str
+    tenant: str
+    scopes: list[str]
+    query: Optional[str] = None
+    note_id: Optional[str] = None
+    offset: int = 0
+    limit: int = 20
+
+
+@app.post("/sessions/recall")
+def session_recall(req: SessionRecallReq, embedder=Depends(get_embedder),
+                   reranker=Depends(get_reranker), sparse=Depends(get_sparse_embedder),
+                   authorization: Optional[str] = Header(default=None)):
+    _, effective_scopes, tenant = _authorize_read(
+        authorization, req.scopes, req.tenant)
+    mode = (req.mode or "").strip().lower()
+    if mode == "browse":
+        return {"mode": mode, "sessions": sessions.browse(
+            _conn, tenant=tenant, scopes=effective_scopes, limit=req.limit)}
+    if mode == "scroll":
+        if not req.note_id:
+            raise HTTPException(status_code=422, detail="note_id is required for scroll")
+        result = sessions.scroll(
+            _conn, tenant=tenant, scopes=effective_scopes, note_id=req.note_id,
+            offset=req.offset, limit=req.limit)
+        if not result:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"mode": mode, **result}
+    if mode == "discovery":
+        if not (req.query or "").strip():
+            raise HTTPException(status_code=422, detail="query is required for discovery")
+        limit = max(1, min(int(req.limit), 50))
+        candidate_limit = min(50, max(limit, limit * 4))
+        hits = retrieve(
+            req.query, embedder, reranker, effective_scopes, tenant,
+            limit=candidate_limit, sparse_embedder=sparse,
+            note_signals=_note_signals_provider(tenant, req.query),
+            source_types=sessions.SOURCE_TYPES)
+        note_ids = list(dict.fromkeys(h.note_id for h in hits))
+        metadata = {}
+        if note_ids:
+            pred, params = in_clause("id", note_ids)
+            rows = _conn.execute(
+                f"select id,title,scope_id from notes where tenant_id=%s and {pred}",
+                (tenant, *params),
+            ).fetchall()
+            metadata = {r[0]: (r[1], r[2]) for r in rows}
+        results = []
+        seen_notes = set()
+        for h in hits:
+            if h.note_id in seen_notes:
+                continue
+            seen_notes.add(h.note_id)
+            results.append({
+                "note_id": h.note_id,
+                "title": metadata.get(h.note_id, (None, None))[0],
+                "scope": metadata.get(h.note_id, (None, None))[1],
+                "heading_path": h.heading_path,
+                "text": h.text,
+                "score": round(h.score, 4),
+                "why": "Matched your search",
+                "retrieval_trace": h.why,
+            })
+            if len(results) >= limit:
+                break
+        _audit("session-recall", tenant, None, effective_scopes, req.query, len(results))
+        return {"mode": mode, "sessions": results}
+    raise HTTPException(status_code=422, detail="mode must be browse, discovery, or scroll")
+
+
 @app.post("/sections/create")
 def sections_create(req: SectionCreateReq):
     """Create an APPLIED section from an explicit note set (chat-driven wizard
@@ -1733,11 +2027,12 @@ def sections_dismiss(section_id: str, req: SectionReq):
 
 @app.post("/sections/{section_id}/undo")
 def sections_undo(section_id: str, req: SectionReq):
-    """Revert an applied section to proposed; return the recorded original paths
-    so the DESKTOP can move the files back."""
+    """Revert an applied section to proposed (or dismissed when body sets
+    dismiss=true — auto-apply mode's anti-reapply guard); return the recorded
+    original paths so the DESKTOP can move the files back."""
     from . import sections
     try:
-        return sections.undo_section(_conn, req.tenant, section_id)
+        return sections.undo_section(_conn, req.tenant, section_id, dismiss=req.dismiss)
     except sections.SectionError as e:
         raise HTTPException(status_code=409, detail=str(e))
 

@@ -26,13 +26,14 @@ def extract_identifier(q: str):
     m = _ID_EXTRACT.search(q)
     return m.group(1) if m else None
 
-def _exact_lane(query, by_id, allowed_scope_ids, tenant_id):
+def _exact_lane(query, by_id, allowed_scope_ids, tenant_id, source_types=None):
     """Return chunk_ids of notes literally containing the query's identifier, heading
     matches first. Adds any new candidates to by_id. Empty if no identifier in query."""
     ident = extract_identifier(query)
     if not ident:
         return []
-    rows = qdrant_store.search_exact(ident, allowed_scope_ids, tenant_id, limit=10)
+    rows = qdrant_store.search_exact(
+        ident, allowed_scope_ids, tenant_id, limit=10, source_types=source_types)
     rows.sort(key=lambda c: ident.lower() not in (c.get("heading_path", "") or "").lower())
     out = []
     for c in rows:
@@ -63,6 +64,22 @@ def _weight_for(query: str) -> float:
     if _FORCED is not None:
         return float(_FORCED)
     return RERANK_WEIGHT_LEXICAL if classify_query(query) == "lexical" else RERANK_WEIGHT_SEMANTIC
+
+# G3 (2026-07-20 ceiling-gaps doc): BGE-style embedders expect an instruction
+# prefix on the QUERY side of asymmetric retrieval — fastembed never applies it
+# (its query_embed falls through to plain embed), so we do. Dense lane only:
+# BM25 must see the raw terms and the cross-encoder scores the original query.
+# Env-gated for ablation; default OFF until the bucketed gate passes.
+_BGE_QUERY_PREFIX = os.environ.get("LORE_BGE_QUERY_PREFIX", "0") == "1"
+_BGE_QUERY_INSTRUCTION = "Represent this sentence for searching relevant passages: "
+
+
+def dense_query_text(expanded_query: str) -> str:
+    """Text the DENSE query vector embeds — instruction-prefixed when enabled."""
+    if _BGE_QUERY_PREFIX:
+        return _BGE_QUERY_INSTRUCTION + expanded_query
+    return expanded_query
+
 
 # Domain glossary: bridge plain-language queries to the jargon the notes use.
 # Applied to the RETRIEVAL query only (dense+sparse); rerank still scores the
@@ -196,7 +213,7 @@ def _apply_note_signals(final, by_id, query, signals):
 
 
 def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
-             sparse_embedder=None, note_signals=None):
+             sparse_embedder=None, note_signals=None, source_types=None):
     """Retrieve relevant chunks for a query.
 
     When sparse_embedder is provided the hybrid path is used: Qdrant performs a
@@ -212,13 +229,14 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
     given it REPLACES the payload-based session down-weighting.
     """
     eq = expand_query(query)
-    qvec = embedder.embed([eq])[0]
+    qvec = embedder.embed([dense_query_text(eq)])[0]
 
     if sparse_embedder is not None:
         # ---- Hybrid path: Qdrant dense + BM25 RRF, then rerank blend ----
         sparse_vec = sparse_embedder.embed_sparse([eq])[0]
         candidates = qdrant_store.search_hybrid(
-            qvec, sparse_vec, allowed_scope_ids, tenant_id, limit=40
+            qvec, sparse_vec, allowed_scope_ids, tenant_id, limit=40,
+            source_types=source_types,
         )
         if not candidates:
             return []
@@ -243,7 +261,8 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
         else:
             _downweight_sessions(final, by_id)
         ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
-        exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
+        exact_ids = _exact_lane(
+            query, by_id, allowed_scope_ids, tenant_id, source_types=source_types)
         for cid in exact_ids:
             final.setdefault(cid, 1.0)
         ranked = _prepend_unique(exact_ids, ranked)[:limit]
@@ -257,7 +276,8 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
         return out
 
     # ---- Dense-only path: dense + lexical RRF + rerank (original behaviour) ----
-    candidates = qdrant_store.search(qvec, allowed_scope_ids, tenant_id, limit=40)
+    candidates = qdrant_store.search(
+        qvec, allowed_scope_ids, tenant_id, limit=40, source_types=source_types)
     if not candidates:
         return []
     by_id = {c["chunk_id"]: c for c in candidates}
@@ -279,7 +299,8 @@ def retrieve(query, embedder, reranker, allowed_scope_ids, tenant_id, limit=8,
     else:
         _downweight_sessions(final, by_id)
     ranked = sorted(top_ids, key=lambda c: final[c], reverse=True)
-    exact_ids = _exact_lane(query, by_id, allowed_scope_ids, tenant_id)
+    exact_ids = _exact_lane(
+        query, by_id, allowed_scope_ids, tenant_id, source_types=source_types)
     for cid in exact_ids:
         final.setdefault(cid, 1.0)
     ranked = _prepend_unique(exact_ids, ranked)[:limit]
@@ -304,7 +325,7 @@ def retrieve_traced(query, embedder, reranker, sparse_embedder,
 
     t0 = time.perf_counter()
     eq = expand_query(query)
-    qvec = embedder.embed([eq])[0]
+    qvec = embedder.embed([dense_query_text(eq)])[0]
     svec = sparse_embedder.embed_sparse([eq])[0]
     t_embed = (time.perf_counter() - t0) * 1000
 

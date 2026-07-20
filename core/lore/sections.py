@@ -248,11 +248,17 @@ def create_section_from_notes(conn, tenant: str, name: str, note_ids: list) -> d
             "note_count": len(valid), "note_ids": valid}
 
 
-def undo_section(conn, tenant: str, section_id: str) -> dict:
-    """Transition applied -> proposed and return the recorded original paths.
+def undo_section(conn, tenant: str, section_id: str, dismiss: bool = False) -> dict:
+    """Transition applied -> proposed (or -> dismissed) and return the recorded
+    original paths.
 
     The desktop moves each file from its section location back to `from` (the
     recorded original path).  The backend itself never touches the filesystem.
+
+    dismiss=True lands the section in 'dismissed' (sticky) instead of 'proposed'.
+    Required by auto-apply mode: with sections applying automatically on every
+    upkeep run, an undo that returned to 'proposed' would be re-applied on the
+    next run — undo must mean *gone*, not *pending again*.
     """
     sid, name, _topic, _ids, original_paths, status = _get(conn, tenant, section_id)
     if status != 'applied':
@@ -261,10 +267,11 @@ def undo_section(conn, tenant: str, section_id: str) -> dict:
         moves = json.loads(original_paths) if original_paths else []
     except Exception:
         moves = []
+    new_status = 'dismissed' if dismiss else 'proposed'
     conn.execute(
-        "update section_proposals set status='proposed', original_paths=null, updated_at=now() "
-        "where id=%s and tenant_id=%s", (sid, tenant))
-    return {"ok": True, "id": sid, "name": name, "moves": moves}
+        "update section_proposals set status=%s, original_paths=null, updated_at=now() "
+        "where id=%s and tenant_id=%s", (new_status, sid, tenant))
+    return {"ok": True, "id": sid, "name": name, "status": new_status, "moves": moves}
 
 
 # --- Personal Wizards: an APPLIED section promoted to a per-topic RAG assistant ---

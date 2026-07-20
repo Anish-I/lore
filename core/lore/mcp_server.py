@@ -153,6 +153,59 @@ def _apply_env_defaults(
     return scopes, tenant
 
 
+# --- Progressive-disclosure retrieval contract (2026-07-20) -----------------
+# lore_search returns a compact, ID-FIRST index; lore_get(ids) hydrates full
+# note bodies on demand. The loop "search (cheap scan) → pick → get (full
+# text)" keeps agent token cost low and ends the dead-end where search showed
+# titles but nothing was fetchable. Shared by both MCP server paths.
+_GET_MAX_IDS = 8        # progressive disclosure: agents should pick, not bulk-dump
+_GET_MAX_CHARS = 8000   # per-note body cap per call (long sessions: re-call or scroll)
+
+
+def _format_search_hits(hits: list) -> str:
+    """Compact index: rank, title, section, NOTE ID (the hydration handle),
+    score, one-line snippet."""
+    lines = []
+    for i, h in enumerate(hits):
+        snippet = " ".join(str(h.get("text") or "").split())[:140]
+        lines.append(
+            f"{i + 1}. [{h.get('title') or h.get('note_id')}] {h.get('heading_path', '')} "
+            f"(id: {h.get('note_id')}, score: {h.get('score', 0):.3f})\n   {snippet}"
+        )
+    lines.append("\nHydrate any hit with lore_get(ids=[...]) to read full note bodies.")
+    return "\n".join(lines)
+
+
+def _hydrate_notes(ids: list, clean_scopes: list, tenant: str) -> str:
+    """Fetch full note bodies by id via GET /notes/{id} (ACL enforced
+    server-side; invisible notes read as not-found, never leaked)."""
+    ids = [str(i).strip() for i in (ids or []) if str(i).strip()]
+    if not ids:
+        return "Error: ids is required — pass note ids from lore_search results."
+    dropped = ids[_GET_MAX_IDS:]
+    parts = []
+    for nid in ids[:_GET_MAX_IDS]:
+        params = urllib.parse.urlencode(
+            {"tenant": tenant, "scopes": ",".join(clean_scopes)})
+        data, err = _safe_get(f"/notes/{urllib.parse.quote(nid, safe='')}?{params}")
+        if err or not data:
+            parts.append(f"### {nid}\n(not found or not visible in your scopes)")
+            continue
+        body = str(data.get("body") or "")
+        total = len(body)
+        clipped = body[:_GET_MAX_CHARS]
+        suffix = (f"\n[...truncated — {total} chars total; call lore_get again "
+                  f"for the rest or narrow with lore_search]"
+                  if total > _GET_MAX_CHARS else "")
+        parts.append(
+            f"### {data.get('title') or nid}  (id: {data.get('id')}, "
+            f"scope: {data.get('scope')})\n{clipped}{suffix}")
+    if dropped:
+        parts.append(f"(capped at {_GET_MAX_IDS} ids per call — "
+                     f"{len(dropped)} dropped: {', '.join(dropped)})")
+    return "\n\n".join(parts)
+
+
 try:
     from mcp.server.fastmcp import FastMCP as _FastMCP
 
@@ -234,11 +287,34 @@ try:
         hits = data.get("results", [])
         if not hits:
             return "No results found."
-        lines = [
-            f"{i + 1}. [{h.get('title') or h['note_id']}] {h.get('heading_path', '')} (score: {h.get('score', 0):.3f})"
-            for i, h in enumerate(hits)
-        ]
-        return "\n".join(lines)
+        return _format_search_hits(hits)
+
+    @_mcp.tool()
+    def lore_get(
+        ids: list[str], scopes: list[str] | None = None, tenant: str | None = None
+    ) -> str:
+        """Hydrate full note bodies by id — the second half of the
+        progressive-disclosure loop: lore_search gives a compact ID-first
+        index; call THIS with the 1-3 ids worth reading in full. Cheaper than
+        re-asking lore_ask and exact (no re-retrieval, no paraphrase risk).
+
+        Args:
+            ids: Note ids from lore_search results (max 8 per call).
+            scopes: List of ACL scope IDs the caller can read (required, never empty).
+                Falls back to the LORE_SCOPES env var (comma-separated) if omitted.
+            tenant: Tenant namespace to query (required, never empty).
+                Falls back to the LORE_TENANT env var if omitted.
+        """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
+        err = _check_scopes(scopes)
+        if err:
+            return err
+        err = _check_tenant(tenant)
+        if err:
+            return err
+        if not _backend_up():
+            return _BACKEND_DOWN_MSG
+        return _hydrate_notes(ids, _clean_scopes(scopes), tenant.strip())
 
     @_mcp.tool()
     def lore_graph(scopes: list[str] | None = None, tenant: str | None = None) -> str:
@@ -380,6 +456,83 @@ try:
         block = data.get("block") or "No current state available."
         return f"{block}\n\n_({data.get('count', 0)} facts, ~{data.get('tokens_est', 0)} tokens)_"
 
+    @_mcp.tool()
+    def lore_profile(owner: str | None = None, scopes: list[str] | None = None,
+                     tenant: str | None = None) -> str:
+        """Read the user's explicit, editable Lore memory and preferences.
+
+        This tool is read-only. Agents cannot mutate or approve the user model.
+        Owner falls back to LORE_OWNER; scopes and tenant use Lore's standard
+        environment defaults.
+        """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
+        owner = (owner or os.environ.get("LORE_OWNER") or "").strip()
+        err = _check_scopes(scopes)
+        if err:
+            return err
+        err = _check_tenant(tenant)
+        if err:
+            return err
+        if not owner:
+            return "Error: owner is required (or set LORE_OWNER)."
+        if not _backend_up():
+            return _BACKEND_DOWN_MSG
+        params = urllib.parse.urlencode({
+            "tenant": tenant.strip(), "owner": owner,
+            "scopes": ",".join(_clean_scopes(scopes)),
+        })
+        data, err = _safe_get(f"/learn/memory?{params}")
+        if err:
+            return f"Error calling Lore: {err}"
+        docs = data.get("documents") or []
+        if not docs:
+            return "Lore has no explicit personal context yet."
+        labels = {"user": "About the user", "memory": "Working memory"}
+        return "\n\n".join(
+            f"## {labels.get(d.get('kind'), d.get('kind', 'Memory'))}\n{d.get('text', '')}"
+            for d in docs
+        )
+
+    @_mcp.tool()
+    def lore_recall_sessions(
+        mode: str = "browse", query: str | None = None, note_id: str | None = None,
+        offset: int = 0, limit: int = 20, scopes: list[str] | None = None,
+        tenant: str | None = None,
+    ) -> str:
+        """Find and continue reading past agent sessions without an LLM call.
+
+        Modes: browse recent sessions; discovery searches sessions by natural
+        language; scroll reads a bounded window from one returned note_id.
+        """
+        scopes, tenant = _apply_env_defaults(scopes, tenant)
+        err = _check_scopes(scopes)
+        if err:
+            return err
+        err = _check_tenant(tenant)
+        if err:
+            return err
+        if not _backend_up():
+            return _BACKEND_DOWN_MSG
+        data, err = _safe_post("/sessions/recall", {
+            "mode": mode, "query": query, "note_id": note_id,
+            "offset": offset, "limit": limit,
+            "scopes": _clean_scopes(scopes), "tenant": tenant.strip(),
+        })
+        if err:
+            return f"Error calling Lore: {err}"
+        if mode == "scroll":
+            next_offset = data.get("next_offset")
+            suffix = f"\n\n_(continue at offset {next_offset})_" if next_offset is not None else ""
+            return (data.get("text") or "No session text found.") + suffix
+        rows = data.get("sessions") or []
+        if not rows:
+            return "No matching sessions found."
+        return "\n".join(
+            f"{i + 1}. [{r.get('title') or r.get('note_id')}] "
+            f"(note_id: {r.get('note_id')})\n   {r.get('excerpt') or r.get('text') or ''}"
+            for i, r in enumerate(rows)
+        )
+
     def main() -> None:
         _mcp.run()
 
@@ -429,6 +582,24 @@ except ImportError:
                         "k": {"type": "integer", "default": 10},
                     },
                     "required": ["query"],
+                },
+            ),
+            _types.Tool(
+                name="lore_get",
+                description="Hydrate full note bodies by id (max 8). Second half of the progressive-disclosure loop: lore_search returns a compact ID-first index — call this with the few ids worth reading in full instead of re-asking.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "ids": {"type": "array", "items": {"type": "string"},
+                                "description": "Note ids from lore_search results (max 8 per call)."},
+                        "scopes": {"type": "array", "items": {"type": "string"},
+                                   "description": "ACL scope IDs (required, never empty). Falls back to "
+                                                  "the LORE_SCOPES env var (comma-separated) if omitted."},
+                        "tenant": {"type": "string",
+                                   "description": "Tenant namespace to query (required, never empty). "
+                                                  "Falls back to the LORE_TENANT env var if omitted."},
+                    },
+                    "required": ["ids"],
                 },
             ),
             _types.Tool(
@@ -492,6 +663,36 @@ except ImportError:
                         "tenant": {"type": "string",
                                    "description": "Tenant namespace to query (required, never empty). "
                                                   "Falls back to the LORE_TENANT env var if omitted."},
+                    },
+                    "required": [],
+                },
+            ),
+            _types.Tool(
+                name="lore_profile",
+                description="Read the user's explicit, editable Lore memory and preferences. Read-only; agents cannot mutate the user model.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "owner": {"type": "string", "description": "Falls back to LORE_OWNER."},
+                        "scopes": {"type": "array", "items": {"type": "string"}},
+                        "tenant": {"type": "string"},
+                    },
+                    "required": [],
+                },
+            ),
+            _types.Tool(
+                name="lore_recall_sessions",
+                description="Browse, discover, or scroll past agent sessions without an LLM call.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["browse", "discovery", "scroll"], "default": "browse"},
+                        "query": {"type": "string"},
+                        "note_id": {"type": "string"},
+                        "offset": {"type": "integer", "default": 0},
+                        "limit": {"type": "integer", "default": 20},
+                        "scopes": {"type": "array", "items": {"type": "string"}},
+                        "tenant": {"type": "string"},
                     },
                     "required": [],
                 },
@@ -568,11 +769,11 @@ except ImportError:
             hits = data.get("results", [])
             if not hits:
                 return [_types.TextContent(type="text", text="No results found.")]
-            lines = [
-                f"{i + 1}. [{h.get('title') or h['note_id']}] {h.get('heading_path', '')} (score: {h.get('score', 0):.3f})"
-                for i, h in enumerate(hits)
-            ]
-            return [_types.TextContent(type="text", text="\n".join(lines))]
+            return [_types.TextContent(type="text", text=_format_search_hits(hits))]
+        elif name == "lore_get":
+            return [_types.TextContent(
+                type="text",
+                text=_hydrate_notes(arguments.get("ids") or [], clean_scopes, tenant))]
         elif name == "lore_graph":
             params = urllib.parse.urlencode({"tenant": tenant, "scopes": ",".join(clean_scopes)})
             data, err = _safe_get(f"/graph?{params}")
@@ -591,6 +792,40 @@ except ImportError:
                 return [_types.TextContent(type="text", text=f"Error: {err}")]
             block = data.get("block") or "No current state available."
             text = f"{block}\n\n_({data.get('count', 0)} facts, ~{data.get('tokens_est', 0)} tokens)_"
+            return [_types.TextContent(type="text", text=text)]
+        elif name == "lore_profile":
+            owner = (arguments.get("owner") or os.environ.get("LORE_OWNER") or "").strip()
+            if not owner:
+                return [_types.TextContent(type="text", text="Error: owner is required (or set LORE_OWNER).")]
+            params = urllib.parse.urlencode({
+                "tenant": tenant, "owner": owner, "scopes": ",".join(clean_scopes),
+            })
+            data, err = _safe_get(f"/learn/memory?{params}")
+            if err:
+                return [_types.TextContent(type="text", text=f"Error: {err}")]
+            docs = data.get("documents") or []
+            text = "\n\n".join(
+                f"## {d.get('kind', 'memory')}\n{d.get('text', '')}" for d in docs
+            ) or "Lore has no explicit personal context yet."
+            return [_types.TextContent(type="text", text=text)]
+        elif name == "lore_recall_sessions":
+            mode = arguments.get("mode", "browse")
+            data, err = _safe_post("/sessions/recall", {
+                "mode": mode, "query": arguments.get("query"),
+                "note_id": arguments.get("note_id"),
+                "offset": arguments.get("offset", 0), "limit": arguments.get("limit", 20),
+                "scopes": clean_scopes, "tenant": tenant,
+            })
+            if err:
+                return [_types.TextContent(type="text", text=f"Error: {err}")]
+            if mode == "scroll":
+                text = data.get("text") or "No session text found."
+            else:
+                rows = data.get("sessions") or []
+                text = "\n".join(
+                    f"{i + 1}. [{r.get('title') or r.get('note_id')}] (note_id: {r.get('note_id')})"
+                    for i, r in enumerate(rows)
+                ) or "No matching sessions found."
             return [_types.TextContent(type="text", text=text)]
         else:
             return [_types.TextContent(type="text", text=f"Unknown tool: {name}")]

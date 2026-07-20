@@ -13,6 +13,8 @@ const googleOauth  = require('./lib/google-oauth');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
 const backupMirror = require('./lib/backup-mirror');
+const personalMemory = require('./lib/personal-memory');
+const { clearPersonalContextCache } = require('./assets/lore-inject');
 
 // Backend URL/port are wiring values, not constants: resolved lazily (env var > cfg
 // field > default) via desktop/lib/runtime.js so a config edit or LORE_PORT/
@@ -1285,6 +1287,91 @@ async function authedFetch(pathname, opts = {}) {
   }
 }
 
+async function learnFetch(pathname, opts = {}) {
+  const sess = loadSession();
+  const headers = sess && sess.token
+    ? { Authorization: `Bearer ${sess.token}` }
+    : authHeaders();
+  const r = await fetch(`${BACKEND_URL()}${pathname}`, {
+    ...opts,
+    headers: { 'content-type': 'application/json', ...headers, ...(opts.headers || {}) },
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.detail || body.error || `backend ${r.status}`);
+  return body;
+}
+
+function learnQuery({ tenant, scope } = {}) {
+  const params = new URLSearchParams();
+  if (tenant) params.set('tenant', tenant);
+  if (scope) params.set('scopes', scope);
+  return params.toString();
+}
+
+ipcMain.handle('learn:status', (_e, identity) =>
+  learnFetch(`/learn/status?${learnQuery(identity)}`));
+ipcMain.handle('learn:pending', (_e, identity) =>
+  learnFetch(`/learn/skills?${learnQuery(identity)}&pending=true`));
+ipcMain.handle('learn:diff', (_e, { name, ...identity }) =>
+  learnFetch(`/learn/skills/${encodeURIComponent(name)}/diff?${learnQuery(identity)}`));
+ipcMain.handle('learn:approve', (_e, payload) =>
+  learnFetch(`/learn/skills/${encodeURIComponent(payload.name)}/approve`, {
+    method: 'POST', body: JSON.stringify(payload),
+  }));
+ipcMain.handle('learn:reject', (_e, payload) =>
+  learnFetch(`/learn/skills/${encodeURIComponent(payload.name)}/reject`, {
+    method: 'POST', body: JSON.stringify(payload),
+  }));
+
+function personalMemoryQuery({ tenant, owner, scope } = {}) {
+  const params = new URLSearchParams();
+  if (tenant) params.set('tenant', tenant);
+  if (owner) params.set('owner', owner);
+  if (scope) params.set('scopes', scope);
+  return params.toString();
+}
+
+ipcMain.handle('personal-memory:list', (_e, identity) =>
+  learnFetch(`/learn/memory?${personalMemoryQuery(identity)}`));
+ipcMain.handle('personal-memory:replace', (_e, payload) =>
+  personalMemory.mutate(learnFetch, clearPersonalContextCache,
+    `/learn/memory/${encodeURIComponent(payload.kind)}`, {
+    method: 'PUT', body: JSON.stringify(payload),
+  }));
+ipcMain.handle('personal-memory:history', (_e, payload) => {
+  const params = new URLSearchParams({
+    tenant: payload.tenant || '', owner: payload.owner || '', scope: payload.scope || '',
+  });
+  return learnFetch(`/learn/memory/${encodeURIComponent(payload.kind)}/history?${params}`);
+});
+ipcMain.handle('personal-memory:rollback', (_e, payload) =>
+  personalMemory.mutate(learnFetch, clearPersonalContextCache,
+    `/learn/memory/${encodeURIComponent(payload.kind)}/rollback`, {
+    method: 'POST', body: JSON.stringify(payload),
+  }));
+ipcMain.handle('personal-memory:delete', (_e, payload) =>
+  personalMemory.mutate(learnFetch, clearPersonalContextCache,
+    `/learn/memory/${encodeURIComponent(payload.kind)}`, {
+    method: 'DELETE', body: JSON.stringify(payload),
+  }));
+ipcMain.handle('personal-memory:export', async (_e, identity) => {
+  const params = new URLSearchParams({
+    tenant: identity.tenant || '', owner: identity.owner || '', scope: identity.scope || '',
+  });
+  const bundle = await learnFetch(`/learn/memory/export?${params}`);
+  const chosen = await dialog.showSaveDialog({
+    title: 'Export what Lore knows',
+    defaultPath: path.join(
+      app.getPath('documents'), `lore-memory-${new Date().toISOString().slice(0, 10)}.json`),
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (chosen.canceled || !chosen.filePath) return { ok: false, canceled: true };
+  fs.writeFileSync(chosen.filePath, personalMemory.serializeExport(bundle), 'utf8');
+  return { ok: true, path: chosen.filePath };
+});
+ipcMain.handle('sessions:recall', (_e, payload) =>
+  learnFetch('/sessions/recall', { method: 'POST', body: JSON.stringify(payload) }));
+
 ipcMain.handle('teams:create', async (_e, name) =>
   authedFetch('/teams', { method: 'POST', body: JSON.stringify({ name }) }));
 
@@ -1686,6 +1773,9 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
     const result = await r.json();
     if (r.ok) {
       try { await executeAutoFileMoves(result); } catch { /* moves retry next run */ }
+      // Auto-apply mode (cfg.autoApplySections, default ON): fresh proposals
+      // become real folders right now instead of waiting for an Enable click.
+      try { await autoApplyProposedSections(); } catch { /* proposals stay for next run */ }
       // Stamp when the library was last tidied/backfilled so the UI can show it.
       try { const c2 = loadConfig() || {}; c2.upkeepLastRun = new Date().toISOString(); saveConfig(c2); } catch { /* non-fatal */ }
     }
@@ -1700,10 +1790,12 @@ ipcMain.handle('upkeep:run', async (_e, opts) => {
 });
 
 // ---------- IPC: sections (auto-proposed note folders) ----------
-// SAFEGUARD: section proposals are computed in the background, but files move
-// ONLY inside sections:apply / sections:undo below — i.e. only when the user
-// clicks Enable/Undo in the renderer. Every move runs under pathGuard and the
-// backend merely tracks state + original paths.
+// SAFEGUARD: the backend merely tracks state + original paths; every file move
+// happens in THIS process under pathGuard, inside applySectionNow /
+// sections:undo. With cfg.autoApplySections on (the default since 2026-07-20),
+// proposals apply themselves right after upkeep — no Enable click; Undo then
+// lands the section in 'dismissed' so it is never silently re-applied. Turning
+// the toggle off restores the propose→Enable flow.
 
 ipcMain.handle('sections:list', async () => {
   const cfg = loadConfig() || {};
@@ -1765,6 +1857,75 @@ async function executeAutoFileMoves(result) {
     win.webContents.send('scrape:progress', { phase: 'done', done: moved, total: moves.length, current: `auto-filed ${moved} note(s)`, errors: skipped });
 }
 
+// Shared apply path for the Enable click AND auto-apply mode. `section` must be
+// a row from GET /sections. Every move runs under pathGuard; never overwrites.
+async function applySectionNow(section, cfg, root, { auto = false } = {}) {
+  const destDir = path.join(root, safeVaultName(section.name, 'Section'));
+
+  // Backend transition proposed -> applied; records each note's ORIGINAL path
+  // for undo and returns the move plan. It does not touch the filesystem.
+  let plan;
+  try {
+    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(section.id)}/apply`,
+      { tenant: cfg.tenant, dest_dir: destDir.replace(/\\/g, '/') });
+    plan = await r.json();
+    if (!r.ok) return { ok: false, error: plan.detail || `backend ${r.status}` };
+  } catch (e) { return { ok: false, error: String(e) }; }
+
+  // Execute the plan — files move only here (user Enable click, or auto-apply
+  // when cfg.autoApplySections is on). Never overwrites an existing file.
+  try { fs.mkdirSync(destDir, { recursive: true }); } catch { /* exists */ }
+  let moved = 0, skipped = 0;
+  for (const mv of (plan.moves || [])) {
+    try {
+      const from = path.normalize(mv.from);
+      const to = mv.to ? path.normalize(mv.to) : path.join(destDir, path.basename(from));
+      pathGuard(from); pathGuard(to);
+      if (!fs.existsSync(from) || fs.existsSync(to)) { skipped++; continue; }
+      await moveAndReindex(from, to, cfg);
+      moved++;
+    } catch { skipped++; }
+  }
+  const action = auto ? 'section-auto-apply' : 'section-apply';
+  try { loreManifest.appendWorklog(root, { action, summary: `${auto ? 'auto-' : ''}applied section "${section.name}" — moved ${moved} note(s)` }); } catch { /* ignore */ }
+  if (win && !win.isDestroyed())
+    win.webContents.send('scrape:progress', { phase: 'done', done: moved, total: (plan.moves || []).length, current: `section "${section.name}" ${auto ? 'auto-organized' : 'applied'}`, errors: skipped });
+  return { ok: true, moved, skipped, folder: destDir };
+}
+
+// ---------- auto-apply sections (cfg.autoApplySections, default ON) ----------
+// THE one predicate for auto-apply mode — main process and renderer must agree.
+// Deliberate asymmetry (owner decision 2026-07-20): autoApplySections is
+// default-ON (`!== false`) while autoFileObvious stays explicit opt-in
+// (`=== true`). Auto-apply is only effective when section detection
+// (autoClassify) is also on — otherwise stale 'proposed' rows from an earlier
+// config could move files while the settings switch shows auto-apply disabled.
+function autoApplySectionsEnabled(cfg) {
+  return cfg.autoApplySections !== false && cfg.autoClassify === true;
+}
+
+// Runs after each upkeep pass: every 'proposed' section is applied immediately —
+// folder created, notes moved — with no Enable click. The live config is
+// re-checked here (NEVER when the mode is off). Undo in auto mode lands the
+// section in 'dismissed' (see sections:undo) so it is not re-applied next run.
+// Concurrent runs are safe: the backend 409s an apply on a non-proposed section
+// and the per-section catch below just skips it.
+async function autoApplyProposedSections() {
+  const cfg = loadConfig() || {};
+  const root = vaultRoot();
+  if (!autoApplySectionsEnabled(cfg) || !root || !cfg.tenant) return;
+  let proposed = [];
+  try {
+    const lr = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
+    const body = await lr.json();
+    proposed = (body.sections || []).filter((s) => s.status === 'proposed');
+  } catch { return; }   // backend hiccup — proposals stay for the next run
+  for (const section of proposed) {
+    try { await applySectionNow(section, cfg, root, { auto: true }); } catch { /* next run */ }
+  }
+  if (proposed.length) refreshManifests('sections', `auto-applied ${proposed.length} section(s)`);
+}
+
 ipcMain.handle('sections:apply', async (_e, id) => {
   const cfg = loadConfig() || {};
   const root = vaultRoot();
@@ -1778,37 +1939,9 @@ ipcMain.handle('sections:apply', async (_e, id) => {
     section = (body.sections || []).find((s) => s.id === id);
   } catch (e) { return { ok: false, error: String(e) }; }
   if (!section) return { ok: false, error: 'Section not found' };
-  const destDir = path.join(root, safeVaultName(section.name, 'Section'));
-
-  // Backend transition proposed -> applied; records each note's ORIGINAL path
-  // for undo and returns the move plan. It does not touch the filesystem.
-  let plan;
-  try {
-    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(id)}/apply`,
-      { tenant: cfg.tenant, dest_dir: destDir.replace(/\\/g, '/') });
-    plan = await r.json();
-    if (!r.ok) return { ok: false, error: plan.detail || `backend ${r.status}` };
-  } catch (e) { return { ok: false, error: String(e) }; }
-
-  // Execute the plan — the ONLY place proposed-section files move, and only
-  // because the user clicked Enable. Never overwrites an existing file.
-  try { fs.mkdirSync(destDir, { recursive: true }); } catch { /* exists */ }
-  let moved = 0, skipped = 0;
-  for (const mv of (plan.moves || [])) {
-    try {
-      const from = path.normalize(mv.from);
-      const to = mv.to ? path.normalize(mv.to) : path.join(destDir, path.basename(from));
-      pathGuard(from); pathGuard(to);
-      if (!fs.existsSync(from) || fs.existsSync(to)) { skipped++; continue; }
-      await moveAndReindex(from, to, cfg);
-      moved++;
-    } catch { skipped++; }
-  }
-  try { loreManifest.appendWorklog(root, { action: 'section-apply', summary: `applied section "${section.name}" — moved ${moved} note(s)` }); } catch { /* ignore */ }
+  const res = await applySectionNow(section, cfg, root);
   refreshManifests();
-  if (win && !win.isDestroyed())
-    win.webContents.send('scrape:progress', { phase: 'done', done: moved, total: (plan.moves || []).length, current: `section "${section.name}" applied`, errors: skipped });
-  return { ok: true, moved, skipped, folder: destDir };
+  return res;
 });
 
 ipcMain.handle('sections:undo', async (_e, id) => {
@@ -1816,10 +1949,15 @@ ipcMain.handle('sections:undo', async (_e, id) => {
   const root = vaultRoot();
   if (!root || !cfg.tenant) return { ok: false, error: 'No library/tenant configured' };
 
-  // Backend transition applied -> proposed; returns the recorded original paths.
+  // Backend transition applied -> proposed — EXCEPT in auto-apply mode, where
+  // undo must land in 'dismissed' (sticky): a section back in 'proposed' would
+  // be re-applied by the very next upkeep run, undoing the user's undo.
+  // Same predicate as autoApplyProposedSections — UI and runtime must agree.
+  const dismissAfter = autoApplySectionsEnabled(cfg);
   let plan;
   try {
-    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(id)}/undo`, { tenant: cfg.tenant });
+    const r = await postJSON(`${BACKEND_URL()}/sections/${encodeURIComponent(id)}/undo`,
+      { tenant: cfg.tenant, dismiss: dismissAfter });
     plan = await r.json();
     if (!r.ok) return { ok: false, error: plan.detail || `backend ${r.status}` };
   } catch (e) { return { ok: false, error: String(e) }; }

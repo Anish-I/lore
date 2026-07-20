@@ -256,6 +256,62 @@ def test_dismiss_is_sticky():
     assert list_sections(conn, tenant)[0]["status"] == "dismissed"
 
 
+def test_undo_with_dismiss_is_sticky_not_reapplied(tmp_path):
+    """Auto-apply mode's anti-reapply guard: undo(dismiss=True) lands the section
+    in 'dismissed' (not 'proposed'), still returns the restore plan, and the topic
+    is never re-proposed — otherwise the next auto-apply run would redo the exact
+    move the user just reverted."""
+    tenant = "sec-undo-dismiss"
+    conn = _conn()
+    files = []
+    for i in range(5):
+        p = tmp_path / f"ud-{i}.md"
+        p.write_text(f"# ud {i}\n", encoding="utf-8")
+        files.append(str(p))
+        nid = f"ud-{i}"
+        _insert_note(conn, tenant, nid, f"ud {i}", "body", path=str(p))
+        conn.execute(
+            "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+            "values(%s,%s,'Theta Topic','topic','llm') on conflict do nothing",
+            (nid, tenant))
+    propose_sections(conn, tenant, threshold=5)
+    sid = list_sections(conn, tenant)[0]["id"]
+    apply_section(conn, tenant, sid, dest_dir=str(tmp_path / "Theta Topic").replace("\\", "/"))
+
+    undo = undo_section(conn, tenant, sid, dismiss=True)
+    assert undo["status"] == "dismissed"
+    assert {m["from"] for m in undo["moves"]} == set(files)   # restore plan intact
+    assert list_sections(conn, tenant)[0]["status"] == "dismissed"
+
+    # Sticky: the topic never comes back as a proposal.
+    stats = propose_sections(conn, tenant, threshold=5)
+    assert stats["proposed"] == 0 and stats["updated"] == 0
+    assert list_sections(conn, tenant)[0]["status"] == "dismissed"
+
+    # Undo (like dismiss-from-applied) is terminal here: nothing further to undo.
+    try:
+        undo_section(conn, tenant, sid, dismiss=True)
+        assert False, "undo should have raised on dismissed section"
+    except SectionError:
+        pass
+
+
+def test_undo_dismiss_flag_via_api(tmp_path):
+    """The HTTP body {dismiss:true} reaches undo_section (desktop auto mode path);
+    default body keeps the old proposed-revert behavior."""
+    tenant = "sec-undo-api"
+    conn = _conn()
+    _seed_topic_notes(conn, tenant, "Iota Topic", 5, prefix="ua")
+    propose_sections(conn, tenant, threshold=5)
+    sid = list_sections(conn, tenant)[0]["id"]
+    apply_section(conn, tenant, sid, dest_dir="/fake/lib/Iota Topic")
+
+    r = client.post(f"/sections/{sid}/undo", json={"tenant": tenant, "dismiss": True})
+    assert r.status_code == 200
+    assert r.json()["status"] == "dismissed"
+    assert list_sections(conn, tenant)[0]["status"] == "dismissed"
+
+
 def test_applied_notes_not_reproposed_under_new_topic():
     tenant = "sec-claimed"
     conn = _conn()
