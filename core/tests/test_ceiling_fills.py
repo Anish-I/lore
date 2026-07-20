@@ -202,3 +202,42 @@ def test_distinct_topics_with_shared_words_not_merged_below_bar():
 def test_no_topics_no_proposals():
     conn = _conn()
     assert topic_merge.propose_topic_merges(conn, "tm-empty", embedder=None) == []
+
+
+class _FamilyEmbedder:
+    """Two fragment families on orthogonal axes: kalshi-ish topics on x,
+    picnic-ish topics on y. Within-family cosine 1.0, cross-family low."""
+    def embed(self, texts):
+        out = []
+        for t in texts:
+            tl = t.lower()
+            out.append([1.0, 0.0, 0.0] if "kalshi" in tl else [0.0, 1.0, 0.0])
+        return out
+
+
+def test_mutual_nn_merges_families_not_neighbors():
+    """v2 topology gate: each family collapses to one topic via mutual-NN
+    rounds; the two families never cross-merge even though every topic name
+    shares the common token 'desk' (df-filtered, not evidence)."""
+    tenant = "tm-mutual"
+    conn = _conn()
+    _seed_topic(conn, tenant, "Kalshi Desk", 5, "kalshi trading work", "ma")
+    _seed_topic(conn, tenant, "Kalshi Trading Desk", 3, "kalshi bot iteration", "mb")
+    _seed_topic(conn, tenant, "Picnic Desk", 4, "picnic vendor booking", "mc")
+    _seed_topic(conn, tenant, "Picnic Planning Desk", 2, "picnic site permits", "md")
+    props = topic_merge.propose_topic_merges(conn, tenant, embedder=_FamilyEmbedder())
+    pairs = {(p["keep"], p["merge"]) for p in props}
+    assert ("Kalshi Desk", "Kalshi Trading Desk") in pairs
+    assert ("Picnic Desk", "Picnic Planning Desk") in pairs
+    # No cross-family proposal in either direction.
+    for keep, merge in pairs:
+        assert ("kalshi" in keep.lower()) == ("kalshi" in merge.lower())
+
+
+def test_name_evidence_requires_distinctive_token():
+    df = {"claims": 9, "auto": 7, "subro": 1, "subrogation": 1}
+    n = 30   # ceiling = max(2, 3) = 3
+    assert not topic_merge._has_name_evidence("Claims - Auto", "Auto Claims", df, n)
+    assert topic_merge._has_name_evidence("Subrogation", "Subro Recovery", df, n)
+    # Without a df map the old permissive behavior stands (backward compat).
+    assert topic_merge._has_name_evidence("Claims - Auto", "Auto Claims")
