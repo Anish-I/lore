@@ -26,6 +26,11 @@ logs/
 .omx/
 .lore/
 
+# scenario eval: generated datasets + isolated work stores (regenerable —
+# see eval/scenarios/gen_scenario.py; insurance.json alone is ~20MB)
+eval/scenarios/data/
+eval/scenarios/.work/
+
 # build artifacts
 dist/
 build/
