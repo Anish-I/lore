@@ -19,7 +19,7 @@ Examples:
     lore graph --scope <scope> --tenant <tenant>
 """
 import argparse, json, os, sys, time
-import urllib.request, urllib.error
+import urllib.request, urllib.error, urllib.parse
 
 DEFAULT_URL = "http://localhost:8099"
 _HTTP_TIMEOUT = 15   # seconds; applied to every real API call
@@ -309,6 +309,62 @@ def _cmd_next(args: argparse.Namespace) -> int:
     return 0
 
 
+def _skill_url(args, suffix: str = "") -> str:
+    name = urllib.parse.quote(getattr(args, "name", ""), safe="")
+    base = f"{args.url}/learn/skills"
+    return f"{base}/{name}{suffix}" if name else base
+
+
+def _skill_payload(args, **extra) -> dict:
+    payload = {"tenant": args.tenant, **extra}
+    if getattr(args, "scope", None):
+        payload["scope"] = args.scope
+    if getattr(args, "owner", None):
+        payload["owner"] = args.owner
+    return payload
+
+
+def _cmd_skills(args: argparse.Namespace) -> int:
+    try:
+        if args.skills_cmd == "pending":
+            result = _get_json(
+                f"{_skill_url(args)}?tenant={urllib.parse.quote(args.tenant, safe='')}&pending=true"
+            )
+            skills = result.get("skills", [])
+            if args.json:
+                print(json.dumps(result, indent=2))
+            elif not skills:
+                print("No pending skills.")
+            else:
+                for skill in skills:
+                    print(f"{skill['name']}  {skill['status']}  {skill.get('description') or ''}".rstrip())
+        elif args.skills_cmd == "diff":
+            result = _get_json(
+                f"{_skill_url(args, '/diff')}?tenant={urllib.parse.quote(args.tenant, safe='')}"
+            )
+            print(json.dumps(result, indent=2) if args.json else result.get("diff", ""))
+        elif args.skills_cmd == "approve":
+            result = _post_json(_skill_url(args, "/approve"), _skill_payload(args))
+            print(json.dumps(result, indent=2) if args.json else
+                  f"Approved {result['name']} at version {result['version']}.")
+        elif args.skills_cmd == "reject":
+            result = _post_json(_skill_url(args, "/reject"), _skill_payload(args))
+            print(json.dumps(result, indent=2) if args.json else f"Rejected {result['name']}.")
+        else:
+            result = _post_json(
+                _skill_url(args, "/rollback"), _skill_payload(args, version=args.version)
+            )
+            print(json.dumps(result, indent=2) if args.json else
+                  f"Rolled back {result['name']} to version {result['version']}.")
+        return 0
+    except urllib.error.HTTPError as exc:
+        print(f"HTTP {exc.code}: {exc.read().decode()}", file=sys.stderr)
+        return 1
+    except urllib.error.URLError as exc:
+        print(f"Connection error: {exc.reason}", file=sys.stderr)
+        return 1
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="lore",
@@ -383,6 +439,29 @@ def main() -> None:
                      help=f"Lore API base URL (default: {DEFAULT_URL})")
     nxt.add_argument("--token", default=None, help="Local API token (else env/desktop config)")
 
+    # --- skill review ---
+    skills = sub.add_parser("skills", help="Review Lore Learn skill drafts")
+    skills_sub = skills.add_subparsers(dest="skills_cmd", required=True)
+
+    def add_skill_common(command, *, with_name=False):
+        if with_name:
+            command.add_argument("name", help="Skill name")
+        command.add_argument("--tenant", required=True, help="Tenant namespace")
+        command.add_argument("--scope", default=None, help="Write scope (server mode)")
+        command.add_argument("--owner", default=None, help="Owner identifier (server mode)")
+        command.add_argument("--url", default=DEFAULT_URL,
+                             help=f"Lore API base URL (default: {DEFAULT_URL})")
+        command.add_argument("--token", default=None, help="Local API token (else env/desktop config)")
+        command.add_argument("--json", action="store_true", help="Machine-readable output")
+
+    add_skill_common(skills_sub.add_parser("pending", help="List pending skill changes"))
+    add_skill_common(skills_sub.add_parser("diff", help="Show a pending skill diff"), with_name=True)
+    add_skill_common(skills_sub.add_parser("approve", help="Approve a pending skill"), with_name=True)
+    add_skill_common(skills_sub.add_parser("reject", help="Reject a pending skill"), with_name=True)
+    rollback = skills_sub.add_parser("rollback", help="Roll back an active skill")
+    add_skill_common(rollback, with_name=True)
+    rollback.add_argument("--version", type=int, required=True, help="Version to activate")
+
     args = parser.parse_args()
 
     # Resolve the local API token once for every command.
@@ -396,6 +475,7 @@ def main() -> None:
         "graph": _cmd_graph,
         "doctor": _cmd_doctor,
         "next": _cmd_next,
+        "skills": _cmd_skills,
     }
     handler = dispatch.get(args.cmd)
     sys.exit(handler(args) if handler else 1)

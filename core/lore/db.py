@@ -249,6 +249,69 @@ create table if not exists section_proposals(
   updated_at timestamptz default now(),
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
 create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists learn_runs(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  scope_id text,
+  session_key text,
+  transcript_sha text not null,
+  started_at timestamptz default now(),
+  duration_ms integer default 0,
+  provider text,
+  calls_made integer default 0,
+  input_chars integer default 0,
+  est_tokens integer default 0,
+  actions_json text,
+  status text not null default 'queued',
+  skip_reason text);
+create index if not exists learn_runs_tenant_started on learn_runs(tenant_id, started_at);
+create unique index if not exists learn_runs_tenant_transcript on learn_runs(tenant_id, transcript_sha);
+create table if not exists skills(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  name text not null,
+  description text,
+  status text not null default 'pending',
+  created_by text not null default 'lore-learn',
+  human_edited boolean default false,
+  use_count integer default 0,
+  view_count integer default 0,
+  patch_count integer default 0,
+  last_activity_at timestamptz,
+  current_version integer,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now());
+create unique index if not exists skills_tenant_name on skills(tenant_id, name);
+create table if not exists skill_versions(
+  id text primary key,
+  skill_id text not null references skills(id) on delete cascade,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  frontmatter_json text,
+  origin_session text,
+  origin text not null default 'lore-learn',
+  created_at timestamptz default now(),
+  constraint skill_versions_unique unique (skill_id, version));
+create index if not exists skill_versions_skill on skill_versions(skill_id, version);
+create table if not exists memory_versions(
+  id text primary key,
+  note_id text not null references notes(id) on delete cascade,
+  tenant_id text not null,
+  owner_id text not null,
+  scope_id text not null,
+  kind text not null,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  origin text not null default 'user',
+  origin_session text,
+  created_at timestamptz default now(),
+  constraint memory_kind_check check (kind in ('memory','user')),
+  constraint memory_versions_unique unique (note_id, version));
+create index if not exists memory_versions_note on memory_versions(note_id, version);
 create table if not exists personal_wizards(
   id text primary key,
   tenant_id text not null,
@@ -442,6 +505,69 @@ create table if not exists section_proposals(
   updated_at timestamp default current_timestamp,
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
 create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists learn_runs(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  scope_id text,
+  session_key text,
+  transcript_sha text not null,
+  started_at timestamp default current_timestamp,
+  duration_ms integer default 0,
+  provider text,
+  calls_made integer default 0,
+  input_chars integer default 0,
+  est_tokens integer default 0,
+  actions_json text,
+  status text not null default 'queued',
+  skip_reason text);
+create index if not exists learn_runs_tenant_started on learn_runs(tenant_id, started_at);
+create unique index if not exists learn_runs_tenant_transcript on learn_runs(tenant_id, transcript_sha);
+create table if not exists skills(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  name text not null,
+  description text,
+  status text not null default 'pending',
+  created_by text not null default 'lore-learn',
+  human_edited integer default 0,
+  use_count integer default 0,
+  view_count integer default 0,
+  patch_count integer default 0,
+  last_activity_at timestamp,
+  current_version integer,
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp);
+create unique index if not exists skills_tenant_name on skills(tenant_id, name);
+create table if not exists skill_versions(
+  id text primary key,
+  skill_id text not null references skills(id) on delete cascade,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  frontmatter_json text,
+  origin_session text,
+  origin text not null default 'lore-learn',
+  created_at timestamp default current_timestamp,
+  constraint skill_versions_unique unique (skill_id, version));
+create index if not exists skill_versions_skill on skill_versions(skill_id, version);
+create table if not exists memory_versions(
+  id text primary key,
+  note_id text not null references notes(id) on delete cascade,
+  tenant_id text not null,
+  owner_id text not null,
+  scope_id text not null,
+  kind text not null,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  origin text not null default 'user',
+  origin_session text,
+  created_at timestamp default current_timestamp,
+  constraint memory_kind_check check (kind in ('memory','user')),
+  constraint memory_versions_unique unique (note_id, version));
+create index if not exists memory_versions_note on memory_versions(note_id, version);
 create table if not exists personal_wizards(
   id text primary key,
   tenant_id text not null,

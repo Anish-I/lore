@@ -1,0 +1,180 @@
+{
+  "cases": [
+    {
+      "case_id": "replaceable-model-thesis",
+      "expected_source": "lore-topic",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "lore-topic",
+        "decision-matrix",
+        "research-monitor",
+        "research-monitor",
+        "research-monitor"
+      ]
+    },
+    {
+      "case_id": "source-tests-not-product-proof",
+      "expected_source": "research-monitor",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "research-monitor",
+        "research-monitor",
+        "research-monitor",
+        "serving-cache",
+        "decision-matrix"
+      ]
+    },
+    {
+      "case_id": "moe-mask-divergence",
+      "expected_source": "k27-diff",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "k27-diff",
+        "k27-diff",
+        "research-monitor",
+        "k27-diff",
+        "research-monitor"
+      ]
+    },
+    {
+      "case_id": "hybrid-kda-cache-growth",
+      "expected_source": "kda-k3",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "kda-k3",
+        "kda-k3",
+        "kda-k3",
+        "validation-report",
+        "research-monitor"
+      ]
+    },
+    {
+      "case_id": "serving-cache-boundary",
+      "expected_source": "serving-cache",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "research-monitor",
+        "serving-cache",
+        "decision-matrix",
+        "decision-matrix",
+        "serving-cache"
+      ]
+    },
+    {
+      "case_id": "runtime-incomplete-models",
+      "expected_source": "model-review",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "model-review",
+        "model-review",
+        "model-review",
+        "research-monitor",
+        "decision-matrix"
+      ]
+    },
+    {
+      "case_id": "five-column-gate",
+      "expected_source": "decision-matrix",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "decision-matrix",
+        "research-monitor",
+        "research-monitor",
+        "research-monitor",
+        "research-monitor"
+      ]
+    },
+    {
+      "case_id": "validation-boundary",
+      "expected_source": "validation-report",
+      "provenance": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ],
+      "ranked_sources": [
+        "validation-report",
+        "research-monitor",
+        "research-monitor",
+        "decision-matrix",
+        "kda-k3"
+      ]
+    }
+  ],
+  "failed_gates": [
+    "p95_ms>500.0"
+  ],
+  "measurement": "isolated-user-owned-note-retrieval",
+  "reranker": "Xenova/ms-marco-MiniLM-L-12-v2",
+  "metrics": {
+    "cases": 8,
+    "hit_at_1": 0.875,
+    "hit_at_3": 1.0,
+    "hit_at_5": 1.0,
+    "mrr": 0.9375,
+    "p50_ms": 631.3,
+    "p95_ms": 701.102,
+    "provenance_coverage": 1.0
+  },
+  "privacy": {
+    "isolated_store": true,
+    "retrieved_text_reported": false,
+    "source_bodies_persisted": false
+  },
+  "schema": "lore-trusted-recall/v1",
+  "source_type": "note",
+  "sources": [
+    "decision-matrix",
+    "k27-diff",
+    "kda-k3",
+    "lore-topic",
+    "model-review",
+    "research-monitor",
+    "serving-cache",
+    "validation-report"
+  ]
+}

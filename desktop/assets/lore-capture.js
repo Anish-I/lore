@@ -141,6 +141,16 @@ function writeBuffer(key, text) {
   try { fs.writeFileSync(bufferPath(key), text, 'utf8'); } catch {}
 }
 
+function backendUrl(cfg) {
+  return process.env.LORE_BACKEND_URL || cfg.backendUrl || 'http://localhost:8099';
+}
+
+function backendHeaders(cfg) {
+  return cfg.localToken
+    ? { 'content-type': 'application/json', 'X-Lore-Token': cfg.localToken }
+    : { 'content-type': 'application/json' };
+}
+
 // ---------- transcript distillation ----------
 // Reuses the same logic as scraper.js ingestPromptHistory: keeps user prompts
 // and assistant turns that reference files/decisions, drops tool noise and huge blobs.
@@ -198,16 +208,12 @@ async function flush(key, meta, text, cfg) {
     return;
   }
 
-  // Wiring value: env var (LORE_BACKEND_URL) > cfg.backendUrl (already loaded above) >
-  // default. cfg is loadLoreConfig()'s output, so no extra file read needed here.
-  const BACKEND = process.env.LORE_BACKEND_URL || cfg.backendUrl || 'http://localhost:8099';
-
   const ac    = new AbortController();
   const timer = setTimeout(() => ac.abort(), 800);
   try {
-    await fetch(`${BACKEND}/capture`, {
+    await fetch(`${backendUrl(cfg)}/capture`, {
       method: 'POST',
-      headers: cfg.localToken ? { 'content-type': 'application/json', 'X-Lore-Token': cfg.localToken } : { 'content-type': 'application/json' },
+      headers: backendHeaders(cfg),
       body: JSON.stringify({
         session_id: key,
         title:      `Lore Session ${key.slice(0, 8)}`,
@@ -225,6 +231,32 @@ async function flush(key, meta, text, cfg) {
   } catch {
     clearTimeout(timer);
     // POST failed (backend down, timeout, etc.) — keep buffer, exit 0 regardless.
+  }
+}
+
+async function enqueueLearn(key, transcriptPath, cfg) {
+  if (!cfg.scope || !cfg.owner || !cfg.tenant) return;
+
+  const ac    = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 800);
+  try {
+    await fetch(`${backendUrl(cfg)}/learn/enqueue`, {
+      method: 'POST',
+      headers: backendHeaders(cfg),
+      body: JSON.stringify({
+        session_id:      key,
+        transcript_path: transcriptPath || null,
+        cwd:             process.cwd(),
+        scope:           cfg.scope,
+        owner:           cfg.owner,
+        tenant:          cfg.tenant,
+      }),
+      signal: ac.signal,
+    });
+  } catch {
+    // Best-effort follow-up only - never block hook exit.
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -302,6 +334,7 @@ async function main() {
       writeBuffer(sessionKey, finalText);  // replace buffer with clean distilled note
       await flush(sessionKey, meta, finalText, cfg);
     }
+    await enqueueLearn(sessionKey, transcriptPath, cfg);
   }
 }
 

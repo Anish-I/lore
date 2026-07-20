@@ -332,6 +332,41 @@ contextBridge.exposeInMainWorld('lore', {
     setAuto: (on)   => ipcRenderer.invoke('upkeep:set-auto', on),
   },
 
+  // --- Lore Learn review (backend-only, no filesystem access) ---
+  // status(tenant?)       -> GET /learn/status
+  // pending(tenant?)      -> GET /learn/skills
+  // diff(name, tenant?)   -> GET /learn/skills/:name/diff
+  // approve(name, tenant) -> POST /learn/skills/:name/approve
+  // reject(name, tenant)  -> POST /learn/skills/:name/reject
+  learn: {
+    status: (tenant, scope) => ipcRenderer.invoke('learn:status', { tenant, scope }),
+    pending: (tenant, scope) => ipcRenderer.invoke('learn:pending', { tenant, scope }),
+    diff: (name, tenant, scope) => ipcRenderer.invoke('learn:diff', { name, tenant, scope }),
+    approve: (name, tenant, scope, owner) =>
+      ipcRenderer.invoke('learn:approve', { name, tenant, scope, owner }),
+    reject: (name, tenant, scope, owner) =>
+      ipcRenderer.invoke('learn:reject', { name, tenant, scope, owner }),
+  },
+
+  // User-owned context and past work. The renderer never reads memory files.
+  personalMemory: {
+    list: (tenant, owner, scope) =>
+      ipcRenderer.invoke('personal-memory:list', { tenant, owner, scope }),
+    replace: (kind, text, tenant, owner, scope) =>
+      ipcRenderer.invoke('personal-memory:replace', { kind, text, tenant, owner, scope }),
+    history: (kind, tenant, owner, scope) =>
+      ipcRenderer.invoke('personal-memory:history', { kind, tenant, owner, scope }),
+    rollback: (kind, version, tenant, owner, scope) =>
+      ipcRenderer.invoke('personal-memory:rollback', { kind, version, tenant, owner, scope }),
+    forget: (kind, tenant, owner, scope) =>
+      ipcRenderer.invoke('personal-memory:delete', { kind, tenant, owner, scope }),
+    export: (tenant, owner, scope) =>
+      ipcRenderer.invoke('personal-memory:export', { tenant, owner, scope }),
+  },
+  sessions: {
+    recall: (mode, opts) => ipcRenderer.invoke('sessions:recall', { mode, ...(opts || {}) }),
+  },
+
   // --- backend (the running lore.api) ---
   presets: async () => {
     const r = await fetch(`${BACKEND}/presets`, { headers: authH() });

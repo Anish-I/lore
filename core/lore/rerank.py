@@ -24,11 +24,10 @@ import os as _os
 
 class LocalReranker:
     """Real cross-encoder reranking via fastembed (ONNX, offline)."""
-    # ms-marco-L12 over L6: measured +2pp r@1 / +MRR on LoCoMo two-stage at ~56ms
-    # (vs 29ms) — a free precision win, no re-index needed (rerank is query-time).
-    # LORE_RERANK_MODEL overrides (e.g. jina-reranker-v2-base-multilingual for best
-    # r@10 at higher latency). See the 2026-07-10 retrieval campaign.
-    DEFAULT_MODEL = _os.environ.get("LORE_RERANK_MODEL") or "Xenova/ms-marco-MiniLM-L-12-v2"
+    # L6 is the local default: on the 2026-07-18 Trusted Recall note fixture it
+    # preserved hit@1/3/5 while reducing P95 from 701ms to 370ms. L12 retains a
+    # small MRR advantage and remains available through LORE_RERANK_MODEL.
+    DEFAULT_MODEL = _os.environ.get("LORE_RERANK_MODEL") or "Xenova/ms-marco-MiniLM-L-6-v2"
     _cache = {}
     def __init__(self, model=DEFAULT_MODEL):
         from fastembed.rerank.cross_encoder import TextCrossEncoder

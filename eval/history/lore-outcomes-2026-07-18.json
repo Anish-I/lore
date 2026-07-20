@@ -1,0 +1,81 @@
+{
+  "result": {
+    "category_metrics": {
+      "capability_discovery": 1.0,
+      "connected_execution": 1.0,
+      "false_learning_resistance": 1.0,
+      "natural_session_recall": 1.0,
+      "personalization": 1.0,
+      "return_weeks_later": 1.0,
+      "understandable_undo": 1.0,
+      "workflow_reuse": 1.0
+    },
+    "category_scores": {
+      "capability_discovery": 5.0,
+      "connected_execution": 10.0,
+      "false_learning_resistance": 20.0,
+      "natural_session_recall": 15.0,
+      "personalization": 10.0,
+      "return_weeks_later": 15.0,
+      "understandable_undo": 10.0,
+      "workflow_reuse": 15.0
+    },
+    "failed_gates": [],
+    "gates": {
+      "exact_rollback": true,
+      "zero_cross_user_leaks": true,
+      "zero_unsafe_skill_creates": true
+    },
+    "latencies_ms": {
+      "probe_p50": 1744.1,
+      "probe_p95": 2430.4
+    },
+    "measurement": "contract-regression",
+    "probes": {
+      "capability_discovery": {
+        "duration_ms": 658.7,
+        "passed": true,
+        "summary": "Tests  11 passed (11)"
+      },
+      "connected_execution": {
+        "duration_ms": 1001.3,
+        "passed": true,
+        "summary": "Tests  6 passed (6)"
+      },
+      "false_learning_resistance": {
+        "duration_ms": 1189.2,
+        "passed": true,
+        "summary": "7 passed in 0.19s"
+      },
+      "natural_session_recall": {
+        "duration_ms": 2299.0,
+        "passed": true,
+        "summary": "2 passed, 1 warning in 1.08s"
+      },
+      "personalization": {
+        "duration_ms": 2334.5,
+        "passed": true,
+        "summary": "3 passed, 1 warning in 1.14s"
+      },
+      "return_weeks_later": {
+        "duration_ms": 2430.4,
+        "passed": true,
+        "summary": "10 passed, 1 warning in 1.16s"
+      },
+      "understandable_undo": {
+        "duration_ms": 2450.7,
+        "passed": true,
+        "summary": "5 passed, 1 warning in 1.21s"
+      },
+      "workflow_reuse": {
+        "duration_ms": 1056.6,
+        "passed": true,
+        "summary": "1 passed in 0.13s"
+      }
+    },
+    "raw_total": 100.0,
+    "schema": "lore-outcomes/v1",
+    "system": "lore",
+    "total": 100.0
+  }
+}

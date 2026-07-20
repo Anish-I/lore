@@ -135,6 +135,40 @@ class TestFastMCPToolEnvDefaults:
         assert captured["payload"]["principal_scopes"] == ["explicit-scope"]
         assert captured["payload"]["tenant_id"] == "explicit-tenant"
 
+    def test_profile_is_read_only_and_uses_owner_env(self, monkeypatch):
+        monkeypatch.setenv("LORE_SCOPES", "private")
+        monkeypatch.setenv("LORE_TENANT", "tenant-a")
+        monkeypatch.setenv("LORE_OWNER", "owner-a")
+        monkeypatch.setattr(mcp_server, "_backend_up", lambda: True)
+        seen = {}
+
+        def fake_get(path):
+            seen["path"] = path
+            return {"documents": [{"kind": "user", "text": "Prefers concise answers."}]}, None
+
+        monkeypatch.setattr(mcp_server, "_safe_get", fake_get)
+        text = mcp_server.lore_profile()
+        assert "Prefers concise answers" in text
+        assert "/learn/memory?" in seen["path"]
+        assert "owner=owner-a" in seen["path"]
+
+    def test_session_recall_posts_mode_and_identity(self, monkeypatch):
+        monkeypatch.setenv("LORE_SCOPES", "private")
+        monkeypatch.setenv("LORE_TENANT", "tenant-a")
+        monkeypatch.setattr(mcp_server, "_backend_up", lambda: True)
+        seen = {}
+
+        def fake_post(path, payload):
+            seen.update(path=path, payload=payload)
+            return {"sessions": [{"note_id": "s1", "title": "Past session"}]}, None
+
+        monkeypatch.setattr(mcp_server, "_safe_post", fake_post)
+        text = mcp_server.lore_recall_sessions(mode="discovery", query="deployment")
+        assert "Past session" in text
+        assert seen["path"] == "/sessions/recall"
+        assert seen["payload"]["mode"] == "discovery"
+        assert seen["payload"]["scopes"] == ["private"]
+
 
 # ---------------------------------------------------------------------------
 # Low-level SDK fallback path: exercise _call_tool directly (works regardless
