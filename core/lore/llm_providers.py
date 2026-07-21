@@ -49,6 +49,15 @@ def codex_call(prompt: str, timeout: int = 180) -> str:
     at a LOW reasoning effort for speed (override with LORE_CODEX_EFFORT, e.g. minimal/low/
     medium). Optional fast model via LORE_CODEX_MODEL."""
     binp = _find_codex_bin()
+    # The prompt is passed as argv below. A Windows `.cmd`/`.bat` shim (e.g. a `codex.cmd` picked up
+    # from PATH when the real codex.exe glob missed) truncates a multi-line argv argument at the
+    # first newline — silently corrupting the prompt. `_find_codex_bin` prefers the real .exe, so
+    # this only trips on an unusual install; fail loudly with guidance rather than answer wrongly.
+    if binp.lower().endswith((".cmd", ".bat")):
+        raise ProviderError(
+            f"Codex resolved to a shell shim ({binp}) that mangles multi-line prompts. "
+            "Set CODEX_BIN to the real codex.exe."
+        )
     effort = os.environ.get("LORE_CODEX_EFFORT", "low")
     args = [binp, "exec", "--sandbox", "read-only", "--skip-git-repo-check",
             "-c", f"model_reasoning_effort={effort}"]
@@ -77,8 +86,13 @@ def claude_call(prompt: str, timeout: int = 180) -> str:
     if not binp:
         raise ProviderError("Claude CLI not found (install Claude Code or set CLAUDE_BIN)")
     env = {k: v for k, v in os.environ.items() if k != "CLAUDECODE"}
+    # Prompt goes on STDIN, never argv. On Windows `shutil.which("claude")` resolves to the npm
+    # `claude.CMD` batch shim, and cmd.exe truncates a multi-line argv argument at the first
+    # newline — so a passed-as-argv prompt arrives chopped to its first line and the model answers
+    # "I don't see a question". stdin is delivered intact through the shim and is standard
+    # `claude -p` behavior on every platform. Do NOT move the prompt back into the arg list.
     out = subprocess.run(
-        [binp, "-p", prompt], capture_output=True, text=True,
+        [binp, "-p"], input=prompt, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=timeout, env=env,
     ).stdout or ""
     return out.strip()

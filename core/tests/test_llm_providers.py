@@ -33,11 +33,27 @@ def test_claude_call_unsets_claudecode_and_returns_stdout(monkeypatch):
     seen = {}
     def fake_run(cmd, **kw):
         seen["env_has_claudecode"] = "CLAUDECODE" in (kw.get("env") or {})
+        seen["cmd"] = cmd
+        seen["input"] = kw.get("input")
         return types.SimpleNamespace(stdout="[]\n", stderr="", returncode=0)
     monkeypatch.setattr(P.subprocess, "run", fake_run)
-    out = P.claude_call("hi")
+    prompt = "line one\nline two\nline three"
+    out = P.claude_call(prompt)
     assert out == "[]"
     assert seen["env_has_claudecode"] is False, "CLAUDECODE must be stripped for the nested call"
+    # Regression guard: the prompt must ride on STDIN, never argv. Passing a multi-line prompt as an
+    # argv element gets truncated at the first newline by the Windows claude.CMD shim.
+    assert seen["input"] == prompt, "prompt must be delivered via stdin (input=)"
+    assert prompt not in seen["cmd"], "prompt must NOT be in the argv list"
+
+
+def test_codex_call_rejects_cmd_shim(monkeypatch):
+    # A .cmd/.bat shim truncates multi-line argv prompts on Windows — codex_call must refuse it
+    # loudly instead of shelling out and getting a corrupted (first-line-only) prompt.
+    monkeypatch.setattr(P, "_find_codex_bin", lambda: r"C:\path\to\codex.cmd")
+    with pytest.raises(P.ProviderError) as exc:
+        P.codex_call("some\nmulti-line\nprompt")
+    assert "CODEX_BIN" in str(exc.value)
 
 
 def test_byok_requires_key(monkeypatch):
