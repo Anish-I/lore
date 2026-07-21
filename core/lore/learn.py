@@ -118,13 +118,26 @@ def load_transcript(path: str | os.PathLike[str]) -> dict[str, Any]:
         content = msg.get("content", item.get("content", ""))
         text = _message_text(content)[:20_000]
         tool_results = []
+        tool_uses = []
         if isinstance(content, list):
             for block in content:
-                if isinstance(block, dict) and block.get("type") == "tool_result":
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") == "tool_result":
                     result_text = _message_text(block.get("content", ""))[:20_000]
                     tool_results.append({
                         "text": result_text,
                         "is_error": bool(block.get("is_error")),
+                    })
+                elif block.get("type") == "tool_use":
+                    # Observations (#4): file paths from tool calls are the
+                    # deterministic spine of files_read/files_modified — paths
+                    # ONLY, never arguments or content.
+                    inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+                    fp = inp.get("file_path") or inp.get("notebook_path") or inp.get("path")
+                    tool_uses.append({
+                        "name": str(block.get("name") or ""),
+                        "file_path": str(fp) if isinstance(fp, str) and fp else None,
                     })
         tur = item.get("toolUseResult")
         if isinstance(tur, dict):
@@ -136,7 +149,8 @@ def load_transcript(path: str | os.PathLike[str]) -> dict[str, Any]:
                     "text": result_text,
                     "is_error": bool(tur.get("interrupted")) or bool(tur.get("is_error")),
                 })
-        events.append({"line": line_no, "role": role, "text": text, "tool_results": tool_results})
+        events.append({"line": line_no, "role": role, "text": text,
+                       "tool_results": tool_results, "tool_uses": tool_uses})
         if text:
             add_prompt(f"{role}: {text}")
         for result in tool_results:

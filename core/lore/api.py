@@ -1130,6 +1130,50 @@ def learn_enqueue(req: LearnEnqueueReq, authorization: Optional[str] = Header(de
     return {key: result[key] for key in ("ok", "run_id", "status", "duplicate")}
 
 
+class ObservationExtractReq(BaseModel):
+    tenant: str
+    session_id: str
+    transcript_path: str
+    origin_note_id: Optional[str] = None
+
+
+@app.post("/observations/extract")
+def observations_extract(req: ObservationExtractReq):
+    """Extract ONE structured observation from a captured session transcript
+    (#4 file-anchored recall). Deterministic file activity from tool_use
+    blocks; type/summary/facts LLM-enriched when a provider is configured,
+    deterministic fallback otherwise. Called by the desktop Stop hook after
+    /capture; idempotency is per-call (re-extraction appends — ADD-only)."""
+    from . import observations
+    try:
+        result = observations.extract_and_store(
+            _conn, tenant=req.tenant, session_id=req.session_id,
+            transcript_path=req.transcript_path,
+            origin_note_id=req.origin_note_id)
+    except OSError:
+        raise HTTPException(status_code=422, detail="transcript_path unreadable")
+    return result
+
+
+@app.get("/observations")
+def observations_list(tenant: Optional[str] = None, file: Optional[str] = None,
+                      session: Optional[str] = None, limit: int = 5):
+    """File-anchored recall query (#3 hook contract): newest-first observations
+    touching `file` (last-two-segment path key match), or all observations for
+    a session. Exactly one of file/session is required."""
+    from . import observations
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    if bool(file) == bool(session):
+        raise HTTPException(status_code=422,
+                            detail="exactly one of file or session is required")
+    if file:
+        rows = observations.for_file(_conn, tenant=tenant, file_path=file, limit=limit)
+    else:
+        rows = observations.for_session(_conn, tenant=tenant, session_id=session, limit=limit)
+    return {"observations": rows}
+
+
 @app.get("/learn/status")
 def learn_status(tenant: Optional[str] = None, scopes: Optional[str] = None,
                  authorization: Optional[str] = Header(default=None)):

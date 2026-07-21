@@ -234,6 +234,32 @@ async function flush(key, meta, text, cfg) {
   }
 }
 
+// Structured observation (#4): one typed work-record per session — the
+// backend extracts file activity deterministically from the transcript's
+// tool_use blocks (paths only). Best-effort, same 800 ms discipline.
+async function extractObservations(key, transcriptPath, cfg) {
+  if (!transcriptPath || !cfg.tenant) return;
+
+  const ac    = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 800);
+  try {
+    await fetch(`${backendUrl(cfg)}/observations/extract`, {
+      method: 'POST',
+      headers: backendHeaders(cfg),
+      body: JSON.stringify({
+        tenant:          cfg.tenant,
+        session_id:      key,
+        transcript_path: transcriptPath,
+      }),
+      signal: ac.signal,
+    });
+  } catch {
+    // Best-effort follow-up only - never block hook exit.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function enqueueLearn(key, transcriptPath, cfg) {
   if (!cfg.scope || !cfg.owner || !cfg.tenant) return;
 
@@ -335,6 +361,7 @@ async function main() {
       await flush(sessionKey, meta, finalText, cfg);
     }
     await enqueueLearn(sessionKey, transcriptPath, cfg);
+    await extractObservations(sessionKey, transcriptPath, cfg);
   }
 }
 

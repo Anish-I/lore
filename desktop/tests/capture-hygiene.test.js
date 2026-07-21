@@ -193,7 +193,8 @@ describe('lore-capture stop learn enqueue', () => {
     await stopServer(server);
 
     expect(result.stderr).toBe('');
-    expect(requests.map((req) => req.url)).toEqual(['/capture', '/learn/enqueue']);
+    expect(requests.map((req) => req.url)).toEqual(
+      ['/capture', '/learn/enqueue', '/observations/extract']);
     expect(requests[0].headers['x-lore-token']).toBe('test-token');
     expect(requests[0].body).toMatchObject({
       session_id: 'stop-sess',
@@ -212,6 +213,11 @@ describe('lore-capture stop learn enqueue', () => {
       scope: 'scope-a',
       owner: 'owner-a',
       tenant: 'tenant-a',
+    });
+    expect(requests[2].body).toEqual({
+      tenant: 'tenant-a',
+      session_id: 'stop-sess',
+      transcript_path: transcriptPath,
     });
   });
 
@@ -252,7 +258,8 @@ describe('lore-capture stop learn enqueue', () => {
     await stopServer(server);
 
     expect(result.stderr).toBe('');
-    expect(requests.map((req) => req.url)).toEqual(['/capture', '/learn/enqueue']);
-    expect(elapsedMs).toBeLessThan(4_000);
+    expect(requests.map((req) => req.url)).toEqual(
+      ['/capture', '/learn/enqueue', '/observations/extract']);
+    expect(elapsedMs).toBeLessThan(4_000);   // two 800ms aborts still fit
   });
 });

@@ -248,6 +248,26 @@ create table if not exists section_proposals(
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create table if not exists observations(
+  id text primary key,
+  tenant_id text not null,
+  session_id text,
+  ts timestamptz default now(),
+  type text not null,
+  summary text not null,
+  facts text,
+  concepts text,
+  files_read text,
+  files_modified text,
+  origin_note_id text,
+  outcome text);
+create index if not exists observations_session on observations(tenant_id, session_id);
+create table if not exists observation_files(
+  observation_id text not null,
+  tenant_id text not null,
+  path_key text not null,
+  path_norm text not null);
+create index if not exists observation_files_key on observation_files(tenant_id, path_key);
 create index if not exists sections_tenant on section_proposals(tenant_id);
 create table if not exists learn_runs(
   id text primary key,
@@ -504,6 +524,26 @@ create table if not exists section_proposals(
   created_at timestamp default current_timestamp,
   updated_at timestamp default current_timestamp,
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create table if not exists observations(
+  id text primary key,
+  tenant_id text not null,
+  session_id text,
+  ts timestamp default current_timestamp,
+  type text not null,
+  summary text not null,
+  facts text,
+  concepts text,
+  files_read text,
+  files_modified text,
+  origin_note_id text,
+  outcome text);
+create index if not exists observations_session on observations(tenant_id, session_id);
+create table if not exists observation_files(
+  observation_id text not null,
+  tenant_id text not null,
+  path_key text not null,
+  path_norm text not null);
+create index if not exists observation_files_key on observation_files(tenant_id, path_key);
 create index if not exists sections_tenant on section_proposals(tenant_id);
 create table if not exists learn_runs(
   id text primary key,

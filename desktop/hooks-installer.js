@@ -39,12 +39,14 @@ const HOOKS_DIR   = path.join(LORE_DIR, 'hooks');
 const LIB_DIR     = path.join(LORE_DIR, 'lib');
 const HOOK_SCRIPT = path.join(HOOKS_DIR, 'lore-capture.js');
 const INJECT_SCRIPT = path.join(HOOKS_DIR, 'lore-inject.js');
+const FILE_HISTORY_SCRIPT = path.join(HOOKS_DIR, 'lore-file-history.js');
 const CODEX_NOTIFY_SCRIPT = path.join(HOOKS_DIR, 'lore-codex-notify.js');
 const HOOK_REDACT = path.join(LIB_DIR,   'redact.js');
 
 // Source files shipped with the Electron app.
 const CAPTURE_SRC = path.join(__dirname, 'assets', 'lore-capture.js');
 const INJECT_SRC  = path.join(__dirname, 'assets', 'lore-inject.js');
+const FILE_HISTORY_SRC = path.join(__dirname, 'assets', 'lore-file-history.js');
 const CODEX_NOTIFY_SRC = path.join(__dirname, 'assets', 'lore-codex-notify.js');
 const REDACT_SRC  = path.join(__dirname, 'lib',    'redact.js');
 
@@ -131,7 +133,7 @@ function detectTools() {
 function isLoreEntry(h) {
   if (!h) return false;
   if (h._lore === true) return true;
-  const hit = (c) => typeof c === 'string' && (c.includes('lore-capture.js') || c.includes('lore-inject.js') || c.includes('lore-codex-notify.js'));
+  const hit = (c) => typeof c === 'string' && (c.includes('lore-capture.js') || c.includes('lore-inject.js') || c.includes('lore-file-history.js') || c.includes('lore-codex-notify.js'));
   if (hit(h.command)) return true;
   if (Array.isArray(h.hooks)) return h.hooks.some((x) => x && hit(x.command));
   return false;
@@ -144,11 +146,13 @@ function materializeHookFiles() {
   fs.mkdirSync(LIB_DIR,   { recursive: true });
   fs.copyFileSync(CAPTURE_SRC, HOOK_SCRIPT);
   fs.copyFileSync(INJECT_SRC,  INJECT_SCRIPT);
+  fs.copyFileSync(FILE_HISTORY_SRC, FILE_HISTORY_SCRIPT);
   fs.copyFileSync(CODEX_NOTIFY_SRC, CODEX_NOTIFY_SCRIPT);
   fs.copyFileSync(REDACT_SRC,  HOOK_REDACT);
   // Make the hooks executable on POSIX (no-op on Windows, harmless).
   try { fs.chmodSync(HOOK_SCRIPT, 0o755); } catch {}
   try { fs.chmodSync(INJECT_SCRIPT, 0o755); } catch {}
+  try { fs.chmodSync(FILE_HISTORY_SCRIPT, 0o755); } catch {}
   try { fs.chmodSync(CODEX_NOTIFY_SCRIPT, 0o755); } catch {}
 }
 
@@ -239,6 +243,23 @@ function installClaude(opts) {
       hooks: [{ type: 'command', command: `${nodeCmd} "${INJECT_SCRIPT}"` }],
       _lore: true,
     });
+
+  }
+
+  // File-anchored recall (#3): before Claude reads a file, inject a mini
+  // timeline of past Lore observations about it. Matcher-scoped to Read;
+  // the script itself exits silently on any gate/API failure so it can never
+  // block a read. The ensure+filter runs UNCONDITIONALLY (stale entries from
+  // a prior install must not survive an inject-disabled reinstall); the push
+  // follows the inject opt-in, since this is a read-FROM-Lore hook too.
+  if (!Array.isArray(settings.hooks.PreToolUse)) settings.hooks.PreToolUse = [];
+  settings.hooks.PreToolUse = settings.hooks.PreToolUse.filter((h) => !isLoreEntry(h));
+  if (injectEnabled) {
+    settings.hooks.PreToolUse.push({
+      matcher: 'Read',
+      hooks: [{ type: 'command', command: `${nodeCmd} "${FILE_HISTORY_SCRIPT}"` }],
+      _lore: true,
+    });
   }
 
   // Atomic write: write to a temp file, then rename over the target.
@@ -269,7 +290,10 @@ function uninstallClaude() {
   catch (e) { return { ok: false, reason: `Could not parse settings: ${e.message}` }; }
 
   const hooks = settings.hooks || {};
-  for (const event of Object.keys(HOOK_EVENTS)) {
+  // Sweep EVERY event array, not just HOOK_EVENTS — Lore also wires
+  // UserPromptSubmit (inject) and PreToolUse (file history), and the filter
+  // only ever removes Lore-tagged entries, so a full sweep is safe.
+  for (const event of Object.keys(hooks)) {
     if (Array.isArray(hooks[event])) {
       hooks[event] = hooks[event].filter((h) => !isLoreEntry(h));
     }
