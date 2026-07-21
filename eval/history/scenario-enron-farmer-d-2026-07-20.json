@@ -1,0 +1,55 @@
+{
+  "scenario": "enron-farmer-d",
+  "notes": 1500,
+  "queries": 55,
+  "index_seconds": {
+    "ctx0": 83.07149260000006
+  },
+  "variants": {
+    "ctx0-qp0": {
+      "knownitem": {
+        "n": 40,
+        "recall@1": 0.975,
+        "recall@5": 1.0,
+        "mrr": 0.988,
+        "candidates_contain_gold@40": 1.0,
+        "rerank_input_contains_gold@20": 1.0
+      },
+      "noanswer": {
+        "n": 15
+      },
+      "_overall": {
+        "n": 40,
+        "recall@5": 1.0,
+        "recall@1": 0.975,
+        "mrr": 0.988,
+        "rerank_input_contains_gold@20": 1.0,
+        "candidates_contain_gold@40": 1.0,
+        "p50_ms": 380.8,
+        "p95_ms": 459.9,
+        "top1_score_answerable_mean": 0.7361,
+        "top1_score_noanswer_mean": 0.5074
+      }
+    }
+  },
+  "clustering": {
+    "gold_topics": 18,
+    "variant_topics": 18,
+    "fragmentation_index": 1.0,
+    "before": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0
+    },
+    "merge_proposals": 0,
+    "false_merges": 0,
+    "merge_precision": null,
+    "after": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0,
+      "topics": 18
+    },
+    "merge_seconds": 9.9
+  }
+}

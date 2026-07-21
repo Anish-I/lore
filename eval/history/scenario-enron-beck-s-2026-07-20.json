@@ -1,0 +1,55 @@
+{
+  "scenario": "enron-beck-s",
+  "notes": 1193,
+  "queries": 55,
+  "index_seconds": {
+    "ctx0": 66.28206639999917
+  },
+  "variants": {
+    "ctx0-qp0": {
+      "knownitem": {
+        "n": 40,
+        "recall@1": 0.9,
+        "recall@5": 1.0,
+        "mrr": 0.928,
+        "candidates_contain_gold@40": 1.0,
+        "rerank_input_contains_gold@20": 1.0
+      },
+      "noanswer": {
+        "n": 15
+      },
+      "_overall": {
+        "n": 40,
+        "recall@5": 1.0,
+        "recall@1": 0.9,
+        "mrr": 0.928,
+        "rerank_input_contains_gold@20": 1.0,
+        "candidates_contain_gold@40": 1.0,
+        "p50_ms": 351.8,
+        "p95_ms": 378.3,
+        "top1_score_answerable_mean": 0.6565,
+        "top1_score_noanswer_mean": 0.5243
+      }
+    }
+  },
+  "clustering": {
+    "gold_topics": 60,
+    "variant_topics": 60,
+    "fragmentation_index": 1.0,
+    "before": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0
+    },
+    "merge_proposals": 0,
+    "false_merges": 0,
+    "merge_precision": null,
+    "after": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0,
+      "topics": 60
+    },
+    "merge_seconds": 13.3
+  }
+}

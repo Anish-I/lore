@@ -1,0 +1,55 @@
+{
+  "scenario": "enron-lokay-m",
+  "notes": 1500,
+  "queries": 55,
+  "index_seconds": {
+    "ctx0": 187.4731060999984
+  },
+  "variants": {
+    "ctx0-qp0": {
+      "knownitem": {
+        "n": 40,
+        "recall@1": 0.825,
+        "recall@5": 0.95,
+        "mrr": 0.885,
+        "candidates_contain_gold@40": 1.0,
+        "rerank_input_contains_gold@20": 1.0
+      },
+      "noanswer": {
+        "n": 15
+      },
+      "_overall": {
+        "n": 40,
+        "recall@5": 0.95,
+        "recall@1": 0.825,
+        "mrr": 0.885,
+        "rerank_input_contains_gold@20": 1.0,
+        "candidates_contain_gold@40": 1.0,
+        "p50_ms": 399.5,
+        "p95_ms": 545.8,
+        "top1_score_answerable_mean": 0.6462,
+        "top1_score_noanswer_mean": 0.5032
+      }
+    }
+  },
+  "clustering": {
+    "gold_topics": 10,
+    "variant_topics": 10,
+    "fragmentation_index": 1.0,
+    "before": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0
+    },
+    "merge_proposals": 0,
+    "false_merges": 0,
+    "merge_precision": null,
+    "after": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0,
+      "topics": 10
+    },
+    "merge_seconds": 6.3
+  }
+}

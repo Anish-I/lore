@@ -51,7 +51,23 @@
    ~even with top-8 CHUNK injection when chunks are small — snippet length is the
    lever. Competitor "10×" claims assume naive full-note injection as baseline.
 
-9. **Cowork protocol**: parallel independent gap analyses (Claude audit + Sol
+9. **Enron corpus on Windows: files named `1.` (trailing dot) are INVISIBLE to
+   normal Win32 paths** — `stat`/`open` silently strip the dot and miss every
+   file, so globs "succeed" with zero results. Fix: `\\?\` extended-length
+   prefix on the root path before any pathlib traversal. Also: the CMU tarball
+   is ~443MB compressed (the page's "about 1.7Gb" is the unpacked size) — a
+   clean curl exit at 443MB is NOT a truncated download.
+
+10. **Real-data validation pattern that worked**: owners' own Enron folders as
+   clustering gold (strict precision = lower bound, proposal list for human
+   review), known-item queries from corpus-unique verbatim phrase PAIRS with
+   title-word exclusion. Results: boundary metric held on real email (160/160),
+   pooled r@1 0.913, zero merge proposals across 120 real folders (safe but
+   zero healing — the v2 gates are recall-conservative on real data), and the
+   no-answer separation NARROWS on real text (0.10 worst case) → G10 threshold
+   must be per-corpus calibrated.
+
+11. **Cowork protocol**: parallel independent gap analyses (Claude audit + Sol
    literature-anchored critique from the same pasted evidence) converged on the same
    top-3 and each contributed uniques (Sol: eval statistical power, LTR framing,
    exact-lane ordering; Claude: LoCoMo-at-scale anchor, fastembed/contextualize

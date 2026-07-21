@@ -150,6 +150,42 @@ SessionStart digest (#2) on anyone's arithmetic.
   metrics are valid, only its indexing wall-clock is not comparable.
 - Single seed (7); bootstrap CIs arrive with G1.
 
+## Real-data validation — Enron corpus (added same day)
+
+Anish challenged the two 100% tiles as potentially inflated (in-sample threshold
+tuning; authored corpora). Response: the public CMU Enron corpus (2015-05-07),
+four benchmark mailboxes (Bekkerman et al. convention), converted by
+`eval/scenarios/enron_adapter.py` (Sol-authored; two integration fixes: harness
+query-schema reconcile + the Win32 trailing-dot filename bug — Enron files are
+named `1.`, requiring the `\\?\` extended-length prefix on Windows).
+
+Real mailboxes, owners' own folders as clustering gold, known-item queries from
+corpus-unique verbatim body-phrase pairs, no-answer probes verified absent:
+
+| Mailbox | Notes | Folders | known-item r@1 / r@5 | in20/in40 | p50/p95 ms | sep (ans vs none) | merges |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| beck-s | 1,193 | 60 | 0.900 / 1.00 | 1.0 / 1.0 | 352 / 378 | 0.66 vs 0.52 | 0 (0 false) |
+| farmer-d | 1,500 | 18 | 0.975 / 1.00 | 1.0 / 1.0 | 381 / 460 | 0.74 vs 0.51 | 0 (0 false) |
+| kaminski-v | 1,500 | 32 | 0.950 / 1.00 | 1.0 / 1.0 | 417 / 494 | 0.64 vs 0.54 | 0 (0 false) |
+| lokay-m | 1,500 | 10 | 0.825 / 0.95 | 1.0 / 1.0 | 400 / 546 | 0.65 vs 0.50 | 0 (0 false) |
+| **pooled (160 q)** | 5,693 | 120 | **0.913 / 0.988** | **1.0 / 1.0** | — | — | **0 / 0** |
+
+Findings:
+1. **The boundary claim survives real data**: the right email reached the rerank
+   input on all 160 real known-item queries. Not a synthetic artifact.
+2. **Ranking is honestly imperfect on real text**: pooled r@1 0.913; lokay-m
+   (newsletter/discussion-heavy) is the weak case at 0.825 / 0.95.
+3. **Clustering did no harm on 120 real human folders** — zero proposals across
+   four mailboxes full of genuinely adjacent folders (beck-s: europe/london/uk).
+   Flip side: zero healing attempted; on real data the v2 gates may be too
+   conservative — a recall knob question (real fragment labels would be needed
+   to tune it), explicitly NOT a safety question.
+4. **No-answer separation replicates on real email but narrows**: gaps of
+   0.10–0.23 vs 0.19–0.27 synthetic. kaminski-v (0.64 vs 0.54) says the G10
+   threshold must be per-corpus calibrated, not a fixed constant.
+5. Latency at 1.2–1.5k real emails: p50 352–417ms (real bodies are longer than
+   synthetic notes; consistent with the store-size curve).
+
 ## Recommended next steps (priority order)
 
 1. Production fixes for the two ingest pathologies (title-index cache first).
