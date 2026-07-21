@@ -35,6 +35,7 @@ def test_claude_call_unsets_claudecode_and_returns_stdout(monkeypatch):
         seen["env_has_claudecode"] = "CLAUDECODE" in (kw.get("env") or {})
         seen["cmd"] = cmd
         seen["input"] = kw.get("input")
+        seen["cwd"] = kw.get("cwd")
         return types.SimpleNamespace(stdout="[]\n", stderr="", returncode=0)
     monkeypatch.setattr(P.subprocess, "run", fake_run)
     prompt = "line one\nline two\nline three"
@@ -45,6 +46,9 @@ def test_claude_call_unsets_claudecode_and_returns_stdout(monkeypatch):
     # argv element gets truncated at the first newline by the Windows claude.CMD shim.
     assert seen["input"] == prompt, "prompt must be delivered via stdin (input=)"
     assert prompt not in seen["cmd"], "prompt must NOT be in the argv list"
+    # Must run from a neutral cwd so the agentic CLI can't load the repo's CLAUDE.md/memory as
+    # ambient context and leak it into the answer.
+    assert seen["cwd"] == P._isolated_cwd(), "claude CLI must run in the isolated cwd"
 
 
 def test_codex_call_rejects_cmd_shim(monkeypatch):

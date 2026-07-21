@@ -19,10 +19,24 @@ import re
 import glob
 import shutil
 import subprocess
+import tempfile
 
 
 class ProviderError(RuntimeError):
     pass
+
+
+def _isolated_cwd() -> str:
+    """A neutral, empty working directory for the CLI shell-outs below.
+
+    codex/claude are *agentic* CLIs: run from inside a project they discover that project's
+    CLAUDE.md / AGENTS.md, auto-memory index, and git status and load it all as ambient context.
+    Lore's backend often runs from inside a repo (dev: cwd=core/), so that ambient context leaks
+    into answers — e.g. the model citing the repo's memory notes instead of the retrieved chunks.
+    Pinning cwd to an empty dir makes the prompt we pass the ONLY context the CLI sees."""
+    d = os.path.join(tempfile.gettempdir(), "lore-cli-cwd")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 # --- Codex CLI (subscription OAuth) ----------------------------------------
@@ -68,7 +82,8 @@ def codex_call(prompt: str, timeout: int = 180) -> str:
     # text + utf-8/replace: codex emits unicode (arrows, em-dashes); the Windows locale
     # codec (cp1252) would crash on those bytes mid-stream.
     proc = subprocess.run(args, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", timeout=timeout)
+                          encoding="utf-8", errors="replace", timeout=timeout,
+                          cwd=_isolated_cwd())
     out = proc.stdout or ""
     if proc.returncode != 0 and not out.strip():
         raise ProviderError(f"codex exec failed (exit {proc.returncode}): {(proc.stderr or '').strip()[:200]}")
@@ -94,6 +109,7 @@ def claude_call(prompt: str, timeout: int = 180) -> str:
     out = subprocess.run(
         [binp, "-p"], input=prompt, capture_output=True, text=True,
         encoding="utf-8", errors="replace", timeout=timeout, env=env,
+        cwd=_isolated_cwd(),
     ).stdout or ""
     return out.strip()
 
