@@ -34,9 +34,20 @@ function issuerBase(clientCfg) {
   return String(clientCfg.issuer || '').replace(/\/+$/, '');
 }
 
-function buildAuthUrl(clientCfg, redirectUri, challenge, state) {
+// Decode a JWT's payload (claims) WITHOUT verifying the signature — the Lore
+// server does the cryptographic verification. We use this only to read the
+// `nonce` claim so the initiating client can bind the id_token to this flow.
+function decodeJwtPayload(token) {
+  const parts = String(token || '').split('.');
+  if (parts.length < 2) return {};
+  try {
+    return JSON.parse(Buffer.from(parts[1], 'base64').toString('utf8'));
+  } catch { return {}; }
+}
+
+function buildAuthUrl(clientCfg, redirectUri, challenge, state, nonce) {
   const u = new URL(clientCfg.auth_uri || `${issuerBase(clientCfg)}/v1/authorize`);
-  u.search = new URLSearchParams({
+  const params = {
     client_id: clientCfg.client_id,
     redirect_uri: redirectUri,
     response_type: 'code',
@@ -45,7 +56,9 @@ function buildAuthUrl(clientCfg, redirectUri, challenge, state) {
     code_challenge_method: 'S256',
     state,
     prompt: 'select_account',
-  }).toString();
+  };
+  if (nonce) params.nonce = nonce;   // OIDC replay-binding (belt-and-suspenders over PKCE)
+  u.search = new URLSearchParams(params).toString();
   return u.toString();
 }
 
@@ -91,6 +104,7 @@ function exchangeCode(clientCfg, code, verifier, redirectUri) {
 function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
   const { verifier, challenge } = generatePkce();
   const state = b64url(crypto.randomBytes(16));
+  const nonce = b64url(crypto.randomBytes(16));
 
   return new Promise((resolve, reject) => {
     // Ephemeral loopback port — Okta allows a 127.0.0.1 redirect for native apps;
@@ -111,6 +125,13 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
         if (!code) return reject(new Error('no authorization code in callback'));
         const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
         const tokens = await exchangeCode(clientCfg, code, verifier, redirectUri);
+        // Bind the id_token to THIS auth request: the nonce we sent must come back
+        // in the token. Combined with the server's signature verification, this
+        // rejects a replayed/injected id_token that wasn't minted for our flow.
+        const claims = decodeJwtPayload(tokens.id_token);
+        if (!claims.nonce || claims.nonce !== nonce) {
+          return reject(new Error('nonce mismatch (possible token replay)'));
+        }
         resolve(tokens);
       } catch (e) { cleanup(); reject(e); }
     });
@@ -121,7 +142,7 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
     server.on('error', (e) => { cleanup(); reject(e); });
     server.listen(0, '127.0.0.1', () => {
       const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
-      openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state));
+      openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state, nonce));
     });
   });
 }

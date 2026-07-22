@@ -316,10 +316,10 @@ create table if not exists connector_seen(
   tenant_id text not null,
   source text not null,
   external_id text not null,
-  scope_id text,
+  scope_id text not null default '',
   todo_count integer default 0,
   seen_at timestamptz default now(),
-  primary key (tenant_id, source, external_id));
+  primary key (tenant_id, source, scope_id, external_id));
 """
 
 # PG migration note: personal_wizards / personal_wizard_chats / ask_history are NEW tables, so the
@@ -396,6 +396,27 @@ do $$ begin
 end $$
 """
 
+
+# connector_seen re-key: the watermark's dedup key gained `scope_id` so two scopes
+# in one tenant syncing same-named folders no longer collide (the 2nd would else
+# silently get zero to-dos). connector_seen is a pure regenerable dedup cache, so
+# the migration just drops the stale table when its PK predates scope_id — the
+# SCHEMA CREATE below rebuilds it and the next sync re-imports (idempotent) once.
+# No shipped DB has this table yet (new in the connector work), so in practice this
+# only resets local dev/test DBs; fresh installs get the correct PK from the start.
+_CONNECTOR_SEEN_REKEY = """
+do $$ begin
+  if exists (select 1 from information_schema.tables where table_name='connector_seen')
+     and not exists (
+       select 1 from information_schema.table_constraints t
+       join information_schema.key_column_usage k on k.constraint_name = t.constraint_name
+       where t.table_name='connector_seen' and t.constraint_type='PRIMARY KEY'
+         and k.column_name='scope_id')
+  then
+    drop table connector_seen;
+  end if;
+end $$
+"""
 
 # Final-shape schema for SQLite (no ALTER/DO$$ migration path needed): includes
 # all M1/M2/M7 columns and the full edges-kind CHECK (base kinds + reasoned-graph
@@ -533,10 +554,10 @@ create table if not exists connector_seen(
   tenant_id text not null,
   source text not null,
   external_id text not null,
-  scope_id text,
+  scope_id text not null default '',
   todo_count integer default 0,
   seen_at timestamp default current_timestamp,
-  primary key (tenant_id, source, external_id));
+  primary key (tenant_id, source, scope_id, external_id));
 """
 
 
@@ -552,6 +573,16 @@ def bootstrap_schema(conn):
     IF NOT EXISTS guards so fresh installs and upgrades both work.
     """
     if isinstance(conn, _SqliteConn):
+        # connector_seen re-key (see _CONNECTOR_SEEN_REKEY): if an existing table
+        # predates scope_id in the PK, drop it (regenerable dedup cache) so the
+        # CREATE below rebuilds it with the new key. Probe via PRAGMA: pk>0 means the
+        # column is part of the primary key.
+        try:
+            cols = conn.execute("PRAGMA table_info(connector_seen)").fetchall()
+            if cols and not any(c[1] == "scope_id" and c[5] for c in cols):
+                conn.execute("drop table connector_seen")
+        except Exception:
+            pass  # table doesn't exist yet; CREATE below handles it
         # Fresh, final-shape schema — no Postgres ALTER/DO$$ migration path.
         conn.executescript(SCHEMA_SQLITE)
         # One exception: SQLite stores created before the created_at column shipped.
@@ -620,6 +651,13 @@ def bootstrap_schema(conn):
     # Step 2b: extend edges kind constraint to include 'topic' (M2 migration).
     try:
         conn.execute(_EDGES_TOPIC_KIND_MIGRATION)
+    except Exception:
+        pass  # table doesn't exist yet; CREATE TABLE below handles that
+
+    # Step 2c: re-key connector_seen to include scope_id (drops the stale dedup
+    # cache when its PK predates scope_id; SCHEMA below rebuilds it).
+    try:
+        conn.execute(_CONNECTOR_SEEN_REKEY)
     except Exception:
         pass  # table doesn't exist yet; CREATE TABLE below handles that
 

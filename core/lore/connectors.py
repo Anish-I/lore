@@ -96,10 +96,14 @@ def _provenance(parsed: dict) -> str:
 # --- watermark (idempotent re-sync) -----------------------------------------
 
 
-def _already_seen(conn, tenant: str, source: str, external_id: str) -> bool:
+def _already_seen(conn, tenant: str, source: str, external_id: str, scope: str) -> bool:
+    # scope is part of the dedup key: the SAME message synced into two different
+    # scopes must be processed once per scope (it yields to-dos in each), so two
+    # scopes in one tenant never collide on a shared source name.
     r = conn.execute(
-        "select 1 from connector_seen where tenant_id=%s and source=%s and external_id=%s",
-        (tenant, source, external_id)).fetchone()
+        "select 1 from connector_seen where tenant_id=%s and source=%s "
+        "and scope_id=%s and external_id=%s",
+        (tenant, source, scope or "", external_id)).fetchone()
     return r is not None
 
 
@@ -108,8 +112,8 @@ def _mark_seen(conn, tenant: str, source: str, external_id: str,
     conn.execute(
         "insert into connector_seen(tenant_id,source,external_id,scope_id,todo_count) "
         "values(%s,%s,%s,%s,%s) "
-        "on conflict (tenant_id,source,external_id) do nothing",
-        (tenant, source, external_id, scope, todo_count))
+        "on conflict (tenant_id,source,scope_id,external_id) do nothing",
+        (tenant, source, external_id, scope or "", todo_count))
 
 
 # --- mailbox connector -------------------------------------------------------
@@ -138,7 +142,7 @@ def sync_mailbox(conn, tenant: str, scope: str, folder: str, owner: str = None,
         except Exception:
             continue
         ext = parsed["external_id"]
-        if _already_seen(conn, tenant, source, ext):
+        if _already_seen(conn, tenant, source, ext, scope):
             skipped += 1
             continue
         items = todos_mod.extract_todos(parsed["text"], me=owner,
@@ -243,7 +247,7 @@ def sync_slack_export(conn, tenant: str, scope: str, folder: str, owner: str = N
         if limit is not None and processed >= limit:
             break
         ext = thread["external_id"]
-        if _already_seen(conn, tenant, source, ext):
+        if _already_seen(conn, tenant, source, ext, scope):
             skipped += 1
             continue
         items = todos_mod.extract_todos(thread["text"], me=owner,

@@ -36,4 +36,12 @@ describe('buildAuthUrl', () => {
     expect(url.pathname).toBe('/oauth2/default/v1/authorize'); // no doubled slash
     expect(url.searchParams.get('scope')).toBe('openid email');
   });
+
+  it('includes the nonce only when one is supplied (OIDC replay-binding)', () => {
+    const without = new URL(okta.buildAuthUrl(CFG, 'http://127.0.0.1:1/callback', 'c', 's'));
+    expect(without.searchParams.has('nonce')).toBe(false); // no stray "undefined"
+
+    const withNonce = new URL(okta.buildAuthUrl(CFG, 'http://127.0.0.1:1/callback', 'c', 's', 'n0nce'));
+    expect(withNonce.searchParams.get('nonce')).toBe('n0nce');
+  });
 });

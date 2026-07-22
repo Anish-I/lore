@@ -92,6 +92,35 @@ def test_sync_mailbox_extracts_todos_and_is_idempotent(tmp_path):
     assert todos_mod.list_todos(conn, "acme", ["team:t-other"]) == []
 
 
+def test_sync_same_folder_into_two_scopes_does_not_collide(tmp_path):
+    """Two scopes in one tenant syncing the SAME folder (same auto `source` name)
+    must each get their own to-dos — the watermark is keyed per scope, so scope B
+    is not starved by scope A having seen the messages first (F2 regression)."""
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+
+    folder = str(tmp_path)
+    _write(folder, "a.eml", _eml("shared@corp.com", "Budget",
+                                 "Bob, send the budget draft by Friday EOD."))
+
+    a = connectors.sync_mailbox(conn, "acme", "team:t-a", folder, owner="alice")
+    b = connectors.sync_mailbox(conn, "acme", "team:t-b", folder, owner="alice")
+
+    # Both scopes processed the message (before the fix, B skipped it → 0 to-dos).
+    assert a["processed"] == 1 and a["todos_created"] >= 1
+    assert b["processed"] == 1 and b["todos_created"] >= 1
+    assert b["skipped"] == 0
+
+    # Each scope holds its own copy; neither can see the other's.
+    assert len(todos_mod.list_todos(conn, "acme", ["team:t-a"])) == a["todos_created"]
+    assert len(todos_mod.list_todos(conn, "acme", ["team:t-b"])) == b["todos_created"]
+
+    # Re-syncing scope A is still idempotent (the per-scope watermark holds).
+    a2 = connectors.sync_mailbox(conn, "acme", "team:t-a", folder, owner="alice")
+    assert a2["processed"] == 0 and a2["skipped"] == 1
+
+
 def test_sync_mailbox_respects_limit(tmp_path):
     conn = db.connect()
     db.bootstrap_schema(conn)
