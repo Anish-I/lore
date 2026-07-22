@@ -224,19 +224,22 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
     setBusy(false);
   };
 
-  // Import from a mail-export folder: pick a folder of .eml files, the backend
-  // extracts to-dos from each new message (idempotent — re-syncing skips ones
-  // already imported). Lands in the Pending list, same as pasting a thread.
-  const syncFolder = async () => {
-    if (syncing || !window.lore?.todos?.syncMailbox) return;
-    setSyncing(true);setErr(null);setNote(null);
+  // Import from an export folder: pick a folder (a Gmail/Outlook .eml export, or a
+  // Slack workspace export), the backend extracts to-dos from each new item
+  // (idempotent — re-syncing skips ones already imported). Lands in the Pending
+  // list, same as pasting a thread.
+  const syncFolder = async (kind) => {
+    const fn = kind === 'slack' ? window.lore?.todos?.syncSlack : window.lore?.todos?.syncMailbox;
+    if (syncing || !fn) return;
+    setSyncing(kind);setErr(null);setNote(null);
     try {
-      const r = await window.lore.todos.syncMailbox({ scope: writeScope });
+      const r = await fn({ scope: writeScope });
       if (r && r.cancelled) {/* user closed the picker */} else
       if (r && r.error) {setErr(r.error);} else
       {
         const seen = r.processed || 0,made = r.todos_created || 0,skip = r.skipped || 0;
-        setNote(`Synced ${seen} new message${seen === 1 ? '' : 's'} → ${made} to-do${made === 1 ? '' : 's'}` + (
+        const unit = kind === 'slack' ? 'thread' : 'message';
+        setNote(`Synced ${seen} new ${unit}${seen === 1 ? '' : 's'} → ${made} to-do${made === 1 ? '' : 's'}` + (
         skip ? ` (${skip} already imported)` : '') + '.');
         if (status !== 'pending') setStatus('pending');else await load('pending');
       }
@@ -277,7 +280,7 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
     ), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, minWidth: 0 } }, /*#__PURE__*/
     React.createElement("div", { style: { fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' } }, "To-dos from a thread"), /*#__PURE__*/
-    React.createElement("div", { style: { fontSize: 11, color: 'var(--text-faint)', marginTop: 1 } }, "Paste a thread or sync a mail folder \u2014 get action items you can confirm.")
+    React.createElement("div", { style: { fontSize: 11, color: 'var(--text-faint)', marginTop: 1 } }, "Paste a thread, or import a mail / Slack export \u2014 get action items you can confirm.")
     ), /*#__PURE__*/
     React.createElement("button", { onClick: onClose, "aria-label": "Close", style: { border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', padding: 4 } }, /*#__PURE__*/
     React.createElement(WzIcon, { name: "x", size: 16 })
@@ -301,12 +304,18 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
 
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8, margin: '10px 0' } }, /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, height: 1, background: 'var(--divider)' } }), /*#__PURE__*/
-    React.createElement("span", { style: { fontSize: 10.5, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: 0.4 } }, "or"), /*#__PURE__*/
+    React.createElement("span", { style: { fontSize: 10.5, color: 'var(--text-faint)', textTransform: 'uppercase', letterSpacing: 0.4 } }, "or import from"), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, height: 1, background: 'var(--divider)' } })
     ), /*#__PURE__*/
-    React.createElement(WzButton, { icon: "inbox", onClick: syncFolder, disabled: syncing,
-      style: { width: '100%', height: 36 } },
-    syncing ? 'Syncing mail folder…' : 'Sync a mail folder (.eml)'
+    React.createElement("div", { style: { display: 'flex', gap: 8 } }, /*#__PURE__*/
+    React.createElement(WzButton, { icon: "inbox", onClick: () => syncFolder('mail'), disabled: !!syncing,
+      style: { flex: 1, height: 36 } },
+    syncing === 'mail' ? 'Syncing…' : 'Mail folder (.eml)'
+    ), /*#__PURE__*/
+    React.createElement(WzButton, { icon: "message-square", onClick: () => syncFolder('slack'), disabled: !!syncing,
+      style: { flex: 1, height: 36 } },
+    syncing === 'slack' ? 'Syncing…' : 'Slack export'
+    )
     ),
     note && /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, fontSize: 11.5, color: 'var(--text-subtle)', lineHeight: 1.45 } }, /*#__PURE__*/

@@ -179,6 +179,16 @@ reframed enterprise-general rather than municipal-only.
      the `todos:extract` template). Imported items land in the same Pending list; a re-sync
      reports how many were already imported. So the whole path — folder → to-dos → confirm —
      is reachable from the app with no creds.
+  6. **Second connector — Slack workspace export → to-dos** *(validates the substrate)*.
+     `connectors.sync_slack_export` + `POST /connectors/slack/sync` read a Slack export
+     (users.json + per-channel `<date>.json`), group messages into threads (by `thread_ts`),
+     resolve `<@U…>` mentions to names, and run the **same** extract/persist/watermark path —
+     proving a new source is just a new parser over the shared substrate. Slack's
+     conversational style leans on the LLM extraction path (the heuristic still catches
+     explicit "Name, do X" asks). Desktop: a sibling **"Slack export"** button sits beside the
+     mail one in the same drawer. 4 tests added (thread grouping + mention resolution,
+     idempotent sync, injected-LLM path, endpoint) — 12 in `test_connectors.py` total. Live
+     Gmail/Slack **API** connectors remain the only creds-gated piece (BACKLOG M6).
 
      **Desktop sign-in shipped too.** `desktop/lib/okta-oauth.js` is the Okta analog of the
      Google PKCE loopback: browser → Okta consent → localhost `/callback` → code exchange →

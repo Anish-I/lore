@@ -18,6 +18,7 @@ import email
 import email.policy
 import glob
 import hashlib
+import json
 import os
 import re
 
@@ -143,6 +144,111 @@ def sync_mailbox(conn, tenant: str, scope: str, folder: str, owner: str = None,
         items = todos_mod.extract_todos(parsed["text"], me=owner,
                                         provider=provider, llm_call=llm_call)
         prov = _provenance(parsed)
+        for it in items:
+            if not it.get("source"):
+                it["source"] = prov
+        new = todos_mod.create_todos(conn, tenant, items, scope=scope, owner=owner)
+        _mark_seen(conn, tenant, source, ext, scope, len(new))
+        created.extend(new)
+        created_count += len(new)
+        processed += 1
+    return {"source": source, "processed": processed, "skipped": skipped,
+            "todos_created": created_count, "todos": created}
+
+
+# --- Slack workspace-export connector ----------------------------------------
+# A Slack export is a directory: users.json (id → name) + one subfolder per
+# channel, each holding <YYYY-MM-DD>.json files of message objects. It needs no
+# OAuth (the admin downloads it), so — like the mailbox connector — it's testable
+# and useful today, and a live Slack **API** connector later is this same pipeline
+# behind a different fetch. Slack's conversational style leans on the LLM path;
+# the heuristic still catches explicit "Name, do X" asks.
+
+_MENTION_RE = re.compile(r"<@([A-Z0-9]+)>")
+
+
+def _slack_users(folder: str) -> dict:
+    """Map Slack user id → display name from users.json (best-effort)."""
+    names = {}
+    try:
+        with open(os.path.join(folder, "users.json"), encoding="utf-8") as f:
+            for u in json.load(f):
+                uid = u.get("id")
+                prof = u.get("profile") or {}
+                name = (u.get("real_name") or prof.get("real_name")
+                        or prof.get("display_name") or u.get("name") or uid)
+                if uid:
+                    names[uid] = name
+    except Exception:
+        pass
+    return names
+
+
+def _slack_channels(folder: str) -> list:
+    """Channel names = immediate subdirectories that contain day .json files."""
+    out = []
+    try:
+        for name in os.listdir(folder):
+            d = os.path.join(folder, name)
+            if os.path.isdir(d) and glob.glob(os.path.join(d, "*.json")):
+                out.append(name)
+    except Exception:
+        pass
+    return out
+
+
+def parse_slack_export(folder: str):
+    """Yield one {external_id, channel, participants, text} per thread across the
+    export. Messages are grouped by `thread_ts` (root replies) or standalone `ts`,
+    ordered in time; `<@U…>` mentions are resolved to names. The rendered `text`
+    leads with a Channel/Participants header (context for the LLM) then one message
+    per line (so the heuristic still sees line-leading "Name, do X" asks)."""
+    users = _slack_users(folder)
+    for channel in sorted(_slack_channels(folder)):
+        threads = {}   # thread key → list of (ts, author, text)
+        for day in sorted(glob.glob(os.path.join(folder, channel, "*.json"))):
+            try:
+                with open(day, encoding="utf-8") as f:
+                    msgs = json.load(f)
+            except Exception:
+                continue
+            for m in msgs if isinstance(msgs, list) else []:
+                if not isinstance(m, dict) or m.get("type") != "message" or m.get("subtype"):
+                    continue
+                text = _MENTION_RE.sub(lambda mt: users.get(mt.group(1), mt.group(1)),
+                                       str(m.get("text", "") or ""))
+                if not text.strip():
+                    continue
+                author = users.get(m.get("user"), m.get("user") or "someone")
+                key = str(m.get("thread_ts") or m.get("ts") or "")
+                threads.setdefault(key, []).append((str(m.get("ts") or ""), author, text))
+        for key, items in threads.items():
+            items.sort(key=lambda x: x[0])
+            participants = list(dict.fromkeys(a for _, a, _ in items))
+            body = "\n".join(t for _, _, t in items)
+            header = f"Channel: #{channel}\nParticipants: {', '.join(participants)}\n\n"
+            yield {"external_id": f"{channel}:{key}", "channel": channel,
+                   "participants": participants, "text": header + body}
+
+
+def sync_slack_export(conn, tenant: str, scope: str, folder: str, owner: str = None,
+                      provider: str = None, source: str = None, llm_call=None,
+                      limit: int = None) -> dict:
+    """Process every *new* thread in a Slack export → pending to-dos under `scope`,
+    watermarked so re-sync is idempotent. Same contract/return as `sync_mailbox`."""
+    source = source or f"slack:{os.path.basename(os.path.normpath(folder))}"
+    processed = skipped = created_count = 0
+    created = []
+    for thread in parse_slack_export(folder):
+        if limit is not None and processed >= limit:
+            break
+        ext = thread["external_id"]
+        if _already_seen(conn, tenant, source, ext):
+            skipped += 1
+            continue
+        items = todos_mod.extract_todos(thread["text"], me=owner,
+                                        provider=provider, llm_call=llm_call)
+        prov = ("#" + thread["channel"])[:160]
         for it in items:
             if not it.get("source"):
                 it["source"] = prov

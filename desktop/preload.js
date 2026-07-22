@@ -164,14 +164,16 @@ contextBridge.exposeInMainWorld('lore', {
   // extract({text|note_id, scope?, owner?}) → {todos:[{id, assignee, task, due, due_text, source, status, scope_id}], count}
   // list({scopes, status?})   → {todos:[...], count} (scope-filtered like digest)
   // confirm/dismiss({id, scopes}) → {id, status} | {error} (404 when not in caller's scopes)
-  // syncMailbox({scope?, owner?}) → picks a folder, ingests its .eml into pending
-  //   to-dos (idempotent) → {processed, skipped, todos_created, folder} | {cancelled} | {error}
+  // syncMailbox/syncSlack({scope?, owner?}) → picks a folder, ingests its .eml /
+  //   Slack export into pending to-dos (idempotent) →
+  //   {processed, skipped, todos_created, folder} | {cancelled} | {error}
   todos: {
     extract: (opts)          => ipcRenderer.invoke('todos:extract', opts || {}),
     list:    (opts)          => ipcRenderer.invoke('todos:list', opts || {}),
     confirm: (id, scopes)    => ipcRenderer.invoke('todos:confirm', { id, scopes }),
     dismiss: (id, scopes)    => ipcRenderer.invoke('todos:dismiss', { id, scopes }),
     syncMailbox: (opts)      => ipcRenderer.invoke('todos:sync-mailbox', opts || {}),
+    syncSlack:   (opts)      => ipcRenderer.invoke('todos:sync-slack', opts || {}),
   },
 
   // --- ask chat history (persisted threads for the main chat) ---

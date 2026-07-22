@@ -1,9 +1,11 @@
-"""Mailbox connector: .eml parsing + idempotent sync into the to-dos pipeline.
+"""Connectors: .eml + Slack-export parsing and idempotent sync into the to-dos
+pipeline.
 
 No LLM and no OAuth — the heuristic extractor runs under VAULT_FAKE, and the
-source is a local folder of .eml files, so the whole enterprise "email → to-dos"
-path is exercised end-to-end here.
+sources are local files (a folder of .eml, or a Slack workspace export), so the
+whole enterprise "source → to-dos" path is exercised end-to-end here.
 """
+import json
 import os
 
 os.environ.setdefault("LORE_JWT_SECRET", "test-secret-please-do-not-use-in-production-0123456789")
@@ -105,6 +107,87 @@ def test_sync_mailbox_respects_limit(tmp_path):
     assert r2["processed"] == 2
 
 
+# --- Slack workspace export -------------------------------------------------
+
+
+def _slack_export(folder, channel="planning", messages=None, users=None):
+    """Write a minimal Slack export: users.json + <channel>/<day>.json."""
+    users = users or [
+        {"id": "U1", "profile": {"real_name": "Alice Smith"}},
+        {"id": "U2", "real_name": "Bob Jones"},
+    ]
+    with open(os.path.join(folder, "users.json"), "w", encoding="utf-8") as f:
+        json.dump(users, f)
+    cdir = os.path.join(folder, channel)
+    os.makedirs(cdir, exist_ok=True)
+    with open(os.path.join(cdir, "2026-07-01.json"), "w", encoding="utf-8") as f:
+        json.dump(messages, f)
+
+
+def test_parse_slack_export_groups_threads_and_resolves_names(tmp_path):
+    folder = str(tmp_path)
+    _slack_export(folder, messages=[
+        {"type": "message", "user": "U1", "ts": "1.0",
+         "text": "Bob, ship the release notes by Friday."},
+        {"type": "message", "user": "U2", "ts": "1.1", "thread_ts": "1.0",
+         "text": "On it. <@U1> can you review?"},
+        {"type": "message", "user": "U1", "ts": "2.0", "text": "Standalone note."},
+        {"type": "message", "subtype": "channel_join", "user": "U2", "ts": "2.1",
+         "text": "has joined"},   # skipped: subtype
+    ])
+    threads = list(connectors.parse_slack_export(folder))
+    # Two roots (thread "1.0" with its reply, and standalone "2.0"); join is dropped.
+    assert len(threads) == 2
+    root = next(t for t in threads if t["external_id"] == "planning:1.0")
+    assert "Alice Smith" in root["participants"] and "Bob Jones" in root["participants"]
+    assert "ship the release notes" in root["text"]
+    assert "<@U1>" not in root["text"] and "Alice Smith" in root["text"]  # mention resolved
+
+
+def test_sync_slack_export_extracts_and_is_idempotent(tmp_path):
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    folder = str(tmp_path)
+    _slack_export(folder, messages=[
+        {"type": "message", "user": "U1", "ts": "1.0",
+         "text": "Bob, ship the release notes by Friday."},
+    ])
+
+    # A scope unique to this test so the shared session DB (other tests' todos)
+    # doesn't perturb the exact-count assertions below.
+    r1 = connectors.sync_slack_export(conn, "acme", "team:t-slack", folder, owner="alice")
+    assert r1["processed"] == 1
+    assert r1["todos_created"] >= 1
+    assert all(t["source"] and t["source"].startswith("#") for t in r1["todos"])  # channel provenance
+
+    r2 = connectors.sync_slack_export(conn, "acme", "team:t-slack", folder, owner="alice")
+    assert r2["processed"] == 0 and r2["skipped"] == 1 and r2["todos_created"] == 0
+
+    listed = todos_mod.list_todos(conn, "acme", ["team:t-slack"], status="pending")
+    assert len(listed) == r1["todos_created"]
+    assert todos_mod.list_todos(conn, "acme", ["team:t-other"]) == []
+
+
+def test_sync_slack_export_uses_injected_llm(tmp_path):
+    """Conversational Slack text the heuristic wouldn't catch is handled by the
+    LLM path — proving the connector threads the provider seam through."""
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    folder = str(tmp_path)
+    _slack_export(folder, messages=[
+        {"type": "message", "user": "U2", "ts": "1.0",
+         "text": "hey could someone take a look at the flaky deploy when you get a sec"},
+    ])
+    fake_llm = lambda prompt: ('[{"assignee":"Bob Jones","task":"Investigate the flaky deploy",'
+                               '"due":null,"due_text":null,"source":"#planning"}]')
+    r = connectors.sync_slack_export(conn, "acme", "team:t-eng", folder,
+                                     owner="alice", llm_call=fake_llm)
+    assert r["todos_created"] == 1
+    assert r["todos"][0]["task"] == "Investigate the flaky deploy"
+
+
 # --- HTTP endpoint ----------------------------------------------------------
 
 from fastapi.testclient import TestClient
@@ -130,6 +213,19 @@ def test_mailbox_sync_endpoint_round_trip(tmp_path):
                                         "status": "pending"})
     assert got.status_code == 200
     assert got.json()["count"] >= 1
+
+
+def test_slack_sync_endpoint_round_trip(tmp_path):
+    folder = str(tmp_path)
+    _slack_export(folder, messages=[
+        {"type": "message", "user": "U1", "ts": "1.0",
+         "text": "Bob, draft the kickoff plan by tomorrow."},
+    ])
+    r = client.post("/connectors/slack/sync",
+                    json={"tenant_id": "acme", "folder": folder, "scope": "team:t-eng",
+                          "owner": "alice"})
+    assert r.status_code == 200, r.text
+    assert r.json()["processed"] == 1
 
 
 def test_mailbox_sync_endpoint_404_on_missing_folder():

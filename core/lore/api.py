@@ -1185,6 +1185,24 @@ def connectors_mailbox_sync(req: MailboxSyncReq,
                                    owner=owner, provider=req.provider, limit=req.limit)
 
 
+@app.post("/connectors/slack/sync")
+def connectors_slack_sync(req: MailboxSyncReq,
+                          authorization: Optional[str] = Header(default=None)):
+    """Pull every *new* thread from a local Slack **workspace export** folder
+    (users.json + per-channel `<date>.json` files) → extract to-dos → persist them
+    `pending`, idempotently. Same authorization + local-first filesystem model as
+    the mailbox connector (the admin downloads the export; nothing leaves the box).
+    Slack's conversational style leans on the LLM extraction path. Returns the summary.
+    """
+    if not (req.folder or "").strip() or not (req.scope or "").strip():
+        raise HTTPException(status_code=422, detail="folder and scope are required")
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant_id)
+    if not os.path.isdir(req.folder):
+        raise HTTPException(status_code=404, detail="folder not found")
+    return connectors.sync_slack_export(_conn, tenant, scope, req.folder,
+                                        owner=owner, provider=req.provider, limit=req.limit)
+
+
 @app.get("/config/retrieval")
 def config_retrieval(tenant: Optional[str] = None):
     """Truthful snapshot of the retrieval stack for the desktop Settings UI.

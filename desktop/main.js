@@ -2089,18 +2089,15 @@ function todoTransition(action) {
 ipcMain.handle('todos:confirm', todoTransition('confirm'));
 ipcMain.handle('todos:dismiss', todoTransition('dismiss'));
 
-// Connector: pick a mail-export folder, then sync every new .eml in it into
-// pending to-dos (idempotent server-side via the connector_seen watermark). The
-// folder is read by the local backend — same local-first model as reindex. Scope
-// falls back to the current place's scope, exactly like todos:extract. Returns the
-// sync summary {processed, skipped, todos_created} or {cancelled:true}.
-ipcMain.handle('todos:sync-mailbox', async (_e, opts) => {
+// Connectors: pick an export folder, then sync every new item in it into pending
+// to-dos (idempotent server-side via the connector_seen watermark). The folder is
+// read by the local backend — same local-first model as reindex. Scope falls back
+// to the current place's scope, exactly like todos:extract. Returns the sync
+// summary {processed, skipped, todos_created} or {cancelled:true} / {error}.
+async function syncConnector(endpoint, title, opts) {
   const cfg = loadConfig() || {};
   const { scope, owner, tenant } = opts || {};
-  const pick = await dialog.showOpenDialog(win, {
-    title: 'Sync a mail folder (.eml exports) into to-dos',
-    properties: ['openDirectory'],
-  });
+  const pick = await dialog.showOpenDialog(win, { title, properties: ['openDirectory'] });
   if (pick.canceled || !pick.filePaths || !pick.filePaths.length) return { cancelled: true };
   const body = {
     tenant_id: tenant || cfg.tenant || '',
@@ -2109,7 +2106,7 @@ ipcMain.handle('todos:sync-mailbox', async (_e, opts) => {
     owner: owner || cfg.owner || null,
   };
   try {
-    const r = await fetch(`${BACKEND_URL()}/connectors/mailbox/sync`, {
+    const r = await fetch(`${BACKEND_URL()}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(body),
@@ -2119,7 +2116,11 @@ ipcMain.handle('todos:sync-mailbox', async (_e, opts) => {
   } catch (e) {
     return { error: String(e) };
   }
-});
+}
+ipcMain.handle('todos:sync-mailbox', (_e, opts) =>
+  syncConnector('/connectors/mailbox/sync', 'Sync a mail folder (.eml exports) into to-dos', opts));
+ipcMain.handle('todos:sync-slack', (_e, opts) =>
+  syncConnector('/connectors/slack/sync', 'Sync a Slack export folder into to-dos', opts));
 
 // ---------- boot-time disk<->index reconcile ----------
 // A store swap (e.g. Postgres -> SQLite) or a fresh machine can leave the on-disk
