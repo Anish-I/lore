@@ -75,8 +75,10 @@ not acceptance tests for the knowledge-OS.
   in-degree per `relations.recompute_importance`, applied as a multiplier in
   `_apply_note_signals`; entity-title matches → `ENTITY_BOOST`) and the README already states
   it is *"not a candidate-expansion hop."* README is accurate — no change needed.
-- **`synthesize()` is a deterministic template**, not an LLM NL answer (spec §4.5). The seam
-  exists to swap in generation — deferred, but worth flagging for the municipal "answer" UX.
+- ~~**`synthesize()` is a deterministic template**~~ **— stale, verified false.** `llm.answer()`
+  already does grounded LLM generation through the user's provider subscription
+  (claude/codex/byok) → local Ollama → extractive fallback, never a dead end. The only
+  deterministic path is the *fallback* when no LLM is reachable. No work needed here.
 - **Single shared psycopg connection** in `api.py` — a pool is wanted before heavy agent traffic.
 - **`LORE.md` is untracked** — the prior dev never committed the municipal spec; it's a loose
   working file in the tree. Decide whether it becomes the committed product-of-record or stays out.
