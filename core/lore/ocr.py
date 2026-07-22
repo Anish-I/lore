@@ -138,7 +138,66 @@ def extract_pdf_routed(path: str) -> tuple[str, str, dict] | None:
     prov = {"pages": pages_meta, "native_pages": native_pages,
             "ocr_pages": ocr_pages, "truncated": truncated,
             "engine": "rapidocr-onnx"}
+    # Numeric-confidence signal + declarative VLM-escalation flag (Sol review).
+    num = numeric_check(body) if ocr_pages else None
+    if num:
+        prov["numeric_check"] = num
+    prov["needs_vlm"] = _needs_vlm(prov, num)
     return title, f"# {title}\n\n{body}\n", prov
+
+
+# --- numeric-confidence signal (Sol review): a SIGNAL, never a corrector ---
+# On documents with obvious single-total structure, check the line items sum to
+# the stated TOTAL. A close-but-off sum flags likely OCR damage (e.g. a
+# truncated 9,485→485) and lowers confidence — it NEVER rewrites a value.
+# Deliberately conservative: multi-total / transfer-from-and-to docs are
+# ambiguous, so we stay silent rather than false-positive.
+_CURRENCY_RE = re.compile(r"\$\s*([\d][\d,]{2,})")
+_NUMERIC_TOL = 0.005          # within this of the total → "ok" (raises confidence)
+_MISMATCH_LO = 0.01           # a mismatch this..hi wide reads as OCR damage
+_MISMATCH_HI = 0.20           # wider than this → probably multi-section, stay silent
+
+
+def _amount(s: str) -> int:
+    try:
+        return int(s.replace(",", ""))
+    except ValueError:
+        return 0
+
+
+def numeric_check(text: str) -> dict | None:
+    """Return {"status", "stated_total", "observed_sum", "delta"} when a
+    single-total structure is clear enough to judge, else None (silent)."""
+    total_vals, item_vals = [], []
+    for line in text.splitlines():
+        amounts = [_amount(m) for m in _CURRENCY_RE.findall(line)]
+        if not amounts:
+            continue
+        (total_vals if re.search(r"\btotal\b", line, re.I) else item_vals).extend(amounts)
+    totals = {v for v in total_vals if v > 0}
+    items = [v for v in item_vals if v > 0]
+    # Need exactly one distinct total and enough line items to judge.
+    if len(totals) != 1 or len(items) < 4:
+        return None
+    total = next(iter(totals))
+    observed = sum(items)
+    if total <= 0:
+        return None
+    ratio = abs(observed - total) / total
+    if ratio <= _NUMERIC_TOL:
+        return {"status": "ok", "stated_total": total, "observed_sum": observed, "delta": observed - total}
+    if _MISMATCH_LO <= ratio <= _MISMATCH_HI:
+        return {"status": "total_mismatch", "stated_total": total,
+                "observed_sum": observed, "delta": observed - total}
+    return None                # far off → ambiguous multi-section doc; stay silent
+
+
+def _needs_vlm(prov: dict, num: dict | None) -> bool:
+    """Declarative escalation flag (no VLM is invoked): true when a page OCR'd
+    at low confidence, or the numeric check found a total mismatch."""
+    low_conf = any(pg.get("source") == "ocr_fast" and pg.get("conf", 1.0) < _MIN_CONF
+                   for pg in prov.get("pages", []))
+    return bool(low_conf or (num and num.get("status") == "total_mismatch"))
 
 
 def enabled() -> bool:
