@@ -241,8 +241,29 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     Returns:
         Number of indexed chunks (0 if the document produced no chunks).
     """
+    # Ingest hygiene (2026-07-21 cold-start findings): redact BEFORE anything
+    # is stored or embedded. /capture already redacts upstream (idempotent);
+    # this closes the gap for directly indexed files — dumped exports carry
+    # credentials, and the stored body is served verbatim by GET /notes/{id}.
+    from .redact import redact as _redact
+    text = _redact(text or "")
+
     # Compute and store the original body (lossless round-trip; chunk text is NOT lossless).
     body_sha256 = hashlib.sha256(text.encode()).hexdigest()
+
+    # Cross-note exact-duplicate detection (same tenant, same redacted body,
+    # different id). Duplicates cost 8.9% of top-5 answer slots on the raw-dump
+    # sim; the copy's note row is still stored (body stays readable) but it is
+    # NOT chunked or embedded, so retrieval sees one instance.
+    # Only an INDEXED note (one that owns chunks) counts as the canonical —
+    # otherwise re-ingesting the canonical would dedup itself against one of
+    # its own skipped copies (the check must not be symmetric).
+    _dup_row = conn.execute(
+        "select n.id from notes n where n.tenant_id=%s and n.body_sha256=%s "
+        "and n.id<>%s and exists (select 1 from chunks c where c.note_id=n.id) "
+        "limit 1",
+        (tenant_id, body_sha256, source_id)).fetchone()
+    duplicate_of = _dup_row[0] if _dup_row else None
 
     # The note's REAL creation time (frontmatter → mtime → first-seen). Stored as an
     # ISO string (both sqlite's `timestamp` converter and PG's timestamptz parse it).
@@ -271,6 +292,14 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
          memory_type_of(source_type),
          text, body_sha256, content_hash, created_at),
     )
+
+    if duplicate_of:
+        # Exact duplicate of an already-indexed note: keep the row, skip the
+        # index. Clears stale chunks/vectors in case this note USED to be the
+        # canonical copy of earlier content.
+        conn.execute("delete from chunks where note_id=%s", (source_id,))
+        qdrant_store.delete_note(source_id)
+        return 0
 
     chunks = apply_context(chunk_markdown(source_id, text), title, llm=None)
     if not chunks:

@@ -248,6 +248,13 @@ create table if not exists section_proposals(
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create table if not exists topic_registry(
+  tenant_id text not null,
+  slug_key text not null,
+  canonical text not null,
+  source text default 'llm',
+  first_seen timestamptz default now(),
+  primary key (tenant_id, slug_key));
 create table if not exists observations(
   id text primary key,
   tenant_id text not null,
@@ -524,6 +531,13 @@ create table if not exists section_proposals(
   created_at timestamp default current_timestamp,
   updated_at timestamp default current_timestamp,
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create table if not exists topic_registry(
+  tenant_id text not null,
+  slug_key text not null,
+  canonical text not null,
+  source text default 'llm',
+  first_seen timestamp default current_timestamp,
+  primary key (tenant_id, slug_key));
 create table if not exists observations(
   id text primary key,
   tenant_id text not null,

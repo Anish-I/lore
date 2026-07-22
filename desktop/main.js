@@ -1918,7 +1918,18 @@ async function autoApplyProposedSections() {
   try {
     const lr = await fetch(`${BACKEND_URL()}/sections?tenant=${encodeURIComponent(cfg.tenant)}`, { headers: authHeaders() });
     const body = await lr.json();
-    proposed = (body.sections || []).filter((s) => s.status === 'proposed');
+    // Stability gate: a topic the classifier registered under 24h ago may be
+    // cold-start fragmentation noise — its section stays a PROPOSAL (user can
+    // still apply manually); auto-apply picks it up on a later run once the
+    // topic has survived a day. Topics with no first_seen predate the
+    // registry and are grandfathered.
+    const DAY = 24 * 3600 * 1000;
+    const stable = (s) => {
+      if (!s.topic_first_seen) return true;
+      const t = Date.parse(s.topic_first_seen);
+      return !Number.isFinite(t) || (Date.now() - t) > DAY;
+    };
+    proposed = (body.sections || []).filter((s) => s.status === 'proposed' && stable(s));
   } catch { return; }   // backend hiccup — proposals stay for the next run
   for (const section of proposed) {
     try { await applySectionNow(section, cfg, root, { auto: true }); } catch { /* next run */ }

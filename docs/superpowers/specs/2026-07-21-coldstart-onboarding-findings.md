@@ -69,3 +69,39 @@ runner: `eval/scenarios/run_coldstart_enron.py`.
 C2 moves from "next up" to **blocking any dump-onboarding story**; add the
 four hygiene items above as its cluster. G10 gets re-specced with a
 false-abstain budget. #2 is approved for build on measured economics.
+
+## Rerun after the fixes (2026-07-22, `coldstart2-enron-2026-07-22.json`)
+
+The dump-onboarding cluster (C2 canonical vocabulary + registry, ingest dedup,
+ingest redaction, auto-apply stability gate, classify burst mode) shipped and
+the identical sim was rerun:
+
+| Metric | Before | After | Change |
+| --- | --- | --- | --- |
+| Topics for 400 classified notes | 338 | **21** | 16× consolidation |
+| Pairwise F1 vs owner's real folders | 0.002 | **0.152** | 76× |
+| Duplicate-echo in top-5 | 8.9% | **0.0%** | eliminated (790 copies skipped at ingest) |
+| Retrieval r@1 / r@5 | 0.889 / 1.0 | 0.889 / 1.0 | intact |
+| p50 latency | 518ms | **415ms** | smaller vector space |
+| Index time (3k notes) | 194s | 144s | fewer embeddings |
+| Merge proposals | 6 (repairing fragmentation) | **0 — nothing left to heal** | prevention > repair |
+| G10 midpoint viability | fails (61% false abstain) | fails (unchanged) | respec confirmed needed |
+| #2 telemetry | 4.0× | 4.0× (476 vs 1,908 tok) | stable |
+
+**Correction to the first report:** "0 sections auto-created" was attributed to
+fragmentation keeping topics under the threshold. That inference was wrong —
+`propose_sections` only considers notes with a real `source_path`, and the
+sim's notes have none, so sections were structurally impossible in BOTH runs.
+The auto-apply stability gate is covered by unit tests
+(`test_dump_onboarding.py`) but has NOT been exercised end-to-end by this sim;
+a with-paths dump test remains open before trusting auto-apply on real dumps.
+
+Interpretation notes: F1 0.152 against 60 personal folders from 21 unsupervised
+topics is a fair day-one number (folders encode workflow, not pure topic;
+supervised full-mailbox classifiers reach ~0.5–0.8 in the literature). Zero
+merge proposals is the DESIRED end-state — C2 prevents the fragmentation v2
+existed to repair.
+
+Remaining from this line of work: G10 respec (false-abstain budget or richer
+signal), #2 build on the approved economics, and the with-paths auto-apply
+end-to-end test.

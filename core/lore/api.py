@@ -1771,6 +1771,8 @@ class UpkeepRunReq(BaseModel):
     auto_file: bool = False          # opt-in (cfg.autoFileObvious): record unambiguous notes
                                      # into existing applied sections (state only; desktop moves)
     auto_journal: bool = False       # opt-in (cfg.autoJournal): materialize a daily journal note
+    classify_burst: bool = False     # onboarding burst: loop classification past the
+                                     # 80/run cap (max 2,000 notes) for bulk dumps
 
 @app.post("/upkeep/run")
 def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
@@ -1797,6 +1799,20 @@ def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     # the column existed) gets it derived now from its source file, so the graph
     # date-scrubber keeps improving as upkeep runs without a separate user action.
     stats["createdBackfilled"] = backfill_created_at(_conn, req.tenant)
+    # Onboarding burst (2026-07-21 cold-start findings): the 80-notes-per-run
+    # classification cap is right for trickle capture but means a 3k dump
+    # takes ~38 daily runs to organize. classify_burst loops classification
+    # until coverage or the burst budget (2,000 notes / 25 loops) is reached.
+    if req.classify_burst and req.auto_classify:
+        from .classify import classify_untagged
+        burst_tagged = 0
+        for _ in range(25):
+            s = classify_untagged(_conn, req.tenant, scope=req.scope)
+            burst_tagged += s["notesTagged"]
+            if s["notesTagged"] == 0 or s["status"] == "provider-unavailable" \
+                    or burst_tagged >= 2000:
+                break
+        stats["burstTagged"] = burst_tagged
     # Opportunistic relation enrichment: typed edges (depends_on/supersedes/…)
     # for notes whose body changed, small batch per pass so upkeep stays cheap.
     # Degrades cleanly when no LLM provider is configured (status in stats).

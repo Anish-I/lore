@@ -135,6 +135,20 @@ def list_sections(conn, tenant: str) -> list:
                 [tenant, *params]).fetchall():
             meta[nid] = {"id": nid, "title": title, "path": spath}
 
+    # Auto-apply stability gate (2026-07-21 cold-start findings): expose each
+    # topic's registry first_seen so the desktop can refuse to auto-apply
+    # sections built on topics the classifier invented moments ago. Topics
+    # with no registry row predate the registry — grandfathered as stable.
+    from .classify import _slug_key
+    first_seen = {}
+    try:
+        for key, seen in conn.execute(
+                "select slug_key, first_seen from topic_registry where tenant_id=%s",
+                (tenant,)).fetchall():
+            first_seen[key] = seen.isoformat() if isinstance(seen, datetime.datetime) else seen
+    except Exception:
+        first_seen = {}
+
     out = []
     for sid, name, topic, ids, original_paths, status, created, updated in parsed:
         try:
@@ -145,6 +159,7 @@ def list_sections(conn, tenant: str) -> list:
             "id": sid,
             "name": name,
             "topic": topic,
+            "topic_first_seen": first_seen.get(_slug_key(topic)),
             "status": status,
             "notes": [meta.get(i, {"id": i, "title": None, "path": None}) for i in ids],
             "original_paths": originals,
