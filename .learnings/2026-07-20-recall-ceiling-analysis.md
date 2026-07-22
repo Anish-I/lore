@@ -67,7 +67,23 @@
    no-answer separation NARROWS on real text (0.10 worst case) → G10 threshold
    must be per-corpus calibrated.
 
-11. **Cowork protocol**: parallel independent gap analyses (Claude audit + Sol
+11. **Note IDs are a GLOBAL primary key across tenants** — two test files using
+   id "g-1" under different tenants silently collide ("on conflict do nothing"
+   swallows the second insert) and the failure only appears in full-suite
+   order. Prefix every test's note ids with a file-unique slug.
+
+12. **Verify causal attribution before writing it down**: "0 sections
+   auto-created" was reported as fragmentation-protection when the actual
+   cause was propose_sections' source_path filter (sim notes have no paths).
+   The rerun exposed it because the number REFUSED to move when its supposed
+   cause was fixed. A metric that doesn't respond to its explanation's removal
+   was never explained by it.
+
+13. **PowerShell + git commit -m: embedded double quotes split the message
+   into pathspecs** (bit twice this session). Keep commit messages free of
+   `"` characters inside @'...'@ here-strings, or the args shatter.
+
+14. **Cowork protocol**: parallel independent gap analyses (Claude audit + Sol
    literature-anchored critique from the same pasted evidence) converged on the same
    top-3 and each contributed uniques (Sol: eval statistical power, LTR framing,
    exact-lane ordering; Claude: LoCoMo-at-scale anchor, fastembed/contextualize
