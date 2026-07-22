@@ -68,10 +68,27 @@ def extract_text(path: str):
     """Return (title, markdown_text) for supported binary formats, else None.
 
     A hostile or malformed document (DTD bomb, zip bomb, corrupt PDF) is treated
-    as unextractable → None; never raises to the caller."""
+    as unextractable → None; never raises to the caller.
+
+    PDFs: when LORE_OCR_FALLBACK is on, routing is per-page (native text where
+    it passes a quality gate, RapidOCR where it doesn't) so scanned image pages
+    are recovered — otherwise the historical text-only path is used unchanged.
+    """
     ext = os.path.splitext(path)[1].lower()
     if ext not in EXTRACTABLE_EXTS:
         return None
+    if ext == ".pdf":
+        from . import ocr
+        if ocr.enabled():
+            try:
+                routed = ocr.extract_pdf_routed(path)
+            except Exception:
+                routed = None
+            if routed:
+                title, text, _prov = routed
+                return title, text
+            # OCR path found nothing usable → fall through to the plain reader
+            # (keeps behavior no-worse-than-off on genuinely blank scans).
     try:
         body = _pdf_text(path) if ext == ".pdf" else _docx_text(path)
     except Exception:
