@@ -68,12 +68,36 @@ def index_scenario(notes, conn, embedder, sparse, context_all, collection,
     there is nothing to delete; skipping is exact. (This measured curve is
     itself G12 evidence for the live vault, where every re-index pays it.)
     """
-    from lore import contextualize, index, qdrant_store
+    from lore import contextualize, index, qdrant_store, relations
     contextualize._CONTEXT_ALL = context_all
     qdrant_store.COLLECTION = collection
     real_delete = qdrant_store.delete_note
+    real_title_index = relations.build_title_index
     if fresh_store:
         qdrant_store.delete_note = lambda note_id: None
+        # Second quadratic term (found live, matrix3 run: 21→9→6→5 notes/s):
+        # index_document rebuilds the title index — ONE COMPILED REGEX PER
+        # EXISTING NOTE — for every note it ingests, then runs every pattern
+        # over the body: O(n²) compiles + searches. The only relation edges the
+        # synthetic data needs are the supersedes pairs, so prebuild a minimal
+        # index of just the superseded titles once. (Production fix candidate:
+        # cache the index across index_document calls, as api.py already does
+        # for /search.) Graph edges beyond supersedes are unused by retrieve().
+        import re as _re
+        sup_titles = set()
+        for n in notes:
+            for m in _re.finditer(r"Supersedes ([^\n.]+)\.", n["body"]):
+                sup_titles.add(m.group(1).strip())
+        by_title = {n["title"]: n["id"] for n in notes}
+        mini_index = [
+            (t, by_title[t],
+             _re.compile(r"(?<![A-Za-z0-9])" + _re.escape(t) + r"(?![A-Za-z0-9])",
+                         _re.IGNORECASE))
+            for t in sorted(sup_titles) if t in by_title
+        ]
+        relations.build_title_index = lambda conn, tenant, exclude_id=None: mini_index
+        print(f"    (fresh store: delete_note skipped; title index pinned to "
+              f"{len(mini_index)} superseded titles)", flush=True)
     t0 = time.perf_counter()
     try:
         for i, n in enumerate(notes):
@@ -88,6 +112,7 @@ def index_scenario(notes, conn, embedder, sparse, context_all, collection,
                 print(f"    indexed {i + 1}/{len(notes)} ({rate:.0f} notes/s)", flush=True)
     finally:
         qdrant_store.delete_note = real_delete
+        relations.build_title_index = real_title_index
     return time.perf_counter() - t0
 
 
