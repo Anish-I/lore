@@ -102,15 +102,22 @@ def verify_okta_id_token(token: str, issuer: str = None, client_id: str = None) 
         raise auth.AuthError(f"invalid Okta ID token: {e}") from e
     if claims.get("email_verified") is False:
         raise auth.AuthError("email not verified by Okta")
+    sub = claims.get("sub")
+    if not sub:  # no durable account key -> can't identify the user; fail closed as 401
+        raise auth.AuthError("Okta ID token has no subject (sub)")
+    # Distinguish "groups claim absent" (app not emitting one) from "present but empty".
+    # The former must NOT trigger a mass membership revoke on a misconfigured app.
+    groups_present = "groups" in claims
     groups = claims.get("groups") or []
     if not isinstance(groups, list):
         groups = [groups]
     return {
-        "sub": claims["sub"],
+        "sub": sub,
         "email": claims.get("email"),
         "name": claims.get("name") or claims.get("preferred_username"),
         "email_verified": claims.get("email_verified", True),
         "groups": [str(g) for g in groups],
+        "groups_present": groups_present,
     }
 
 
@@ -172,7 +179,13 @@ def login_with_okta(conn, id_token_str: str) -> dict:
     # Reuse the users table; `sub` is the durable account id (Okta subs and Google
     # subs live in disjoint namespaces, so the shared `id` key never collides).
     user_id = auth.upsert_user(conn, identity["sub"], identity["email"], identity["name"])
-    scopes = sync_okta_groups(conn, user_id, identity["groups"], cfg["group_scope_map"])
+    if identity.get("groups_present"):
+        scopes = sync_okta_groups(conn, user_id, identity["groups"], cfg["group_scope_map"])
+    else:
+        # No `groups` claim at all — the app isn't emitting one (common Okta setup
+        # slip). Don't reconcile: leaving memberships untouched beats silently
+        # revoking every SSO-managed team on a misconfiguration. Use what's on record.
+        scopes = tenancy.authorized_team_scope_ids(conn, user_id)
     token = auth.issue_session_jwt(user_id)
     return {
         "token": token,

@@ -10,6 +10,8 @@ desktop/node_modules/
 *.token
 .conda/
 secrets/
+# municipal product spec — keep out of the built-product repo
+LORE.md
 
 # python
 __pycache__/
@@ -58,3 +60,6 @@ core/pyi-spec/
 ruvector.db
 *.rvf
 *.rvf.lock
+
+# personal local-dev scratch notes (not project docs)
+RUN_LOCALLY.md

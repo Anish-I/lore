@@ -182,6 +182,39 @@ def test_sync_okta_groups_grants_revokes_and_leaves_invites_alone():
     assert revoked[0] == "revoked"
 
 
+def test_login_with_okta_absent_groups_claim_does_not_revoke(monkeypatch):
+    """A misconfigured Okta app that emits NO groups claim must not silently strip
+    every SSO-managed team on the next login. Absent claim → memberships untouched."""
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+
+    monkeypatch.setenv("OKTA_ISSUER", "https://dev-test.okta.com/oauth2/default")
+    monkeypatch.setenv("OKTA_CLIENT_ID", "0oatestclientid")
+    monkeypatch.setenv("OKTA_GROUP_SCOPE_MAP", '{"Engineering":"t-eng"}')
+
+    # First login WITH the groups claim grants + provisions t-eng.
+    monkeypatch.setattr(okta, "verify_okta_id_token",
+                        lambda token, issuer=None, client_id=None: {
+                            "sub": "00u-drop", "email": "d@corp.com",
+                            "name": "D", "email_verified": True,
+                            "groups": ["Engineering"], "groups_present": True})
+    first = okta.login_with_okta(conn, "tok")
+    assert first["scopes"] == ["team:t-eng"]
+
+    # Next login the app stops emitting groups entirely (claim ABSENT, not empty).
+    monkeypatch.setattr(okta, "verify_okta_id_token",
+                        lambda token, issuer=None, client_id=None: {
+                            "sub": "00u-drop", "email": "d@corp.com",
+                            "name": "D", "email_verified": True,
+                            "groups": [], "groups_present": False})
+    second = okta.login_with_okta(conn, "tok")
+    assert second["scopes"] == ["team:t-eng"]   # membership preserved, not revoked
+    status = conn.execute(
+        "select status from memberships where user_id='00u-drop' and team_id='t-eng'").fetchone()
+    assert status[0] == "active"
+
+
 def test_login_with_okta_verifies_syncs_and_issues_jwt(monkeypatch):
     conn = db.connect()
     db.bootstrap_schema(conn)
@@ -196,7 +229,7 @@ def test_login_with_okta_verifies_syncs_and_issues_jwt(monkeypatch):
                         lambda token, issuer=None, client_id=None: {
                             "sub": "00u-okta-1", "email": "eng@corp.com",
                             "name": "Eng User", "email_verified": True,
-                            "groups": ["Engineering"]})
+                            "groups": ["Engineering"], "groups_present": True})
 
     result = okta.login_with_okta(conn, "fake-okta-id-token")
     assert result["user_id"] == "00u-okta-1"
@@ -216,7 +249,7 @@ def test_auth_okta_endpoint_returns_token_then_me_works(monkeypatch):
                         lambda token, issuer=None, client_id=None: {
                             "sub": "00u-http", "email": "http@corp.com",
                             "name": "Http User", "email_verified": True,
-                            "groups": ["Engineering"]})
+                            "groups": ["Engineering"], "groups_present": True})
     r = client.post("/auth/okta", json={"id_token": "fake"})
     assert r.status_code == 200, r.text
     body = r.json()

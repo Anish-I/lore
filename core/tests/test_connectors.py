@@ -239,3 +239,16 @@ def test_mailbox_sync_endpoint_422_without_scope():
     r = client.post("/connectors/mailbox/sync",
                     json={"tenant_id": "acme", "folder": "/tmp", "scope": ""})
     assert r.status_code == 422
+
+
+def test_filesystem_connectors_disabled_in_server_mode(monkeypatch, tmp_path):
+    """In a hosted deployment `folder` reads the SERVER's filesystem — an
+    authenticated user could exfiltrate arbitrary .eml/.json. Both filesystem
+    connectors must refuse (403) in server mode; hosted uses a provider API."""
+    folder = str(tmp_path)
+    _write(folder, "x.eml", _eml("x@corp.com", "Kickoff", "Bob, do the thing."))
+    monkeypatch.setenv("LORE_SERVER_MODE", "1")
+    for endpoint in ("/connectors/mailbox/sync", "/connectors/slack/sync"):
+        r = client.post(endpoint,
+                        json={"tenant_id": "acme", "folder": folder, "scope": "team:t-eng"})
+        assert r.status_code == 403, f"{endpoint}: {r.status_code} {r.text}"

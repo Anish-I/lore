@@ -1176,6 +1176,13 @@ def connectors_mailbox_sync(req: MailboxSyncReq,
     leaves the box. A hosted, multi-tenant deployment would use a provider API
     connector instead of exposing filesystem paths. Returns the sync summary.
     """
+    if _server_mode():
+        # Client-supplied `folder` reads the *server's* filesystem. That's safe for
+        # the local/solo desktop (127.0.0.1, the caller owns the box) but in a hosted
+        # deployment any authenticated user could read arbitrary .eml files off the
+        # server. Filesystem connectors are local-only; hosted uses a provider API.
+        raise HTTPException(status_code=403,
+                            detail="filesystem connectors are disabled in server mode")
     if not (req.folder or "").strip() or not (req.scope or "").strip():
         raise HTTPException(status_code=422, detail="folder and scope are required")
     owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant_id)
@@ -1194,6 +1201,11 @@ def connectors_slack_sync(req: MailboxSyncReq,
     the mailbox connector (the admin downloads the export; nothing leaves the box).
     Slack's conversational style leans on the LLM extraction path. Returns the summary.
     """
+    if _server_mode():
+        # See mailbox connector: client-supplied `folder` reads the server's FS, so
+        # filesystem connectors are local-only. Hosted uses a provider API connector.
+        raise HTTPException(status_code=403,
+                            detail="filesystem connectors are disabled in server mode")
     if not (req.folder or "").strip() or not (req.scope or "").strip():
         raise HTTPException(status_code=422, detail="folder and scope are required")
     owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant_id)
