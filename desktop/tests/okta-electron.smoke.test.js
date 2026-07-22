@@ -7,16 +7,16 @@
 //   * with Okta unconfigured, invoking it returns a clean {ok:false,
 //     reason:'unavailable'} — no crash, no browser opens (plan 5.1).
 //
-// Opt-in: booting the whole app (embedded Postgres + backend) is heavy and needs
-// a display, so this stays OUT of the default `npm test`. Run it with:
-//   LORE_E2E_ELECTRON=1 npx vitest run tests/okta-electron.smoke.test.js
-// If the app can't boot in this environment, the test SKIPS (never a false fail).
+// Runs as part of the normal suite. It boots the whole app (embedded Postgres +
+// backend), so it's the slow one — but it's real. On a genuinely display-less box
+// where Electron can't create a window it SKIPS cleanly (never a false fail); it
+// does NOT skip just because someone forgot a flag. Run it alone with:
+//   npm run test:e2e:electron
 import { describe, it, expect } from 'vitest';
 import os from 'os';
 import path from 'path';
 import { _electron as electron } from 'playwright';
 
-const ENABLED = !!process.env.LORE_E2E_ELECTRON;
 const appDir = path.join(__dirname, '..');
 
 // Okta deliberately UNCONFIGURED: no OKTA_* env, and OKTA_CLIENT_FILE pointed at a
@@ -27,6 +27,10 @@ function unconfiguredEnv() {
   delete env.OKTA_ISSUER;
   delete env.OKTA_CLIENT_ID;
   delete env.OKTA_CLIENT_SECRET;
+  // ELECTRON_RUN_AS_NODE=1 (common in CI/agent shells) forces Electron to run as a
+  // plain Node process — no GUI, no `app` object — which makes launch() fail. Strip
+  // it so the real windowed app boots regardless of the ambient environment.
+  delete env.ELECTRON_RUN_AS_NODE;
   env.OKTA_CLIENT_FILE = path.join(os.tmpdir(), 'definitely-no-okta-here.json');
   return env;
 }
@@ -39,7 +43,7 @@ function isBootFailure(err) {
   return /failed to launch|Target (page|browser).*closed|Timeout .* exceeded/i.test(String(err && err.message || err));
 }
 
-describe.skipIf(!ENABLED)('okta sign-in — full Electron boot', () => {
+describe('okta sign-in — full Electron boot', () => {
   it('boots, exposes loginOkta, and reports "unavailable" when not configured', async (ctx) => {
     const swallow = (err) => { if (!isBootFailure(err)) throw err; };
     process.on('unhandledRejection', swallow);
