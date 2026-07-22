@@ -107,11 +107,16 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
   const nonce = b64url(crypto.randomBytes(16));
 
   return new Promise((resolve, reject) => {
+    // The loopback redirect URI — captured once the server is listening (below) and
+    // reused for the token exchange. It must be read BEFORE cleanup(): server.close()
+    // makes server.address() null, and the token endpoint requires the redirect_uri
+    // to match the one sent to /authorize exactly, so we keep a single source of truth.
+    let redirectUri;
     // Ephemeral loopback port — Okta allows a 127.0.0.1 redirect for native apps;
     // register http://127.0.0.1/callback (any port) as a redirect URI in the app.
     const server = http.createServer(async (req, res) => {
       try {
-        const reqUrl = new URL(req.url, `http://127.0.0.1:${server.address().port}`);
+        const reqUrl = new URL(req.url, redirectUri || 'http://127.0.0.1');
         if (reqUrl.pathname !== '/callback') { res.writeHead(404); res.end(); return; }
         const err = reqUrl.searchParams.get('error');
         const code = reqUrl.searchParams.get('code');
@@ -123,7 +128,6 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
         if (err) return reject(new Error(`Okta returned error: ${err}`));
         if (gotState !== state) return reject(new Error('state mismatch (possible CSRF)'));
         if (!code) return reject(new Error('no authorization code in callback'));
-        const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
         const tokens = await exchangeCode(clientCfg, code, verifier, redirectUri);
         // Bind the id_token to THIS auth request: the nonce we sent must come back
         // in the token. Combined with the server's signature verification, this
@@ -141,7 +145,7 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
 
     server.on('error', (e) => { cleanup(); reject(e); });
     server.listen(0, '127.0.0.1', () => {
-      const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
+      redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
       openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state, nonce));
     });
   });

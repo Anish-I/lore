@@ -17,6 +17,8 @@
     "dist:mac": "electron-builder --mac",
     "dist:linux": "electron-builder --linux",
     "test": "vitest run",
+    "test:okta": "vitest run tests/okta-oauth.test.js tests/okta-loopback.e2e.test.js",
+    "test:e2e:electron": "node scripts/run-electron-smoke.cjs",
     "lint": "eslint .",
     "postinstall": "node scripts/patch-dev-appname.cjs"
   },
