@@ -167,6 +167,9 @@ contextBridge.exposeInMainWorld('lore', {
   // syncMailbox/syncSlack({scope?, owner?}) → picks a folder, ingests its .eml /
   //   Slack export into pending to-dos (idempotent) →
   //   {processed, skipped, todos_created, folder} | {cancelled} | {error}
+  // syncGmail({scope?, owner?, query?, limit?}) → runs the Google loopback with the
+  //   gmail.readonly scope, then the server pulls the user's recent mail into
+  //   pending to-dos (idempotent) → {processed, skipped, todos_created} | {error}
   todos: {
     extract: (opts)          => ipcRenderer.invoke('todos:extract', opts || {}),
     list:    (opts)          => ipcRenderer.invoke('todos:list', opts || {}),
@@ -174,6 +177,7 @@ contextBridge.exposeInMainWorld('lore', {
     dismiss: (id, scopes)    => ipcRenderer.invoke('todos:dismiss', { id, scopes }),
     syncMailbox: (opts)      => ipcRenderer.invoke('todos:sync-mailbox', opts || {}),
     syncSlack:   (opts)      => ipcRenderer.invoke('todos:sync-slack', opts || {}),
+    syncGmail:   (opts)      => ipcRenderer.invoke('todos:sync-gmail', opts || {}),
   },
 
   // --- ask chat history (persisted threads for the main chat) ---

@@ -202,3 +202,21 @@ reframed enterprise-general rather than municipal-only.
      scope is requested by default so the token carries the claim the server maps to team scopes.
      Register `http://127.0.0.1/callback` as a redirect URI in the Okta app. 3 loopback unit
      tests (`desktop/tests/okta-oauth.test.js`) pass. The full identity path is now end-to-end.
+
+  7. **First LIVE API connector — Gmail → to-dos** *(the M6 creds-gate, opened)*.
+     `connectors.sync_gmail` + `POST /connectors/gmail/sync` pull the caller's *own* recent
+     Gmail over the API and run each new message through the **same** extract/persist/watermark
+     substrate — proving the design claim that a live source is only a different *fetch*: Gmail's
+     `format=raw` returns full RFC-822, so `parse_eml` and everything downstream are reused
+     verbatim; the Gmail message id is the stable watermark key. **Unlike the export connectors
+     it reads no server filesystem** — it uses the user's Google `access_token` (the desktop's
+     Google loopback now requests the `gmail.readonly` scope), so it is deliberately **allowed in
+     server mode**: this is the connector for hosted, multi-user deployments. Writes are
+     authorized exactly like the wizard; the token fetches and is never stored; provider/token
+     failures surface as 502. Desktop: a **"Gmail — connect & sync (live)"** button in the
+     to-dos drawer runs the loopback → hands the token to the server (`todos:sync-gmail` IPC).
+     8 tests (idempotent by Gmail id, limit, endpoint round-trip, 422/502, **allowed in server
+     mode**) in `test_connectors.py`. Google creds are in the gitignored `secrets/` (rotate at
+     deploy). **Drive-by fix:** `google-oauth.js` had the same `redirect_uri`-after-`close()` bug
+     as Okta (read `server.address().port` after the callback server closed) — fixed the same way.
+     Slack's **live API** connector is the same shape behind Slack app creds (still creds-gated).

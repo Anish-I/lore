@@ -1215,6 +1215,44 @@ def connectors_slack_sync(req: MailboxSyncReq,
                                         owner=owner, provider=req.provider, limit=req.limit)
 
 
+class GmailSyncReq(BaseModel):
+    tenant_id: Optional[str] = None
+    scope: str
+    access_token: str          # the caller's Google OAuth token (gmail.readonly)
+    owner: Optional[str] = None
+    provider: Optional[str] = None
+    query: Optional[str] = None
+    limit: Optional[int] = 50
+
+
+@app.post("/connectors/gmail/sync")
+def connectors_gmail_sync(req: GmailSyncReq,
+                          authorization: Optional[str] = Header(default=None)):
+    """Pull the caller's own recent Gmail via the API → extract to-dos → persist
+    them `pending`, idempotently. The first *live* connector.
+
+    Unlike the mailbox/slack export connectors this reads **no server filesystem**:
+    it uses the caller's Google `access_token` (obtained by the desktop's Google
+    loopback with the `gmail.readonly` scope), and Google enforces the token only
+    reaches that user's own inbox. So — deliberately — it is NOT gated off in server
+    mode; it is the connector meant for hosted, multi-user deployments. Writes are
+    authorized exactly like the wizard (scope must be one the caller may write, owner
+    forced to the caller in server mode); the access token is used to fetch and never
+    stored. A provider/token failure surfaces as 502 (bad gateway), not 500.
+    """
+    if not (req.access_token or "").strip():
+        raise HTTPException(status_code=422, detail="access_token is required")
+    if not (req.scope or "").strip():
+        raise HTTPException(status_code=422, detail="scope is required")
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant_id)
+    try:
+        return connectors.sync_gmail(_conn, tenant, scope, access_token=req.access_token,
+                                     owner=owner, provider=req.provider,
+                                     query=req.query, limit=req.limit)
+    except connectors.ConnectorError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/config/retrieval")
 def config_retrieval(tenant: Optional[str] = None):
     """Truthful snapshot of the retrieval stack for the desktop Settings UI.

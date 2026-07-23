@@ -229,7 +229,9 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
   // (idempotent — re-syncing skips ones already imported). Lands in the Pending
   // list, same as pasting a thread.
   const syncFolder = async (kind) => {
-    const fn = kind === 'slack' ? window.lore?.todos?.syncSlack : window.lore?.todos?.syncMailbox;
+    const fn = kind === 'slack' ? window.lore?.todos?.syncSlack
+      : kind === 'gmail' ? window.lore?.todos?.syncGmail        // live API: no folder, OAuth
+      : window.lore?.todos?.syncMailbox;
     if (syncing || !fn) return;
     setSyncing(kind); setErr(null); setNote(null);
     try {
@@ -280,7 +282,7 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
           </span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-strong)' }}>To-dos from a thread</div>
-            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>Paste a thread, or import a mail / Slack export — get action items you can confirm.</div>
+            <div style={{ fontSize: 11, color: 'var(--text-faint)', marginTop: 1 }}>Paste a thread, import a mail / Slack export, or connect Gmail — get action items you can confirm.</div>
           </div>
           <button onClick={onClose} aria-label="Close" style={{ border: 'none', background: 'transparent', color: 'var(--text-faint)', cursor: 'pointer', display: 'inline-flex', padding: 4 }}>
             <WzIcon name="x" size={16} />
@@ -317,6 +319,12 @@ function TodoWizardDrawer({ writeScope, readScopes, onClose }) {
               {syncing === 'slack' ? 'Syncing…' : 'Slack export'}
             </WzButton>
           </div>
+          {/* Live Gmail: opens the browser to Google, then pulls the user's own recent
+              mail server-side. No folder/export needed — the connector for hosted use. */}
+          <WzButton icon="mail" onClick={() => syncFolder('gmail')} disabled={!!syncing}
+            style={{ width: '100%', height: 36, marginTop: 8 }}>
+            {syncing === 'gmail' ? 'Connecting to Gmail…' : 'Gmail — connect & sync (live)'}
+          </WzButton>
           {note && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, marginTop: 8, fontSize: 11.5, color: 'var(--text-subtle)', lineHeight: 1.45 }}>
               <WzIcon name="check-circle-2" size={13} style={{ color: 'var(--brand-fg)', flexShrink: 0, marginTop: 1 }} />{note}

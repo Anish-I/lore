@@ -14,6 +14,7 @@ A Gmail/Slack **API** connector later is the same pipeline behind a different
 `fetch`: only the "get the next messages" step changes — extraction, persistence,
 scoping, and the watermark are shared here.
 """
+import base64
 import email
 import email.policy
 import glob
@@ -21,10 +22,18 @@ import hashlib
 import json
 import os
 import re
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from . import todos as todos_mod
 
 _TAG_RE = re.compile(r"<[^>]+>")
+
+
+class ConnectorError(Exception):
+    """A connector's *source* failed (provider API error, bad token, network) —
+    distinct from a bug in our pipeline. Endpoints map it to a 502, not a 500."""
 
 
 def _strip_html(html: str) -> str:
@@ -258,6 +267,101 @@ def sync_slack_export(conn, tenant: str, scope: str, folder: str, owner: str = N
                 it["source"] = prov
         new = todos_mod.create_todos(conn, tenant, items, scope=scope, owner=owner)
         _mark_seen(conn, tenant, source, ext, scope, len(new))
+        created.extend(new)
+        created_count += len(new)
+        processed += 1
+    return {"source": source, "processed": processed, "skipped": skipped,
+            "todos_created": created_count, "todos": created}
+
+
+# --- Gmail API connector -----------------------------------------------------
+# The first *live* connector: instead of a local export it pulls the caller's own
+# recent Gmail over the API. This is the connector meant for hosted/server mode —
+# it reads no server filesystem; it uses the caller's Google OAuth access token
+# (the desktop obtains it via the Google loopback with the gmail.readonly scope).
+# Google enforces the token only reaches the caller's own inbox. Crucially it's
+# the SAME pipeline: Gmail's `format=raw` hands back a full RFC-822 message, so
+# `parse_eml` and the watermark/extract/persist path are reused verbatim — only
+# "fetch the next messages" is new, exactly as the substrate was designed for.
+
+_GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me"
+
+
+def _gmail_api_json(url: str, access_token: str, opener=None) -> dict:
+    """GET a Gmail API URL with the bearer token; return parsed JSON. Raises
+    ConnectorError on any HTTP/network failure (401/403 → token/scope problem)."""
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {access_token}"})
+    try:
+        with (opener or urllib.request.urlopen)(req, timeout=30) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            raise ConnectorError(
+                "Gmail rejected the access token (expired, or missing the "
+                "gmail.readonly scope)") from e
+        raise ConnectorError(f"Gmail API error {e.code}") from e
+    except ConnectorError:
+        raise
+    except Exception as e:  # URLError, socket timeout, JSON decode
+        raise ConnectorError(f"Gmail API request failed: {e}") from e
+
+
+def gmail_fetch(access_token: str, query: str = None, limit: int = 50):
+    """Yield (gmail_message_id, raw_rfc822_bytes) for the caller's most recent
+    messages. `query` is a Gmail search string (e.g. 'newer_than:7d -in:sent').
+    A single listing page (capped at 100) — enough for a periodic sync; deeper
+    backfill via `query` is the follow-up. Requires a live token; unit tests inject
+    a `fetch` instead of calling this."""
+    if not (access_token or "").strip():
+        raise ConnectorError("gmail connector requires an access_token")
+    params = {"maxResults": max(1, min(int(limit or 50), 100))}
+    if query:
+        params["q"] = query
+    listing = _gmail_api_json(
+        f"{_GMAIL_API}/messages?" + urllib.parse.urlencode(params), access_token)
+    for m in listing.get("messages", []) or []:
+        mid = m.get("id")
+        if not mid:
+            continue
+        detail = _gmail_api_json(f"{_GMAIL_API}/messages/{mid}?format=raw", access_token)
+        raw_b64 = detail.get("raw") or ""
+        raw = base64.urlsafe_b64decode(raw_b64 + "=" * (-len(raw_b64) % 4))
+        yield mid, raw
+
+
+def sync_gmail(conn, tenant: str, scope: str, access_token: str = None,
+               owner: str = None, provider: str = None, source: str = None,
+               llm_call=None, limit: int = 50, query: str = None, fetch=None) -> dict:
+    """Pull the caller's *new* Gmail messages via the API → to-dos under `scope`,
+    watermarked so re-sync is idempotent. Same contract/return as `sync_mailbox`.
+
+    `fetch(access_token, query, limit)` yields (external_id, raw_bytes) and defaults
+    to the real Gmail transport; tests inject a fake one. The Gmail message id is the
+    watermark key (stable across re-fetch), and the raw message reuses `parse_eml`.
+    """
+    source = source or "gmail:me"
+    fetch = fetch or gmail_fetch
+    processed = skipped = created_count = 0
+    created = []
+    for external_id, raw in fetch(access_token, query=query, limit=limit):
+        if limit is not None and processed >= limit:
+            break
+        if _already_seen(conn, tenant, source, external_id, scope):
+            skipped += 1
+            continue
+        try:
+            parsed = parse_eml(raw)
+        except Exception:
+            continue
+        parsed["external_id"] = external_id   # trust Gmail's stable id over the header
+        items = todos_mod.extract_todos(parsed["text"], me=owner,
+                                        provider=provider, llm_call=llm_call)
+        prov = _provenance(parsed)
+        for it in items:
+            if not it.get("source"):
+                it["source"] = prov
+        new = todos_mod.create_todos(conn, tenant, items, scope=scope, owner=owner)
+        _mark_seen(conn, tenant, source, external_id, scope, len(new))
         created.extend(new)
         created_count += len(new)
         processed += 1

@@ -2122,6 +2122,46 @@ ipcMain.handle('todos:sync-mailbox', (_e, opts) =>
 ipcMain.handle('todos:sync-slack', (_e, opts) =>
   syncConnector('/connectors/slack/sync', 'Sync a Slack export folder into to-dos', opts));
 
+// Gmail (live API) connector — no folder picker. Runs the Google loopback with the
+// gmail.readonly scope to get THIS user's access token, then hands it to the server,
+// which pulls their recent mail and turns new messages into pending to-dos. Reads no
+// filesystem, so it's the connector that also works in a hosted deployment. The token
+// is used for the one sync and never stored. Returns the sync summary or {error}.
+ipcMain.handle('todos:sync-gmail', async (_e, opts) => {
+  const cfg = loadConfig() || {};
+  const { scope, owner, tenant, query, limit } = opts || {};
+  const clientCfg = loadGoogleClient();
+  if (!clientCfg) return { error: 'Google isn’t configured in this build.' };
+  let tokens;
+  try {
+    tokens = await googleOauth.runLoopbackFlow(
+      { ...clientCfg, scope: 'openid email https://www.googleapis.com/auth/gmail.readonly' },
+      (url) => shell.openExternal(url));
+  } catch (e) {
+    return { error: `Google sign-in failed: ${e.message}` };
+  }
+  if (!tokens || !tokens.access_token) return { error: 'no access token from Google' };
+  try {
+    const r = await fetch(`${BACKEND_URL()}/connectors/gmail/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({
+        tenant_id: tenant || cfg.tenant || '',
+        scope: scope || cfg.scope || null,
+        owner: owner || cfg.owner || null,
+        access_token: tokens.access_token,
+        query: query || null,
+        limit: limit || 50,
+      }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { error: j.detail || `backend ${r.status}` };
+    return { ...j, source: 'gmail' };
+  } catch (e) {
+    return { error: String(e) };
+  }
+});
+
 // ---------- boot-time disk<->index reconcile ----------
 // A store swap (e.g. Postgres -> SQLite) or a fresh machine can leave the on-disk
 // vault far ahead of what's actually indexed, with nothing that ever re-scans

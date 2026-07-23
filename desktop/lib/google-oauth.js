@@ -29,11 +29,16 @@ function buildAuthUrl(clientCfg, redirectUri, challenge, state) {
     client_id: clientCfg.client_id,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: 'openid email profile',
+    // Default is the sign-in scope; a connector (e.g. Gmail) overrides via
+    // clientCfg.scope to also request an API scope like gmail.readonly.
+    scope: clientCfg.scope || 'openid email profile',
     code_challenge: challenge,
     code_challenge_method: 'S256',
     state,
     access_type: 'offline',
+    // include_granted_scopes lets an incremental consent (add Gmail later) keep
+    // the scopes the user already granted for sign-in.
+    include_granted_scopes: 'true',
     prompt: 'select_account',
   }).toString();
   return u.toString();
@@ -80,10 +85,14 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
   const state = b64url(crypto.randomBytes(16));
 
   return new Promise((resolve, reject) => {
+    // Captured once the server is listening and reused for the exchange: reading it
+    // AFTER cleanup() would fail (server.address() is null after close()), and the
+    // token endpoint requires the exchange redirect_uri to match the /authorize one.
+    let redirectUri;
     // Ephemeral loopback port — Google allows any port for installed-app redirects.
     const server = http.createServer(async (req, res) => {
       try {
-        const reqUrl = new URL(req.url, `http://127.0.0.1:${server.address().port}`);
+        const reqUrl = new URL(req.url, redirectUri || 'http://127.0.0.1');
         if (reqUrl.pathname !== '/callback') { res.writeHead(404); res.end(); return; }
         const err = reqUrl.searchParams.get('error');
         const code = reqUrl.searchParams.get('code');
@@ -95,7 +104,6 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
         if (err) return reject(new Error(`Google returned error: ${err}`));
         if (gotState !== state) return reject(new Error('state mismatch (possible CSRF)'));
         if (!code) return reject(new Error('no authorization code in callback'));
-        const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
         const tokens = await exchangeCode(clientCfg, code, verifier, redirectUri);
         resolve(tokens);
       } catch (e) { cleanup(); reject(e); }
@@ -106,7 +114,7 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
 
     server.on('error', (e) => { cleanup(); reject(e); });
     server.listen(0, '127.0.0.1', () => {
-      const redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
+      redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
       openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state));
     });
   });

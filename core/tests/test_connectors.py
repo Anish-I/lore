@@ -281,3 +281,143 @@ def test_filesystem_connectors_disabled_in_server_mode(monkeypatch, tmp_path):
         r = client.post(endpoint,
                         json={"tenant_id": "acme", "folder": folder, "scope": "team:t-eng"})
         assert r.status_code == 403, f"{endpoint}: {r.status_code} {r.text}"
+
+
+# --- Gmail API connector (live source, injected transport) ------------------
+# The Gmail connector's only new part is "fetch the next messages"; everything
+# else (parse_eml, extract, persist, watermark) is the shared substrate. So the
+# tests inject a fake `fetch` that yields (gmail_id, raw .eml bytes) — the exact
+# shape the real Gmail transport produces from `format=raw` — and exercise the
+# whole path with no network and no OAuth.
+
+def _fake_gmail(messages):
+    """Build a fetch(access_token, query, limit) that yields (id, raw_bytes) from
+    a list of (gmail_id, eml_text). Mirrors connectors.gmail_fetch's contract."""
+    def fetch(access_token, query=None, limit=50):
+        for gid, text in messages[: (limit or len(messages))]:
+            yield gid, text.encode("utf-8")
+    return fetch
+
+
+def test_sync_gmail_extracts_todos_and_is_idempotent():
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    fetch = _fake_gmail([
+        ("g-1", _eml("mid-1@corp.com", "Budget", "Bob, send the budget draft by Friday EOD.")),
+        ("g-2", _eml("mid-2@corp.com", "Vendors", "Carol, review the vendor list.",
+                     to="Carol Diaz <carol@corp.com>")),
+    ])
+
+    r1 = connectors.sync_gmail(conn, "acme", "team:t-gmail", access_token="tok",
+                               owner="alice", fetch=fetch)
+    assert r1["source"] == "gmail:me"
+    assert r1["processed"] == 2 and r1["skipped"] == 0
+    assert r1["todos_created"] >= 2
+    assert "Bob Jones" in {t["assignee"] for t in r1["todos"]}   # header name-resolution
+    assert all(t["source"] for t in r1["todos"])                 # provenance stamped
+
+    # Re-sync: both gmail ids are watermarked → nothing new (idempotent).
+    r2 = connectors.sync_gmail(conn, "acme", "team:t-gmail", access_token="tok",
+                               owner="alice", fetch=fetch)
+    assert r2["processed"] == 0 and r2["skipped"] == 2 and r2["todos_created"] == 0
+
+    listed = todos_mod.list_todos(conn, "acme", ["team:t-gmail"], status="pending")
+    assert len(listed) == r1["todos_created"]
+    assert todos_mod.list_todos(conn, "acme", ["team:t-other"]) == []
+
+
+def test_sync_gmail_watermarks_by_gmail_id_not_header():
+    """Two Gmail messages that share a Message-ID header (forwards/duplicates) but
+    have distinct Gmail ids are BOTH processed — the watermark keys on the stable
+    Gmail id, which the connector prefers over the header."""
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    same_header = "dup@corp.com"
+    fetch = _fake_gmail([
+        ("g-a", _eml(same_header, "One", "Bob, ship the thing today.")),
+        ("g-b", _eml(same_header, "Two", "Bob, ship the thing today.")),
+    ])
+    r = connectors.sync_gmail(conn, "acme", "team:t-gmail-dup", access_token="tok",
+                              owner="alice", fetch=fetch)
+    assert r["processed"] == 2 and r["skipped"] == 0
+
+
+def test_sync_gmail_respects_limit():
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    fetch = _fake_gmail([(f"g{i}", _eml(f"{i}@corp.com", f"S{i}", "Bob, do it today."))
+                         for i in range(3)])
+    r = connectors.sync_gmail(conn, "acme", "team:t-gmail-lim", access_token="tok",
+                              owner="a", fetch=fetch, limit=1)
+    assert r["processed"] == 1
+
+
+def test_gmail_fetch_requires_token():
+    with pytest.raises(connectors.ConnectorError):
+        list(connectors.gmail_fetch("", limit=5))
+
+
+def test_gmail_sync_endpoint_round_trip(monkeypatch):
+    """The endpoint uses the real code path (default fetch=gmail_fetch), so we
+    monkeypatch the transport rather than pass a fetch — proving the wiring."""
+    monkeypatch.setattr(connectors, "gmail_fetch",
+                        _fake_gmail([("g-http", _eml("h@corp.com", "Kickoff",
+                                     "Bob, draft the kickoff plan by tomorrow."))]))
+    r = client.post("/connectors/gmail/sync",
+                    json={"tenant_id": "acme", "scope": "team:t-gmail-ep",
+                          "access_token": "fake-google-token", "owner": "alice"})
+    assert r.status_code == 200, r.text
+    assert r.json()["processed"] == 1 and r.json()["todos_created"] >= 1
+
+    got = client.get("/todos", params={"tenant": "acme", "scopes": "team:t-gmail-ep",
+                                       "status": "pending"})
+    assert got.json()["count"] >= 1
+
+
+def test_gmail_sync_endpoint_422_without_token():
+    r = client.post("/connectors/gmail/sync",
+                    json={"tenant_id": "acme", "scope": "team:t-eng", "access_token": ""})
+    assert r.status_code == 422
+
+
+def test_gmail_sync_endpoint_502_on_provider_error(monkeypatch):
+    def _boom(access_token, query=None, limit=50):
+        raise connectors.ConnectorError("Gmail rejected the access token")
+        yield  # make it a generator
+    monkeypatch.setattr(connectors, "gmail_fetch", _boom)
+    r = client.post("/connectors/gmail/sync",
+                    json={"tenant_id": "acme", "scope": "team:t-eng",
+                          "access_token": "expired"})
+    assert r.status_code == 502, r.text
+
+
+def test_gmail_connector_allowed_in_server_mode(monkeypatch):
+    """Unlike the filesystem connectors, Gmail reads no server FS — it uses the
+    caller's own OAuth token — so it must NOT be 403'd in server mode. With a valid
+    session + authorized scope it goes through."""
+    from lore import auth
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    conn.execute("insert into orgs(id,name) values('o-gsrv','G') on conflict do nothing")
+    conn.execute("insert into teams(id,org_id,name) values('t-gmail-srv','o-gsrv','G') "
+                 "on conflict do nothing")
+    uid = auth.upsert_user(conn, "u-gmail-srv", "g@corp.com", "G")
+    conn.execute("insert into memberships(user_id,org_id,team_id,role,status) "
+                 "values(%s,'o-gsrv','t-gmail-srv','member','active') "
+                 "on conflict (user_id,team_id) do update set status='active'", (uid,))
+    token = auth.issue_session_jwt(uid)
+
+    monkeypatch.setenv("LORE_SERVER_MODE", "1")
+    monkeypatch.setattr(connectors, "gmail_fetch",
+                        _fake_gmail([("g-srv", _eml("s@corp.com", "S",
+                                     "Bob, ship the thing today."))]))
+    r = client.post("/connectors/gmail/sync",
+                    json={"tenant_id": "acme", "scope": "team:t-gmail-srv",
+                          "access_token": "tok"},
+                    headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["processed"] == 1
