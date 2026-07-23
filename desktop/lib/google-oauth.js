@@ -80,7 +80,12 @@ function exchangeCode(clientCfg, code, verifier, redirectUri) {
 
 // Run the full loopback flow. `openExternal(url)` opens the system browser
 // (pass Electron's shell.openExternal). Resolves to the token response.
-function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
+//
+// `port` fixes the loopback port instead of picking an ephemeral one. A Google
+// **Web** OAuth client only accepts redirect URIs it has registered, so it needs
+// a known port (register http://127.0.0.1:<port>/callback once). A **Desktop**
+// client accepts any loopback port, so port can stay 0 (ephemeral) there.
+function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000, port = 0 } = {}) {
   const { verifier, challenge } = generatePkce();
   const state = b64url(crypto.randomBytes(16));
 
@@ -113,7 +118,7 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
     function cleanup() { clearTimeout(timer); try { server.close(); } catch { /* ignore */ } }
 
     server.on('error', (e) => { cleanup(); reject(e); });
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
       redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
       openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state));
     });

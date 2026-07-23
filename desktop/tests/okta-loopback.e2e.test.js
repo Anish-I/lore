@@ -167,4 +167,19 @@ describe('okta loopback flow (real, mock-Okta over HTTPS)', () => {
     await expect(okta.runLoopbackFlow(cfg(), browser, { timeoutMs: 8000 }))
       .rejects.toThrow(/token exchange failed/i);
   });
+
+  it('honors a fixed loopback port (what a Google Web client needs)', async () => {
+    // Grab a currently-free port, then insist the flow binds exactly it and sends
+    // that exact redirect_uri — a Google Web client only accepts a registered
+    // http://127.0.0.1:<port>/callback, so the port must not be ephemeral.
+    const fixed = await new Promise((res) => {
+      const s = http.createServer();
+      s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); });
+    });
+
+    resetScenario();
+    const tokens = await okta.runLoopbackFlow(cfg(), browser, { timeoutMs: 8000, port: fixed });
+    expect(tokens.id_token).toBeTruthy();
+    expect(scenario.seenAuth.redirect_uri).toBe(`http://127.0.0.1:${fixed}/callback`);
+  });
 });

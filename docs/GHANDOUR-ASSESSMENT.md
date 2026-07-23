@@ -220,3 +220,11 @@ reframed enterprise-general rather than municipal-only.
      deploy). **Drive-by fix:** `google-oauth.js` had the same `redirect_uri`-after-`close()` bug
      as Okta (read `server.address().port` after the callback server closed) — fixed the same way.
      Slack's **live API** connector is the same shape behind Slack app creds (still creds-gated).
+
+     **Fixed-port loopback (`LORE_OAUTH_PORT`).** The loopback normally binds an ephemeral port,
+     which a Google **Desktop** OAuth client accepts. The creds on hand are a **Web** client, which
+     only accepts *registered* redirect URIs — so both `google-oauth.js` and `okta-oauth.js` now
+     take a `port` option, wired from `LORE_OAUTH_PORT` (or `config.oauthPort`) in `main.js`. Set it
+     to a chosen port, register `http://127.0.0.1:<port>/callback` on the client, and the Web client
+     works without minting a Desktop client. 4 desktop tests added (`google-oauth.test.js` scope
+     override + a fixed-port loopback assertion). Full desktop suite 59 passed.

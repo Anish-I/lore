@@ -1189,6 +1189,17 @@ function loadGoogleClient() {
   return data.installed || data.web || data;
 }
 
+// Fixed loopback port for the OAuth redirect, or 0 (ephemeral) when unset. A Google
+// *Web* OAuth client only accepts registered redirect URIs, so set LORE_OAUTH_PORT
+// (or config.oauthPort) to a chosen port and register http://127.0.0.1:<port>/callback
+// on the client. A *Desktop* client accepts any loopback port — leave it unset.
+function oauthPort() {
+  const cfg = loadConfig() || {};
+  const raw = process.env.LORE_OAUTH_PORT || cfg.oauthPort;
+  const n = parseInt(raw, 10);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : 0;
+}
+
 // Lore session JWT is stored encrypted (Electron safeStorage) in userData.
 function authStorePath() { return path.join(app.getPath('userData'), 'lore-auth.bin'); }
 function saveSession(obj) {
@@ -1223,7 +1234,7 @@ ipcMain.handle('auth:login', async () => {
   try {
     const clientCfg = loadGoogleClient();
     if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Google sign-in isn’t configured in this build.' };
-    const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url));
+    const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url), { port: oauthPort() });
     if (!tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
     const claims = decodeJwtClaims(tokens.id_token);
     const r = await fetch(`${BACKEND_URL()}/auth/google`, {
@@ -1282,7 +1293,7 @@ ipcMain.handle('auth:login-okta', async () => {
   try {
     const clientCfg = loadOktaClient();
     if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Okta SSO isn’t configured in this build.' };
-    const tokens = await oktaOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url));
+    const tokens = await oktaOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url), { port: oauthPort() });
     if (!tokens.id_token) return { ok: false, reason: 'no id_token from Okta' };
     const claims = decodeJwtClaims(tokens.id_token);
     const r = await fetch(`${BACKEND_URL()}/auth/okta`, {
@@ -2136,7 +2147,7 @@ ipcMain.handle('todos:sync-gmail', async (_e, opts) => {
   try {
     tokens = await googleOauth.runLoopbackFlow(
       { ...clientCfg, scope: 'openid email https://www.googleapis.com/auth/gmail.readonly' },
-      (url) => shell.openExternal(url));
+      (url) => shell.openExternal(url), { port: oauthPort() });
   } catch (e) {
     return { error: `Google sign-in failed: ${e.message}` };
   }

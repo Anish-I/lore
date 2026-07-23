@@ -101,7 +101,10 @@ function exchangeCode(clientCfg, code, verifier, redirectUri) {
 
 // Run the full loopback flow. `openExternal(url)` opens the system browser
 // (pass Electron's shell.openExternal). Resolves to the token response.
-function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
+// `port` fixes the loopback port (0 = ephemeral). Okta native apps accept any
+// 127.0.0.1 port, so ephemeral is fine; a fixed port is supported for parity and
+// for setups that must register one exact redirect URI.
+function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000, port = 0 } = {}) {
   const { verifier, challenge } = generatePkce();
   const state = b64url(crypto.randomBytes(16));
   const nonce = b64url(crypto.randomBytes(16));
@@ -144,7 +147,7 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000 } = {}) {
     function cleanup() { clearTimeout(timer); try { server.close(); } catch { /* ignore */ } }
 
     server.on('error', (e) => { cleanup(); reject(e); });
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(port, '127.0.0.1', () => {
       redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
       openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state, nonce));
     });
