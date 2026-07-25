@@ -110,3 +110,37 @@ def test_build_tree_guard_and_unstructured():
     # Page 3 (review-flagged OCR) is non-clearing too, so the run is 3..7.
     uns = next(n for n in nodes if n.title.startswith("Unstructured"))
     assert uns.page_start == 3 and uns.page_end == 7
+
+
+def test_render_preserves_page_markers_and_nests():
+    import re
+    md = ("# Budget\n\n## Page 1\n\nARTICLE I\n\nGeneral text one.\n\n"
+          "## Page 2\n\nSection 3. Fees\n\nThe fee is $10.")
+    prov = {"pages": [{"page": 1, "source": "native"}, {"page": 2, "source": "native"}]}
+    out_md, nodes = structure.build("Budget", md, prov, note_id="n1")
+    # page markers preserved (as deepest level) so provenance recovery still works
+    assert re.search(r"(?m)^#+\s+Page\s+1\s*$", out_md)
+    assert re.search(r"(?m)^#+\s+Page\s+2\s*$", out_md)
+    # section heading present at a shallower level than the page marker
+    assert re.search(r"(?m)^##\s+ARTICLE I\s*$", out_md)
+    # no text moved across pages: "The fee is $10." still after Page 2 marker
+    p2 = out_md.split("Page 2", 1)[1]
+    assert "The fee is $10." in p2 and "General text one." not in p2
+    assert any(n.title == "ARTICLE I" for n in nodes)
+
+
+def test_chunk_markdown_over_rendered_gets_rich_heading_path():
+    from lore.chunker import chunk_markdown
+    md = ("# Budget\n\n## Page 1\n\nARTICLE I\n\n"
+          "Section 3. Recording Fees\n\nThe recording fee is ten dollars per page filed.")
+    prov = {"pages": [{"page": 1, "source": "native"}]}
+    out_md, _ = structure.build("Budget", md, prov, note_id="n1")
+    chunks = chunk_markdown("n1", out_md)
+    assert any("ARTICLE I" in c.heading_path and "Section 3" in c.heading_path
+               and "Page 1" in c.heading_path for c in chunks)
+
+
+def test_build_returns_original_on_failure_or_no_pages():
+    # no page markers -> unchanged text, no nodes
+    out_md, nodes = structure.build("T", "# T\n\nplain note body", None, note_id="n2")
+    assert out_md == "# T\n\nplain note body" and nodes == []

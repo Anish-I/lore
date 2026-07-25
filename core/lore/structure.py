@@ -252,3 +252,69 @@ def build_tree(pages, note_id, detectors=None):
             run_start = None
         prev_page = p.page
     return nodes
+
+
+# --- Marker-preserving render + top-level entrypoint ------------------------
+
+_PAGE_LEVEL = 6            # deepest markdown heading level: a page never pops a section
+
+
+def _heads_by_page(nodes):
+    by_page = {}
+    for n in nodes:
+        if n.source == "unstructured":
+            continue
+        by_page.setdefault(n.page_start, []).append(n)
+    for page in by_page:
+        by_page[page].sort(key=lambda n: n.level)
+    return by_page
+
+
+def render_markdown(title, pages, nodes):
+    """Re-emit the document with section headings inserted at the pages they were
+    observed on, and each page kept as a ``###### Page N`` leaf. Insertions only —
+    body text is never moved across a page boundary (page provenance stays exact).
+    """
+    heads = _heads_by_page(nodes)
+    out = [f"# {title}", ""]
+    for p in pages:
+        for n in heads.get(p.page, []):
+            out.append(f"{'#' * min(max(n.level + 1, 2), _PAGE_LEVEL - 1)} {n.title}")
+            out.append("")
+        out.append(f"{'#' * _PAGE_LEVEL} Page {p.page}")
+        out.append("")
+        if p.text:
+            out.append(p.text)
+            out.append("")
+    body = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+    return body + "\n"
+
+
+def _rewrite_title(title, llm):
+    """Optional: an LLM may normalize an OBSERVED title's casing/OCR noise. It may
+    not invent a node. Falls back to the observed title on any error/empty."""
+    try:
+        prompt = ("Rewrite this document heading with clean casing and spacing. "
+                  "Do not add or invent words. Return only the heading.\n" + title)
+        out = (llm(prompt) or "").strip()
+        return out or title
+    except Exception:
+        return title
+
+
+def build(title, markdown, provenance, note_id, llm=None, detectors=None):
+    """Deterministic structure pass. Returns (hierarchical_markdown, doc_nodes).
+    On any failure — or when the text has no page markers — returns the ORIGINAL
+    markdown and []: the flag's promise is never-worse-than-off."""
+    try:
+        pages = parse_pages(markdown, provenance)
+        if not pages:
+            return markdown, []
+        nodes = build_tree(pages, note_id, detectors=detectors)
+        if llm is not None:
+            for n in nodes:
+                if n.source != "unstructured":
+                    n.title = _rewrite_title(n.title, llm)
+        return render_markdown(title, strip_running_lines(pages), nodes), nodes
+    except Exception:
+        return markdown, []
