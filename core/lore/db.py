@@ -189,9 +189,24 @@ create table if not exists notes(
   source_path text, title text, source_type text,
   memory_type text default 'durable',
   body text, body_sha256 text, content_hash text,
+  builder_version text,
   importance real default 0,
   created_at timestamptz,
   updated_at timestamptz default now());
+create table if not exists doc_nodes(
+  id text primary key,
+  tenant_id text not null,
+  note_id text not null references notes(id) on delete cascade,
+  parent_id text,
+  title text not null,
+  level integer not null,
+  page_start integer,
+  page_end integer,
+  source text,
+  confidence real default 0,
+  builder_version text,
+  created_at timestamptz default now());
+create index if not exists doc_nodes_note on doc_nodes(note_id);
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
   heading_path text, text text, has_context boolean default false,
@@ -437,6 +452,13 @@ _CREATED_MIGRATION = [
     "alter table notes add column if not exists created_at timestamptz",
 ]
 
+# Doc-tree (LORE_DOC_TREE): which structure-builder version indexed this note.
+# NULL = flat path. Mismatch vs structure.BUILDER_VERSION → rebuild-or-refuse
+# (structure.stale_notes); prevents a silently mixed index after a flag flip.
+_DOC_TREE_MIGRATION = [
+    "alter table notes add column if not exists builder_version text",
+]
+
 # Unique constraint added in M1; applied opportunistically (no-op if already present).
 _EDGES_UNIQUE_CONSTRAINT = """
 do $$ begin
@@ -472,9 +494,24 @@ create table if not exists notes(
   source_path text, title text, source_type text,
   memory_type text default 'durable',
   body text, body_sha256 text, content_hash text,
+  builder_version text,
   importance real default 0,
   created_at timestamp,
   updated_at timestamp default current_timestamp);
+create table if not exists doc_nodes(
+  id text primary key,
+  tenant_id text not null,
+  note_id text not null references notes(id) on delete cascade,
+  parent_id text,
+  title text not null,
+  level integer not null,
+  page_start integer,
+  page_end integer,
+  source text,
+  confidence real default 0,
+  builder_version text,
+  created_at timestamp default current_timestamp);
+create index if not exists doc_nodes_note on doc_nodes(note_id);
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
   heading_path text, text text, has_context integer default 0,
@@ -705,6 +742,11 @@ def bootstrap_schema(conn):
             conn.execute("alter table notes add column memory_type text default 'durable'")
         except Exception:
             pass  # column already exists
+        # Doc-tree: builder_version for stores created before the column shipped.
+        try:
+            conn.execute("alter table notes add column builder_version text")
+        except Exception:
+            pass  # column already exists
         return
 
     # Step 1a: add source_type to notes (M1 migration).
@@ -731,6 +773,13 @@ def bootstrap_schema(conn):
 
     # Step 1d: add created_at to notes (graph date-scrubber).
     for stmt in _CREATED_MIGRATION:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # table may not exist yet
+
+    # Step 1d2: add builder_version to notes (doc-tree milestone).
+    for stmt in _DOC_TREE_MIGRATION:
         try:
             conn.execute(stmt)
         except Exception:
