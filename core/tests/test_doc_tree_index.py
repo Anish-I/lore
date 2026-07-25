@@ -46,3 +46,18 @@ def test_flag_on_without_page_markers_is_noop(conn, monkeypatch):
     assert bv is None
     assert conn.execute("select count(*) from doc_nodes where note_id=%s",
                         ("plainnote",)).fetchone()[0] == 0
+
+
+def test_stale_notes_flags_version_mismatch(conn, monkeypatch):
+    monkeypatch.setenv("LORE_DOC_TREE", "1")
+    conn.execute("update notes set builder_version=%s where id=%s",
+                 ("doc-tree/OLD", "treenote"))
+    stale = structure.stale_notes(conn, "t1")
+    assert "treenote" in stale
+    # restore the current version -> no longer stale
+    conn.execute("update notes set builder_version=%s where id=%s",
+                 (structure.BUILDER_VERSION, "treenote"))
+    assert "treenote" not in structure.stale_notes(conn, "t1")
+    # flag OFF: any note still carrying doc_nodes is stale (tree must not linger)
+    monkeypatch.setenv("LORE_DOC_TREE", "0")
+    assert "treenote" in structure.stale_notes(conn, "t1")

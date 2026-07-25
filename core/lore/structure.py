@@ -318,3 +318,19 @@ def build(title, markdown, provenance, note_id, llm=None, detectors=None):
         return render_markdown(title, strip_running_lines(pages), nodes), nodes
     except Exception:
         return markdown, []
+
+
+def stale_notes(conn, tenant_id):
+    """note_ids indexed under a different builder version (flag on) or carrying a
+    tree while the flag is off — a rebuild-or-refuse worklist for doctor/upkeep.
+    A flag/version flip must trigger re-index, never a silently mixed index
+    (chunk_id hashes heading_path, so tree and flat chunks don't interleave)."""
+    if enabled():
+        rows = conn.execute(
+            "select id from notes where tenant_id=%s and builder_version is not null "
+            "and builder_version <> %s", (tenant_id, BUILDER_VERSION)).fetchall()
+    else:
+        rows = conn.execute(
+            "select distinct note_id from doc_nodes where tenant_id=%s",
+            (tenant_id,)).fetchall()
+    return [r[0] for r in rows]
