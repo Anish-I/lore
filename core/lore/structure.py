@@ -344,9 +344,14 @@ def stale_notes(conn, tenant_id):
     A flag/version flip must trigger re-index, never a silently mixed index
     (chunk_id hashes heading_path, so tree and flat chunks don't interleave)."""
     if enabled():
+        # Version drift AND legacy-flat page-marker notes (builder_version NULL
+        # but the body still carries `## Page N` lines) — both need re-index or
+        # the store silently mixes tree and flat PDF notes.
         rows = conn.execute(
-            "select id from notes where tenant_id=%s and builder_version is not null "
-            "and builder_version <> %s", (tenant_id, BUILDER_VERSION)).fetchall()
+            "select id from notes where tenant_id=%s and ("
+            " (builder_version is not null and builder_version <> %s)"
+            " or (builder_version is null and body like %s)"
+            ")", (tenant_id, BUILDER_VERSION, "%## Page %")).fetchall()
     else:
         rows = conn.execute(
             "select distinct note_id from doc_nodes where tenant_id=%s",

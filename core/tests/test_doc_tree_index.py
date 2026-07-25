@@ -63,6 +63,40 @@ def test_stale_notes_flags_version_mismatch(conn, monkeypatch):
     assert "treenote" in structure.stale_notes(conn, "t1")
 
 
+def test_stale_notes_flags_legacy_flat_page_notes_when_enabled(conn, monkeypatch):
+    """Flag ON: a note indexed FLAT (builder_version NULL) whose body still has
+    page markers must be flagged for rebuild — else the index silently mixes
+    tree and flat PDF notes forever."""
+    monkeypatch.delenv("LORE_DOC_TREE", raising=False)
+    md = "# Old\n\n## Page 1\n\nSection 2. Old flat pdf note body here.\n"
+    index.index_document(source_id="legacyflat", title="Old", text=md, scope_id="eng",
+                         owner_id="u", tenant_id="t1", embedder=FakeEmbedder(), conn=conn)
+    monkeypatch.setenv("LORE_DOC_TREE", "1")
+    assert "legacyflat" in structure.stale_notes(conn, "t1")
+    # a plain note without page markers is never flagged
+    index.index_document(source_id="plainold", title="P", text="# P\n\nno pages",
+                         scope_id="eng", owner_id="u", tenant_id="t1",
+                         embedder=FakeEmbedder(), conn=conn)
+    assert "plainold" not in structure.stale_notes(conn, "t1")
+
+
+def test_duplicate_note_gets_no_doc_nodes(conn, monkeypatch):
+    """A dedup-skipped copy owns no chunks — it must own no doc_nodes either."""
+    monkeypatch.setenv("LORE_DOC_TREE", "1")
+    md = "# Dup\n\n## Page 1\n\nARTICLE I\n\nSame body for canonical and copy.\n"
+    prov = {"pages": [{"page": 1, "source": "native"}]}
+    index.index_document(source_id="canon1", title="Dup", text=md, scope_id="eng",
+                         owner_id="u", tenant_id="t1", embedder=FakeEmbedder(),
+                         conn=conn, provenance=prov)
+    index.index_document(source_id="copy1", title="Dup", text=md, scope_id="eng",
+                         owner_id="u", tenant_id="t1", embedder=FakeEmbedder(),
+                         conn=conn, provenance=prov)
+    assert conn.execute("select count(*) from doc_nodes where note_id=%s",
+                        ("canon1",)).fetchone()[0] > 0
+    assert conn.execute("select count(*) from doc_nodes where note_id=%s",
+                        ("copy1",)).fetchone()[0] == 0
+
+
 def test_rendered_pages_recoverable_by_widened_eval_regex():
     """Contract with eval/scenarios/run_onboard_directory.py: per-page provenance
     is recovered by splitting on `^#+ Page N$` — must match tree-rendered bodies."""

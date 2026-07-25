@@ -321,10 +321,10 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     )
 
     # Doc-tree nodes: disposable derived structure, replaced wholesale each
-    # (re)index. Persisted only when the structure pass actually ran.
+    # (re)index. Old rows always cleared; new rows only for notes that will own
+    # chunks — a dedup-skipped copy owns no chunks, so it owns no tree either
+    # (stale_notes would otherwise flag the copy forever once the flag is off).
     conn.execute("delete from doc_nodes where note_id=%s", (source_id,))
-    if builder_version is not None:
-        _persist_doc_nodes(conn, tenant_id, source_id, _doc_nodes, builder_version)
 
     if duplicate_of:
         # Exact duplicate of an already-indexed note: keep the row, skip the
@@ -333,6 +333,9 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
         conn.execute("delete from chunks where note_id=%s", (source_id,))
         qdrant_store.delete_note(source_id)
         return 0
+
+    if builder_version is not None:
+        _persist_doc_nodes(conn, tenant_id, source_id, _doc_nodes, builder_version)
 
     chunks = apply_context(chunk_markdown(source_id, text), title, llm=None)
     if not chunks:
