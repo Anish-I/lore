@@ -67,3 +67,16 @@ def test_detect_numbered_positives_and_negatives():
     assert next(e.level for e in ev if e.title == "ARTICLE I") == 1
     assert next(e.level for e in ev if e.title.startswith("Section 3")) == 2
     assert next(e.level for e in ev if e.title.startswith("3.2.1")) == 3
+
+
+def test_strip_running_lines_removes_banner_keeps_unique():
+    from lore.structure import PageText, strip_running_lines
+    pages = [
+        PageText(i, "native", None, False,
+                 f"City of Xville - Agenda\nUnique body line {i}\nPage {i} of 5")
+        for i in range(1, 6)
+    ]
+    out = strip_running_lines(pages)
+    joined = "\n".join(p.text for p in out)
+    assert "City of Xville - Agenda" not in joined      # repeated banner stripped
+    assert "Unique body line 3" in joined               # unique content kept

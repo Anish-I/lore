@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 
 from . import ocr
@@ -139,3 +140,35 @@ def detect_numbered(page: PageText) -> list[HeadingEvent]:
             continue
         events.append(HeadingEvent(page.page, _next_order(), level, line, "regex", 0.7))
     return events
+
+
+# Running headers/footers: the same banner on >= _RUNNING_MIN_REPEATS pages would
+# otherwise register as a heading on every page ("City of X - Agenda").
+_RUNNING_MIN_REPEATS = int(os.environ.get("LORE_DOC_TREE_RUNNING_MIN", "3"))
+_PAGENUM_RE = re.compile(r"\bpage\s+\d+(\s+of\s+\d+)?\b", re.I)
+
+
+def _normalize_running(line: str) -> str:
+    # Collapse "Page 3 of 5" -> "page N" so per-page number differences don't
+    # hide an otherwise-identical running footer.
+    return _PAGENUM_RE.sub("page N", line.strip().lower())
+
+
+def strip_running_lines(pages: list[PageText], min_repeats: int = None) -> list[PageText]:
+    """Remove lines repeated across >= min_repeats pages (running heads/feet).
+    Runs BEFORE detection — a banner must never become a heading."""
+    min_repeats = min_repeats or _RUNNING_MIN_REPEATS
+    counts = Counter()
+    for p in pages:
+        seen = set()
+        for ln in p.text.splitlines():
+            key = _normalize_running(ln)
+            if key and key not in seen:      # count once per page
+                seen.add(key)
+                counts[key] += 1
+    running = {k for k, c in counts.items() if c >= min_repeats}
+    out = []
+    for p in pages:
+        kept = [ln for ln in p.text.splitlines() if _normalize_running(ln) not in running]
+        out.append(PageText(p.page, p.source, p.conf, p.review, "\n".join(kept).strip()))
+    return out
