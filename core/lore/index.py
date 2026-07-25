@@ -2,7 +2,7 @@ import datetime, hashlib, os, re, uuid
 from . import qdrant_store
 from .chunker import chunk_markdown
 from .contextualize import apply_context
-from .distill import distill_md
+from .distill import distill_document
 from . import relations
 
 # --- Edge extraction constants ---
@@ -214,9 +214,21 @@ def memory_type_of(source_type: str) -> str:
     return "durable"
 
 
+def _persist_doc_nodes(conn, tenant_id, note_id, nodes, builder_version):
+    """Replace a note's derived doc_nodes rows (caller clears old rows first)."""
+    for n in nodes:
+        conn.execute(
+            "insert into doc_nodes(id,tenant_id,note_id,parent_id,title,level,"
+            "page_start,page_end,source,confidence,builder_version) "
+            "values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (n.id, tenant_id, note_id, n.parent_id, n.title, n.level,
+             n.page_start, n.page_end, n.source, n.confidence, builder_version))
+
+
 def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                    embedder, conn, sparse_embedder=None, path=None,
-                   source_type="note", content_hash=None, mtime=None):
+                   source_type="note", content_hash=None, mtime=None,
+                   provenance=None):
     """Index a document (note or external source) into Postgres + Qdrant.
 
     This is the shared indexing spine.  index_note() reads a file then delegates
@@ -248,6 +260,20 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     from .redact import redact as _redact
     text = _redact(text or "")
 
+    # Doc-tree structure pass (LORE_DOC_TREE, default off): rewrite flat
+    # `## Page N` markdown into a real heading hierarchy BEFORE the body is
+    # stored/chunked, so chunks inherit rich heading_paths. structure.build is
+    # never-worse-than-off (returns the original text on any failure). Runs
+    # after redact: node titles must come from redacted text. Nodes are
+    # persisted after the notes upsert (doc_nodes FK references notes.id).
+    from . import structure as _structure
+    _doc_nodes = []
+    builder_version = None
+    if _structure.enabled() and _structure._PAGE_MARKER_RE.search(text):
+        text, _doc_nodes = _structure.build(
+            title, text, provenance, note_id=source_id, llm=None)
+        builder_version = _structure.BUILDER_VERSION
+
     # Compute and store the original body (lossless round-trip; chunk text is NOT lossless).
     body_sha256 = hashlib.sha256(text.encode()).hexdigest()
 
@@ -277,8 +303,8 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     conn.execute(
         """insert into notes(id, tenant_id, owner_id, scope_id, source_path, title,
                              source_type, memory_type, body, body_sha256, content_hash,
-                             created_at, updated_at)
-           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+                             builder_version, created_at, updated_at)
+           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
            on conflict (id) do update
            set title=excluded.title, scope_id=excluded.scope_id,
                owner_id=excluded.owner_id, source_path=excluded.source_path,
@@ -286,12 +312,19 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                memory_type=excluded.memory_type,
                body=excluded.body, body_sha256=excluded.body_sha256,
                content_hash=excluded.content_hash,
+               builder_version=excluded.builder_version,
                created_at=coalesce(notes.created_at, excluded.created_at),
                updated_at=now()""",
         (source_id, tenant_id, owner_id, scope_id, path, title, source_type,
          memory_type_of(source_type),
-         text, body_sha256, content_hash, created_at),
+         text, body_sha256, content_hash, builder_version, created_at),
     )
+
+    # Doc-tree nodes: disposable derived structure, replaced wholesale each
+    # (re)index. Persisted only when the structure pass actually ran.
+    conn.execute("delete from doc_nodes where note_id=%s", (source_id,))
+    if builder_version is not None:
+        _persist_doc_nodes(conn, tenant_id, source_id, _doc_nodes, builder_version)
 
     if duplicate_of:
         # Exact duplicate of an already-indexed note: keep the row, skip the
@@ -391,7 +424,8 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
 def index_note(path, embedder, conn, owner_id, scope_id, tenant_id, sparse_embedder=None):
     """Index a markdown file into Postgres + Qdrant.
 
-    Reads the file via distill_md, then delegates to index_document.
+    Reads the file via distill_document (provenance included), then delegates
+    to index_document.
 
     Args:
         sparse_embedder: Optional SparseEmbedder instance.  When provided, BM25
@@ -399,7 +433,7 @@ def index_note(path, embedder, conn, owner_id, scope_id, tenant_id, sparse_embed
             enabling hybrid search in the recall layer.  When None (default) only
             dense vectors are stored (existing behaviour, all tests green).
     """
-    note_id, title, md = distill_md(path)
+    note_id, title, md, provenance = distill_document(path)
     try:
         mtime = os.path.getmtime(path)
     except OSError:
@@ -408,7 +442,7 @@ def index_note(path, embedder, conn, owner_id, scope_id, tenant_id, sparse_embed
         source_id=note_id, title=title, text=md,
         scope_id=scope_id, owner_id=owner_id, tenant_id=tenant_id,
         embedder=embedder, conn=conn, sparse_embedder=sparse_embedder,
-        path=path, mtime=mtime,
+        path=path, mtime=mtime, provenance=provenance,
     )
 
 
