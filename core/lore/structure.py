@@ -73,3 +73,69 @@ def clears_confidence(page: PageText) -> bool:
     if page.source == "ocr_fast":
         return page.conf is not None and page.conf >= ocr._REVIEW_CONF
     return False
+
+
+@dataclass
+class HeadingEvent:
+    page: int
+    order: int          # global appearance order, for stable stacking
+    level: int
+    title: str
+    source: str         # regex | font | toc | caps | textract
+    confidence: float
+
+
+# A heading LINE must be short and standalone, with no terminal period, to avoid
+# matching "see Section 3.2 for details." citations embedded in prose.
+_KEYWORD_RE = re.compile(
+    r"^(ARTICLE|SECTION|APPENDIX|EXHIBIT|CHAPTER|TITLE|DIVISION"
+    r"|ORDINANCE\s+NO\.?|RESOLUTION\s+NO\.?)\b", re.I)
+_DOTTED_RE = re.compile(r"^(\d+(?:[.\-]\d+)+)\b")          # 3.2.1 or 3-2.04
+_MAX_HEADING_WORDS = 9
+
+# keyword → depth. Structural top-level containers = 1; section-like = 2.
+_KEYWORD_LEVEL = {
+    "TITLE": 1, "CHAPTER": 1, "ARTICLE": 1, "APPENDIX": 1, "EXHIBIT": 1,
+    "DIVISION": 1, "SECTION": 2, "ORDINANCE": 1, "RESOLUTION": 1,
+}
+
+_order_counter = 0
+
+
+def _next_order() -> int:
+    global _order_counter
+    _order_counter += 1
+    return _order_counter
+
+
+def _looks_like_heading_line(line: str) -> bool:
+    s = line.strip()
+    if not s or len(s.split()) > _MAX_HEADING_WORDS:
+        return False
+    if s.endswith("."):        # terminal period ⇒ prose/citation, not a heading
+        # allow a lone trailing period on a numbering token like "3." only if short
+        if not re.match(r"^\d+[.\-\d]*\.$", s):
+            return False
+    return True
+
+
+def detect_numbered(page: PageText) -> list[HeadingEvent]:
+    """Line-anchored numbered-heading grammar (ARTICLE/SECTION/APPENDIX/…, dotted
+    3.2.1). Only fires on short standalone lines with no terminal period, so prose
+    citations like "see Section 3.2 for details." are not mistaken for headings."""
+    events = []
+    for raw in page.text.splitlines():
+        line = raw.strip()
+        if not _looks_like_heading_line(line):
+            continue
+        m_kw = _KEYWORD_RE.match(line)
+        m_dot = _DOTTED_RE.match(line)
+        if m_kw:
+            key = m_kw.group(1).split()[0].upper()
+            level = _KEYWORD_LEVEL.get(key, 2)
+        elif m_dot:
+            level = min(1 + m_dot.group(1).replace("-", ".").count("."), 6)
+        else:
+            continue
+        events.append(HeadingEvent(page.page, _next_order(), level, line, "regex", 0.7))
+    return events

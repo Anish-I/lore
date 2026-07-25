@@ -42,3 +42,28 @@ def test_clears_confidence():
     assert clears_confidence(PageText(4, "ocr_fast", ocr._REVIEW_CONF - 0.1, False, "x")) is False
     # unreadable/error → never clears
     assert clears_confidence(PageText(5, "unreadable", None, True, "")) is False
+
+
+def test_detect_numbered_positives_and_negatives():
+    from lore.structure import PageText, detect_numbered
+    body = "\n".join([
+        "ARTICLE I",                  # level 1 heading
+        "General Provisions apply to all sections below and continue at length.",
+        "Section 3. Recording Fees",  # level 2 heading
+        "The fee is $10.",
+        "APPENDIX B",                 # level 1 heading
+        "See Section 3.2 for details.",   # citation, NOT a heading (mid-sentence)
+        "3.2.1 Sub Item",             # dotted numbering, level 3
+    ])
+    ev = detect_numbered(PageText(5, "native", None, False, body))
+    titles = [e.title for e in ev]
+    assert "ARTICLE I" in titles
+    assert any(t.startswith("Section 3") for t in titles)
+    assert "APPENDIX B" in titles
+    assert any(t.startswith("3.2.1") for t in titles)
+    # the citation line must NOT be detected
+    assert all("See Section 3.2 for details." != t for t in titles)
+    # levels: ARTICLE/APPENDIX = 1, Section = 2, dotted 3.2.1 = 3
+    assert next(e.level for e in ev if e.title == "ARTICLE I") == 1
+    assert next(e.level for e in ev if e.title.startswith("Section 3")) == 2
+    assert next(e.level for e in ev if e.title.startswith("3.2.1")) == 3
