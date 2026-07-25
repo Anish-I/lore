@@ -1,11 +1,11 @@
 """Faithful directory onboarding — drive Lore's REAL ingest path over a folder.
 
-This is NOT a bespoke adapter: it walks a directory and calls index.index_note()
-per file, the exact function the backend's /reindex handler invokes. Files go
-through distill_md -> extract.extract_text (PyMuPDF for PDFs, stdlib for docx)
--> chunk -> embed -> edge extraction, into a fresh store. Then the real organize
-pass (classify + section proposals). Nothing is hand-massaged; whatever Lore
-does to real files is what we measure.
+This is NOT a bespoke adapter: it walks a directory, distills each file once,
+then calls index.index_document(), the downstream path used by index_note().
+Files go through extract.extract_document (PyMuPDF/RapidOCR for PDFs, stdlib
+for docx) -> chunk -> embed -> edge extraction, into a fresh store. Then the
+real organize pass (classify + section proposals). Nothing is hand-massaged;
+whatever Lore does to real files is what we measure.
 
 The immediate parent folder is recorded as HIDDEN gold (never fed to Lore) so
 the inferred organization can be scored against how the records are actually filed.
@@ -14,8 +14,10 @@ Usage: python eval/scenarios/run_onboard_directory.py --root "PATH" [--tenant on
        [--classify-runs 40] [--limit N] [--workdir DIR] [--out PATH]
 """
 import argparse
+import hashlib
 import json
 import os
+import re
 import statistics
 import sys
 import time
@@ -45,6 +47,51 @@ SCOPE = "eng"
 OWNER = "onboard-user"
 
 
+def reconstruct_ocr_metrics(existing_rows, ocr_router):
+    """Recover routed-page counts from indexed bodies after an interrupted run."""
+    import fitz
+
+    totals = {
+        "native_pages": 0,
+        "ocr_pages": 0,
+        "unreadable_pages": 0,
+        "numeric_review_pages": 0,
+        "truncated_documents": 0,
+    }
+    for _note_id, source_path, body in existing_rows:
+        path = Path(source_path)
+        if path.suffix.lower() != ".pdf":
+            continue
+        # `#+` (not `##`): under LORE_DOC_TREE the structure pass nests page
+        # markers at the deepest heading level (###### Page N); provenance
+        # recovery must work for both flat and tree-rendered bodies.
+        parts = re.split(r"(?m)^#+ Page (\d+)\s*$", body or "")
+        sections = {
+            int(parts[i]): parts[i + 1].strip()
+            for i in range(1, len(parts), 2)
+        }
+        with fitz.open(path) as doc:
+            if doc.page_count > ocr_router._MAX_PAGES:
+                totals["truncated_documents"] += 1
+            for page_number, page in enumerate(doc, 1):
+                if page_number > ocr_router._MAX_PAGES:
+                    break
+                native_ok, _metrics = ocr_router.text_quality(page.get_text("text") or "")
+                if native_ok:
+                    totals["native_pages"] += 1
+                    continue
+                content = sections.get(page_number, "")
+                if (not content
+                        or content.startswith("[No extractable text")
+                        or content.startswith("[OCR extraction failed")):
+                    totals["unreadable_pages"] += 1
+                    continue
+                totals["ocr_pages"] += 1
+                if len(ocr_router._NUMERIC_TOKEN_RE.findall(content)) >= 4:
+                    totals["numeric_review_pages"] += 1
+    return totals
+
+
 def early_env(workdir: Path):
     os.environ.setdefault("FASTEMBED_CACHE_PATH", str(SP / "fastembed-models"))
     os.environ["QDRANT_PATH"] = str(workdir / "qdrant")
@@ -59,6 +106,10 @@ def main():
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--workdir", default=str(REPO / "eval" / "scenarios" / ".work" / "onboard"))
     ap.add_argument("--out", default=str(REPO / "eval" / "history" / "onboard-directory-2026-07-22.json"))
+    ap.add_argument("--resume", action="store_true",
+                    help="skip documents already indexed in the selected workdir")
+    ap.add_argument("--prior-seconds", type=float, default=0.0,
+                    help="elapsed ingest time from a prior interrupted run")
     args = ap.parse_args()
     tenant = args.tenant
 
@@ -67,11 +118,12 @@ def main():
     early_env(workdir)
     sys.path.insert(0, str(REPO / "core"))
 
-    from lore import db, qdrant_store, relations
-    from lore.classify import classify_untagged, load_vocabulary
+    from lore import db, ocr as ocr_router, qdrant_store
+    from lore.classify import classify_untagged
     from lore.embed import LocalEmbedder, LocalSparseEmbedder
     from lore.extract import EXTRACTABLE_EXTS
-    from lore.index import index_note
+    from lore.index import index_document
+    from lore.ocr import OCRUnavailable
     from lore.sections import propose_sections, list_sections
     from run_scenario_eval import _pairwise_f1
 
@@ -94,27 +146,85 @@ def main():
     qdrant_store.COLLECTION = "onboard"
     embedder, sparse = LocalEmbedder(), LocalSparseEmbedder()
 
-    # Hidden gold: immediate parent folder name, per note id. index_note derives
-    # the note id from the path, so re-derive it the same way to join later.
-    from lore.distill import distill_md
+    # Hidden gold: immediate parent folder name, per note id. Distill once, then
+    # pass that result into the real downstream index path; OCR must not run twice.
+    from lore.distill import distill_document
 
-    indexed = extracted_empty = errored = 0
-    chunk_counts = []
-    hidden = {}          # note_id -> parent folder
+    existing_rows = []
+    if args.resume:
+        existing_rows = conn.execute(
+            "select id, source_path, body from notes where tenant_id=%s", (tenant,)
+        ).fetchall()
+    existing = {
+        note_id: source_path
+        for note_id, source_path, _body in existing_rows
+    }
+    existing_chunk_counts = dict(conn.execute(
+        "select note_id, count(*) from chunks group by note_id"
+    ).fetchall()) if existing else {}
+
+    indexed = len(existing)
+    extracted_empty = errored = 0
+    chunk_counts = [existing_chunk_counts.get(note_id, 0) for note_id in existing]
+    hidden = {
+        note_id: Path(source_path).parent.name
+        for note_id, source_path in existing.items()
+    }                   # note_id -> parent folder
+    reconstructed = reconstruct_ocr_metrics(existing_rows, ocr_router) if existing else {
+        "native_pages": 0,
+        "ocr_pages": 0,
+        "unreadable_pages": 0,
+        "numeric_review_pages": 0,
+        "truncated_documents": 0,
+    }
+    native_pages = reconstructed["native_pages"]
+    ocr_pages = reconstructed["ocr_pages"]
+    unreadable_pages = reconstructed["unreadable_pages"]
+    numeric_review_pages = reconstructed["numeric_review_pages"]
+    truncated_documents = reconstructed["truncated_documents"]
+    review_pages = resume_ocr_pages = 0
     t0 = time.perf_counter()
+    if existing:
+        print(f"  resuming with {len(existing)} documents already indexed", flush=True)
     for i, p in enumerate(files):
         parent = p.parent.name
-        try:
-            note_id, _title, md = distill_md(str(p))
-        except Exception:
-            errored += 1
+        expected_note_id = hashlib.sha1(str(p).encode()).hexdigest()[:16]
+        if expected_note_id in existing:
             continue
+        try:
+            note_id, title, md, extraction = distill_document(str(p))
+        except OCRUnavailable:
+            raise
+        except Exception as e:
+            errored += 1
+            if errored <= 3:
+                print(f"    EXTRACTION ERROR on {p.name}: {str(e)[:120]}", flush=True)
+            continue
+        if extraction:
+            current_ocr_pages = extraction.get("ocr_pages", 0)
+            ocr_pages += current_ocr_pages
+            resume_ocr_pages += current_ocr_pages
+            native_pages += extraction.get("native_pages", 0)
+            unreadable_pages += sum(
+                page.get("source") in {"unreadable", "error"}
+                for page in extraction.get("pages", [])
+            )
+            numeric_review_pages += sum(
+                "numeric_content" in page.get("review_reasons", [])
+                for page in extraction.get("pages", [])
+            )
+            truncated_documents += bool(extraction.get("truncated"))
+            review_pages += len(extraction.get("review_pages", []))
         if not md or not md.strip():
             extracted_empty += 1
             continue
         try:
-            k = index_note(str(p), embedder, conn, OWNER, SCOPE, tenant,
-                           sparse_embedder=sparse)
+            k = index_document(
+                source_id=note_id, title=title, text=md,
+                scope_id=SCOPE, owner_id=OWNER, tenant_id=tenant,
+                embedder=embedder, conn=conn, sparse_embedder=sparse,
+                path=str(p), mtime=p.stat().st_mtime,
+            )
         except Exception as e:
             errored += 1
             if errored <= 3:
@@ -130,6 +240,8 @@ def main():
             print(f"    {i+1}/{len(files)} · indexed {indexed} · empty {extracted_empty} "
                   f"· err {errored} · {(i+1)/(time.perf_counter()-t0):.1f} files/s", flush=True)
 
+    resume_seconds = time.perf_counter() - t0
+    total_seconds = args.prior_seconds + resume_seconds
     R["ingest"] = {
         "indexed_with_chunks": indexed,
         "extracted_but_empty": extracted_empty,
@@ -137,8 +249,19 @@ def main():
         "extraction_success_rate": round(indexed / len(files), 3) if files else None,
         "avg_chunks_per_doc": round(statistics.mean([c for c in chunk_counts if c]), 2)
                               if any(chunk_counts) else 0,
-        "seconds": round(time.perf_counter() - t0, 1),
-        "docs_per_sec": round(len(files) / (time.perf_counter() - t0), 2),
+        "seconds": round(total_seconds, 1),
+        "resume_seconds": round(resume_seconds, 1) if existing else None,
+        "docs_per_sec": round(len(files) / total_seconds, 2),
+        "resumed_documents": len(existing),
+        "native_pages": native_pages,
+        "ocr_pages": ocr_pages,
+        "ocr_review_pages": review_pages if not existing else None,
+        "ocr_numeric_review_pages": numeric_review_pages,
+        "ocr_unreadable_pages": unreadable_pages,
+        "truncated_documents": truncated_documents,
+        "ocr_metrics_reconstructed_from_index": bool(existing),
+        "ocr_pages_since_resume": resume_ocr_pages if existing else None,
+        "ocr_review_pages_since_resume": review_pages if existing else None,
     }
     print(f"  ingest: {indexed} indexed, {extracted_empty} empty (scanned/no text layer), "
           f"{errored} errored in {R['ingest']['seconds']}s", flush=True)
@@ -160,8 +283,8 @@ def main():
         print(f"  classifying with local LLM {OLLAMA_MODEL} (up to {args.classify_runs} runs)...",
               flush=True)
     except Exception:
-        print(f"  Ollama down — classifying via deterministic fallback (the "
-              f"no-provider reality; raw PDFs have no frontmatter/tags to key on)", flush=True)
+        print("  Ollama down — classifying via deterministic fallback (the "
+              "no-provider reality; raw PDFs have no frontmatter/tags to key on)", flush=True)
     tagged = llm_tagged = 0
     for run in range(args.classify_runs):
         s = classify_untagged(conn, tenant, llm_call=llm)
@@ -203,6 +326,8 @@ def main():
 
     Path(args.out).write_text(json.dumps(R, indent=2), encoding="utf-8")
     print(f"wrote {args.out}", flush=True)
+    qdrant_store._client.close()
+    conn.close()
     return 0
 
 

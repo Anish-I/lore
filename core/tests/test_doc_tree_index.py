@@ -61,3 +61,17 @@ def test_stale_notes_flags_version_mismatch(conn, monkeypatch):
     # flag OFF: any note still carrying doc_nodes is stale (tree must not linger)
     monkeypatch.setenv("LORE_DOC_TREE", "0")
     assert "treenote" in structure.stale_notes(conn, "t1")
+
+
+def test_rendered_pages_recoverable_by_widened_eval_regex():
+    """Contract with eval/scenarios/run_onboard_directory.py: per-page provenance
+    is recovered by splitting on `^#+ Page N$` — must match tree-rendered bodies."""
+    import re
+    md = "# T\n\n## Page 1\n\nARTICLE I\n\nbody one\n\n## Page 2\n\nbody two\n"
+    prov = {"pages": [{"page": 1, "source": "native"}, {"page": 2, "source": "native"}]}
+    out_md, _ = structure.build("T", md, prov, note_id="n1")
+    old = re.split(r"(?m)^## Page (\d+)\s*$", out_md)
+    widened = re.split(r"(?m)^#+ Page (\d+)\s*$", out_md)
+    assert old.count("1") == 0            # deep markers invisible to the old regex
+    assert widened.count("1") == 1 and widened.count("2") == 1
+    assert "body two" in widened[widened.index("2") + 1]
