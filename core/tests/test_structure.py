@@ -28,3 +28,17 @@ def test_parse_pages_without_provenance_defaults_native():
     md = "# T\n\n## Page 1\n\nhello"
     pages = structure.parse_pages(md, None)
     assert len(pages) == 1 and pages[0].source == "native" and pages[0].review is False
+
+
+def test_clears_confidence():
+    from lore.structure import PageText, clears_confidence
+    from lore import ocr
+    assert clears_confidence(PageText(1, "native", None, False, "x")) is True
+    # ocr page above review threshold, no review flags → clears
+    assert clears_confidence(PageText(2, "ocr_fast", ocr._REVIEW_CONF + 0.05, False, "x")) is True
+    # ocr page flagged for review → never clears
+    assert clears_confidence(PageText(3, "ocr_fast", 0.99, True, "x")) is False
+    # low-confidence ocr → never clears
+    assert clears_confidence(PageText(4, "ocr_fast", ocr._REVIEW_CONF - 0.1, False, "x")) is False
+    # unreadable/error → never clears
+    assert clears_confidence(PageText(5, "unreadable", None, True, "")) is False

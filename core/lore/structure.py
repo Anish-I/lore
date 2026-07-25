@@ -58,3 +58,18 @@ def parse_pages(markdown: str, provenance: dict | None) -> list[PageText]:
         review = bool(pm.get("review_reasons")) or source in ("error", "unreadable")
         out.append(PageText(page=page, source=source, conf=conf, review=review, text=body))
     return out
+
+
+def clears_confidence(page: PageText) -> bool:
+    """The one guard rule: only trustworthy pages may contribute headings.
+
+    A heading enters the tree only if observed on a confidence-clearing page —
+    ``native``, or ``ocr_fast`` with ``conf >= ocr._REVIEW_CONF`` and no review
+    flags. This is what stops fabricated hierarchy over bad OCR."""
+    if page.review:
+        return False
+    if page.source == "native":
+        return True
+    if page.source == "ocr_fast":
+        return page.conf is not None and page.conf >= ocr._REVIEW_CONF
+    return False
