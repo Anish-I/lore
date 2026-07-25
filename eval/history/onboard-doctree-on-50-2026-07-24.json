@@ -1,0 +1,62 @@
+{
+  "root": "C:\\Users\\ivatu\\Downloads\\anish-test-extract\\ANISH TEST",
+  "total_files": 789,
+  "supported_files": 50,
+  "file_types": {
+    ".pdf": 788,
+    ".docx": 1
+  },
+  "ingest": {
+    "indexed_with_chunks": 50,
+    "extracted_but_empty": 0,
+    "errored": 0,
+    "extraction_success_rate": 1.0,
+    "avg_chunks_per_doc": 1.7,
+    "seconds": 339.0,
+    "resume_seconds": null,
+    "docs_per_sec": 0.15,
+    "resumed_documents": 0,
+    "native_pages": 44,
+    "ocr_pages": 22,
+    "ocr_review_pages": 18,
+    "ocr_numeric_review_pages": 18,
+    "ocr_unreadable_pages": 0,
+    "truncated_documents": 0,
+    "ocr_metrics_reconstructed_from_index": false,
+    "ocr_pages_since_resume": null,
+    "ocr_review_pages_since_resume": null
+  },
+  "connections": {
+    "folder": 192,
+    "total": 192
+  },
+  "organization": {
+    "classified": 50,
+    "distinct_topics": 1,
+    "gold_folders": 2,
+    "top_topics": [
+      [
+        "Lighting Committee Meetings",
+        50
+      ]
+    ],
+    "pairwise_vs_folders": {
+      "precision": 0.556,
+      "recall": 1.0,
+      "f1": 0.715
+    },
+    "classifier": "gemma4:e4b",
+    "llm_tagged": 50
+  },
+  "sections": {
+    "proposed": 1,
+    "detail": [
+      {
+        "name": "Lighting Committee Meetings",
+        "notes": 50,
+        "purity_vs_folder": 0.68,
+        "dominant_folder": "Agendas"
+      }
+    ]
+  }
+}
