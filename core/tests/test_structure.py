@@ -106,6 +106,7 @@ def test_build_tree_guard_and_unstructured():
     art = next(n for n in nodes if n.title == "ARTICLE I")
     sec = next(n for n in nodes if n.title.startswith("Section 3"))
     assert sec.parent_id == art.id
-    # >=4 consecutive unstructured pages -> an explicit Unstructured node
+    # >=4 consecutive non-clearing pages -> an explicit Unstructured node.
+    # Page 3 (review-flagged OCR) is non-clearing too, so the run is 3..7.
     uns = next(n for n in nodes if n.title.startswith("Unstructured"))
-    assert uns.page_start == 4 and uns.page_end == 7
+    assert uns.page_start == 3 and uns.page_end == 7
