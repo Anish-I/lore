@@ -80,3 +80,32 @@ def test_strip_running_lines_removes_banner_keeps_unique():
     joined = "\n".join(p.text for p in out)
     assert "City of Xville - Agenda" not in joined      # repeated banner stripped
     assert "Unique body line 3" in joined               # unique content kept
+
+
+def test_build_tree_guard_and_unstructured():
+    from lore.structure import PageText, build_tree
+    from lore import ocr
+    pages = [
+        PageText(1, "native", None, False, "ARTICLE I\nGeneral text one."),
+        PageText(2, "native", None, False, "Section 3. Fees\nThe fee is $10."),
+        # low-confidence OCR page: MUST NOT contribute a heading even though it
+        # contains a line that looks like one.
+        PageText(3, "ocr_fast", ocr._REVIEW_CONF - 0.2, True, "ARTICLE II\ngarbled 111 222"),
+        PageText(4, "unreadable", None, True, ""),
+        PageText(5, "unreadable", None, True, ""),
+        PageText(6, "unreadable", None, True, ""),
+        PageText(7, "unreadable", None, True, ""),
+    ]
+    nodes = build_tree(pages, note_id="n1")
+    titles = [n.title for n in nodes]
+    assert "ARTICLE I" in titles
+    assert any(t.startswith("Section 3") for t in titles)
+    # guard: the low-conf OCR "ARTICLE II" is never a node
+    assert "ARTICLE II" not in titles
+    # Section 3 nests under ARTICLE I
+    art = next(n for n in nodes if n.title == "ARTICLE I")
+    sec = next(n for n in nodes if n.title.startswith("Section 3"))
+    assert sec.parent_id == art.id
+    # >=4 consecutive unstructured pages -> an explicit Unstructured node
+    uns = next(n for n in nodes if n.title.startswith("Unstructured"))
+    assert uns.page_start == 4 and uns.page_end == 7

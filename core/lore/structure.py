@@ -12,6 +12,7 @@ The derived tree is disposable/rebuildable, never user-owned canonical.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from collections import Counter
@@ -172,3 +173,82 @@ def strip_running_lines(pages: list[PageText], min_repeats: int = None) -> list[
         kept = [ln for ln in p.text.splitlines() if _normalize_running(ln) not in running]
         out.append(PageText(p.page, p.source, p.conf, p.review, "\n".join(kept).strip()))
     return out
+
+
+# Runs of non-clearing pages at least this long close into an explicit
+# "Unstructured (pp. X-Y)" node: honest flat beats plausible-wrong, and it stops
+# one confident heading from swallowing a 60-page garbage appendix.
+_UNSTRUCTURED_RUN = int(os.environ.get("LORE_DOC_TREE_UNSTRUCTURED_RUN", "4"))
+
+
+@dataclass
+class DocNode:
+    id: str
+    parent_id: str | None
+    title: str
+    level: int
+    page_start: int
+    page_end: int
+    source: str
+    confidence: float
+
+
+def _node_id(note_id: str, level: int, title: str, page: int) -> str:
+    return hashlib.sha1(f"{note_id}|{level}|{title}|{page}".encode()).hexdigest()[:16]
+
+
+def _default_detectors():
+    return [detect_numbered]     # font/toc/textract detectors appended by callers
+
+
+def build_tree(pages, note_id, detectors=None):
+    """Confidence-guarded event stacking. Detection emits a flat event stream;
+    THIS pass turns it into nesting — detectors never build trees themselves."""
+    detectors = detectors or _default_detectors()
+    pages = strip_running_lines(pages)
+
+    # 1. gather confidence-guarded heading events in appearance order
+    events: list[HeadingEvent] = []
+    for p in pages:
+        if not clears_confidence(p):
+            continue
+        for det in detectors:
+            events.extend(det(p))
+    events.sort(key=lambda e: (e.page, e.order))
+
+    # 2. stack into a tree; a node's page range provisionally runs to the last page
+    nodes: list[DocNode] = []
+    stack: list[DocNode] = []
+    last_page = pages[-1].page if pages else 0
+    for e in events:
+        while stack and stack[-1].level >= e.level:
+            stack.pop()
+        parent = stack[-1].id if stack else None
+        node = DocNode(_node_id(note_id, e.level, e.title, e.page), parent,
+                       e.title, e.level, e.page, last_page, e.source, e.confidence)
+        nodes.append(node)
+        stack.append(node)
+
+    # tighten page_end: a node ends where the next node at <= its level begins
+    for i, n in enumerate(nodes):
+        for m in nodes[i + 1:]:
+            if m.level <= n.level:
+                n.page_end = max(n.page_start, m.page_start - 1)
+                break
+
+    # 3. explicit Unstructured node for any long-enough run of non-clearing pages
+    run_start = None
+    prev_page = None
+    for idx, p in enumerate(pages):
+        clears = clears_confidence(p)
+        if not clears and run_start is None:
+            run_start = p.page
+        if (clears or idx == len(pages) - 1) and run_start is not None:
+            run_end = prev_page if clears else p.page
+            if run_end - run_start + 1 >= _UNSTRUCTURED_RUN:
+                title = f"Unstructured (pp. {run_start}-{run_end})"
+                nodes.append(DocNode(_node_id(note_id, 1, title, run_start), None,
+                                     title, 1, run_start, run_end, "unstructured", 0.0))
+            run_start = None
+        prev_page = p.page
+    return nodes
