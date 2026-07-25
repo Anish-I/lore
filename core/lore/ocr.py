@@ -1,27 +1,24 @@
 """OCR fallback for scanned PDFs (2026-07-22 municipal-onboarding finding).
 
 A real town archive was ~40% scanned image PDFs — PyMuPDF returns empty text,
-so those records were ingested but unreadable. This adds a per-PAGE 3-tier
-router (Sol review 2026-07-22):
+so those records were ingested but unreadable. This adds a per-page 2-tier
+router:
 
   1. native  — PyMuPDF text, IF it passes a text-quality gate
-  2. ocr_fast — RapidOCR (PaddleOCR models exported to ONNX; reuses the
-                onnxruntime already in the stack, no PaddlePaddle runtime)
-  3. vlm      — a local vision model for table-heavy/low-confidence pages.
-                Escalation lane only; NOT wired until a vision model is present
-                (the local gemma4 build is text-only — verified 2026-07-22).
+  2. ocr_fast — RapidOCR text detection/recognition on ONNX.
 
-Per-page provenance is returned so a note carries how each page was read
-(native/ocr_fast/vlm + confidence). Gated by LORE_OCR_FALLBACK (default off);
-the existing text-only path is unchanged when the flag is unset.
+Per-page provenance is returned to callers that use ``extract_document``.
+``extract_text`` remains a compatibility wrapper. Gated by LORE_OCR_FALLBACK
+(default off); the existing text-only path is unchanged when the flag is unset.
 
-Numeric faithfulness (Sol): OCR of budget tables is only useful if exact values
-survive — evaluated separately by the numeric-faithfulness harness, not assumed.
+RapidOCR is not a table-structure model. Numeric-heavy OCR pages are marked for
+review rather than treated as arithmetically validated.
 """
 from __future__ import annotations
 
 import os
 import re
+import statistics
 
 # --- text-quality gate: is the native PDF text good enough, or is this a
 #     scanned / garbage-layer page that needs OCR? Per PAGE, not per document
@@ -57,24 +54,70 @@ _RETRY_DPI = 300              # low-confidence pages get a second, sharper pass
 _MIN_CONF = 0.5              # mean line confidence below this triggers the retry
 # Explicit, tagged page cap (Sol): never silently truncate a long budget book.
 _MAX_PAGES = int(os.environ.get("LORE_OCR_MAX_PAGES", "60"))
+_REVIEW_CONF = 0.80
+_NUMERIC_TOKEN_RE = re.compile(r"(?<!\w)\$?\s*\d[\d,.]*(?!\w)")
+
+
+class OCRUnavailable(RuntimeError):
+    """The OCR feature was enabled but its optional engine is unavailable."""
 
 
 def _rapidocr():
     global _rapid
     if _rapid is None:
-        from rapidocr_onnxruntime import RapidOCR
-        _rapid = RapidOCR()
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _rapid = RapidOCR()
+        except (ImportError, OSError) as exc:
+            raise OCRUnavailable(
+                "LORE_OCR_FALLBACK requires the optional 'ocr' dependencies"
+            ) from exc
     return _rapid
+
+
+def _format_ocr_result(result) -> tuple[str, float]:
+    """Rebuild rows from RapidOCR boxes instead of discarding their geometry."""
+    items = []
+    for line in result or []:
+        if len(line) < 3 or not str(line[1]).strip():
+            continue
+        box, value, confidence = line[0], str(line[1]).strip(), float(line[2])
+        xs = [float(point[0]) for point in box]
+        ys = [float(point[1]) for point in box]
+        items.append({
+            "x": min(xs),
+            "y": sum(ys) / len(ys),
+            "height": max(ys) - min(ys),
+            "text": value,
+            "conf": confidence,
+        })
+    if not items:
+        return "", 0.0
+
+    typical_height = statistics.median(item["height"] for item in items)
+    tolerance = max(4.0, typical_height * 0.6)
+    rows: list[list[dict]] = []
+    row_y: list[float] = []
+    for item in sorted(items, key=lambda entry: (entry["y"], entry["x"])):
+        if not rows or abs(item["y"] - row_y[-1]) > tolerance:
+            rows.append([item])
+            row_y.append(item["y"])
+        else:
+            rows[-1].append(item)
+            row_y[-1] = sum(entry["y"] for entry in rows[-1]) / len(rows[-1])
+
+    text = "\n".join(
+        "\t".join(entry["text"] for entry in sorted(row, key=lambda entry: entry["x"]))
+        for row in rows
+    )
+    confidences = [item["conf"] for item in items]
+    return text, sum(confidences) / len(confidences)
 
 
 def ocr_image(png_bytes: bytes) -> tuple[str, float]:
     """OCR a rendered page image → (text, mean_confidence in [0,1])."""
     result, _ = _rapidocr()(png_bytes)
-    if not result:
-        return "", 0.0
-    text = "\n".join(line[1] for line in result)
-    confs = [float(line[2]) for line in result if len(line) > 2]
-    return text, (sum(confs) / len(confs) if confs else 0.0)
+    return _format_ocr_result(result)
 
 
 def ocr_page(page, dpi: int = _RENDER_DPI) -> tuple[str, float]:
@@ -104,7 +147,8 @@ def extract_pdf_routed(path: str) -> tuple[str, str, dict] | None:
         return None
 
     parts, pages_meta = [], []
-    native_pages = ocr_pages = 0
+    native_pages = ocr_pages = usable_pages = 0
+    review_pages = []
     truncated = doc.page_count > _MAX_PAGES
     for i, page in enumerate(doc):
         if i >= _MAX_PAGES:
@@ -112,92 +156,76 @@ def extract_pdf_routed(path: str) -> tuple[str, str, dict] | None:
         native = page.get_text("text") or ""
         ok, _m = text_quality(native)
         if ok:
-            parts.append(native.strip())
+            parts.append(f"## Page {i + 1}\n\n{native.strip()}")
             pages_meta.append({"page": i + 1, "source": "native", "chars": len(native.strip())})
             native_pages += 1
+            usable_pages += 1
             continue
         try:
             text, conf = ocr_page(page)
-        except Exception:
-            text, conf = "", 0.0
+        except OCRUnavailable:
+            raise
+        except Exception as exc:
+            pages_meta.append({"page": i + 1, "source": "error", "chars": 0,
+                               "error": type(exc).__name__})
+            parts.append(f"## Page {i + 1}\n\n[OCR extraction failed for this page]")
+            review_pages.append(i + 1)
+            continue
+        # Tier 3 (LORE_OCR_TEXTRACT, cost-routed): only pages RapidOCR handled
+        # poorly are worth Textract money. Higher-confidence Textract text wins;
+        # its LAYOUT headings ride along in provenance for the doc-tree.
+        tier_source, layout_headings = "ocr_fast", None
+        if conf < _REVIEW_CONF and _textract_enabled():
+            from . import textract_ocr
+            try:
+                png = page.get_pixmap(dpi=_RENDER_DPI).tobytes("png")
+                resp = textract_ocr.analyze_page_png(png)
+                t_text, t_conf = textract_ocr.parse_text(resp)
+                if t_text.strip() and t_conf > conf:
+                    text, conf = t_text, t_conf
+                    tier_source = "ocr_textract"
+                    layout_headings = textract_ocr.parse_headings(resp) or None
+            except textract_ocr.TextractUnavailable:
+                raise
+            except Exception:
+                pass    # AWS hiccup -> keep the RapidOCR result (never worse)
         if text.strip():
-            parts.append(text.strip())
-            pages_meta.append({"page": i + 1, "source": "ocr_fast",
-                               "chars": len(text.strip()), "conf": round(conf, 3)})
+            reasons = []
+            if conf < _REVIEW_CONF:
+                reasons.append("low_confidence")
+            if len(_NUMERIC_TOKEN_RE.findall(text)) >= 4:
+                reasons.append("numeric_content")
+            meta = {"page": i + 1, "source": tier_source,
+                    "chars": len(text.strip()), "conf": round(conf, 3)}
+            if layout_headings:
+                meta["layout_headings"] = layout_headings
+            if reasons:
+                meta["review_reasons"] = reasons
+                review_pages.append(i + 1)
+            pages_meta.append(meta)
+            parts.append(f"## Page {i + 1}\n\n{text.strip()}")
             ocr_pages += 1
+            usable_pages += 1
         else:
-            # genuinely blank/undecodable page — record it, contribute nothing
-            pages_meta.append({"page": i + 1, "source": "empty", "chars": 0})
+            pages_meta.append({"page": i + 1, "source": "unreadable", "chars": 0})
+            parts.append(f"## Page {i + 1}\n\n[No extractable text was recovered from this page]")
+            review_pages.append(i + 1)
 
     body = re.sub(r"\n{3,}", "\n\n", "\n\n".join(p for p in parts if p)).strip()
-    if not body:
-        return None
     if truncated:
         body += f"\n\n[truncated at {_MAX_PAGES} of {doc.page_count} pages — raise LORE_OCR_MAX_PAGES]"
     title = os.path.splitext(os.path.basename(path))[0]
     prov = {"pages": pages_meta, "native_pages": native_pages,
             "ocr_pages": ocr_pages, "truncated": truncated,
-            "engine": "rapidocr-onnx"}
-    # Numeric-confidence signal + declarative VLM-escalation flag (Sol review).
-    num = numeric_check(body) if ocr_pages else None
-    if num:
-        prov["numeric_check"] = num
-    prov["needs_vlm"] = _needs_vlm(prov, num)
+            "engine": "rapidocr-onnx", "review_pages": sorted(set(review_pages))}
+    if usable_pages == 0:
+        return title, "", prov
     return title, f"# {title}\n\n{body}\n", prov
 
 
-# --- numeric-confidence signal (Sol review): a SIGNAL, never a corrector ---
-# On documents with obvious single-total structure, check the line items sum to
-# the stated TOTAL. A close-but-off sum flags likely OCR damage (e.g. a
-# truncated 9,485→485) and lowers confidence — it NEVER rewrites a value.
-# Deliberately conservative: multi-total / transfer-from-and-to docs are
-# ambiguous, so we stay silent rather than false-positive.
-_CURRENCY_RE = re.compile(r"\$\s*([\d][\d,]{2,})")
-_NUMERIC_TOL = 0.005          # within this of the total → "ok" (raises confidence)
-_MISMATCH_LO = 0.01           # a mismatch this..hi wide reads as OCR damage
-_MISMATCH_HI = 0.20           # wider than this → probably multi-section, stay silent
-
-
-def _amount(s: str) -> int:
-    try:
-        return int(s.replace(",", ""))
-    except ValueError:
-        return 0
-
-
-def numeric_check(text: str) -> dict | None:
-    """Return {"status", "stated_total", "observed_sum", "delta"} when a
-    single-total structure is clear enough to judge, else None (silent)."""
-    total_vals, item_vals = [], []
-    for line in text.splitlines():
-        amounts = [_amount(m) for m in _CURRENCY_RE.findall(line)]
-        if not amounts:
-            continue
-        (total_vals if re.search(r"\btotal\b", line, re.I) else item_vals).extend(amounts)
-    totals = {v for v in total_vals if v > 0}
-    items = [v for v in item_vals if v > 0]
-    # Need exactly one distinct total and enough line items to judge.
-    if len(totals) != 1 or len(items) < 4:
-        return None
-    total = next(iter(totals))
-    observed = sum(items)
-    if total <= 0:
-        return None
-    ratio = abs(observed - total) / total
-    if ratio <= _NUMERIC_TOL:
-        return {"status": "ok", "stated_total": total, "observed_sum": observed, "delta": observed - total}
-    if _MISMATCH_LO <= ratio <= _MISMATCH_HI:
-        return {"status": "total_mismatch", "stated_total": total,
-                "observed_sum": observed, "delta": observed - total}
-    return None                # far off → ambiguous multi-section doc; stay silent
-
-
-def _needs_vlm(prov: dict, num: dict | None) -> bool:
-    """Declarative escalation flag (no VLM is invoked): true when a page OCR'd
-    at low confidence, or the numeric check found a total mismatch."""
-    low_conf = any(pg.get("source") == "ocr_fast" and pg.get("conf", 1.0) < _MIN_CONF
-                   for pg in prov.get("pages", []))
-    return bool(low_conf or (num and num.get("status") == "total_mismatch"))
+def _textract_enabled() -> bool:
+    # Local import indirection so this module stays importable without boto3.
+    return os.environ.get("LORE_OCR_TEXTRACT", "0") == "1"
 
 
 def enabled() -> bool:

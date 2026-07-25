@@ -58,7 +58,12 @@ def parse_pages(markdown: str, provenance: dict | None) -> list[PageText]:
         source = pm.get("source", "native")
         conf = pm.get("conf")
         review = bool(pm.get("review_reasons")) or source in ("error", "unreadable")
-        out.append(PageText(page=page, source=source, conf=conf, review=review, text=body))
+        pt = PageText(page=page, source=source, conf=conf, review=review, text=body)
+        # Textract LAYOUT headings ride along in provenance (observed text, so
+        # they satisfy the confidence guard); the textract detector reads them.
+        if pm.get("layout_headings"):
+            pt.textract_headings = pm["layout_headings"]
+        out.append(pt)
     return out
 
 
@@ -72,7 +77,7 @@ def clears_confidence(page: PageText) -> bool:
         return False
     if page.source == "native":
         return True
-    if page.source == "ocr_fast":
+    if page.source in ("ocr_fast", "ocr_textract"):
         return page.conf is not None and page.conf >= ocr._REVIEW_CONF
     return False
 
@@ -171,7 +176,11 @@ def strip_running_lines(pages: list[PageText], min_repeats: int = None) -> list[
     out = []
     for p in pages:
         kept = [ln for ln in p.text.splitlines() if _normalize_running(ln) not in running]
-        out.append(PageText(p.page, p.source, p.conf, p.review, "\n".join(kept).strip()))
+        np = PageText(p.page, p.source, p.conf, p.review, "\n".join(kept).strip())
+        th = getattr(p, "textract_headings", None)
+        if th:      # carry stashed Textract LAYOUT headings through the rebuild
+            np.textract_headings = th
+        out.append(np)
     return out
 
 
@@ -198,7 +207,16 @@ def _node_id(note_id: str, level: int, title: str, page: int) -> str:
 
 
 def _default_detectors():
-    return [detect_numbered]     # font/toc/textract detectors appended by callers
+    dets = [detect_numbered]
+    try:
+        # Lazy: textract_ocr imports THIS module at top level, so the reverse
+        # import must happen at call time to avoid a cycle. The detector itself
+        # is offline (reads page.textract_headings stashed by parse_pages).
+        from .textract_ocr import detect_textract
+        dets.append(detect_textract)
+    except Exception:
+        pass
+    return dets
 
 
 def build_tree(pages, note_id, detectors=None):
