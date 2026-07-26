@@ -15,6 +15,7 @@ const oktaOauth    = require('./lib/okta-oauth');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
 const backupMirror = require('./lib/backup-mirror');
+const { authedBackendHeaders } = require('./lib/backend-auth');
 
 // Backend URL/port are wiring values, not constants: resolved lazily (env var > cfg
 // field > default) via desktop/lib/runtime.js so a config edit or LORE_PORT/
@@ -1520,7 +1521,9 @@ ipcMain.handle('auth:status', async () => {
   const sess = loadSession();
   if (!sess || !sess.token) return null;
   try {
-    const r = await fetch(`${BACKEND_URL()}/auth/me`, { headers: { Authorization: `Bearer ${sess.token}` } });
+    const r = await fetch(`${BACKEND_URL()}/auth/me`, {
+      headers: authedBackendHeaders(authHeaders(), sess.token),
+    });
     if (!r.ok) return null;
     const me = await r.json();
     return { user_id: me.user_id, email: sess.email, name: sess.name || (sess.email ? String(sess.email).split('@')[0] : null), picture: sess.picture || null, scopes: me.scopes };
@@ -1538,11 +1541,7 @@ async function authedFetch(pathname, opts = {}) {
   try {
     const r = await fetch(`${BACKEND_URL()}${pathname}`, {
       ...opts,
-      headers: {
-        'content-type': 'application/json',
-        Authorization: `Bearer ${sess.token}`,
-        ...(opts.headers || {}),
-      },
+      headers: authedBackendHeaders(authHeaders(), sess.token, opts.headers),
     });
     const body = await r.json().catch(() => ({}));
     return { ok: r.ok, status: r.status, body };
