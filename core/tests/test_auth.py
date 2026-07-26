@@ -96,6 +96,7 @@ def test_login_rejects_unverified_identity(monkeypatch):
 # --- HTTP endpoint tests ----------------------------------------------------
 
 from fastapi.testclient import TestClient
+import lore.api as api_module
 from lore.api import app
 
 client = TestClient(app)
@@ -129,6 +130,33 @@ def test_auth_google_endpoint_rejects_bad_identity(monkeypatch):
 def test_protected_endpoint_requires_valid_bearer():
     assert client.get("/auth/me").status_code == 401
     assert client.get("/auth/me", headers={"Authorization": "Bearer not.a.jwt"}).status_code == 401
+
+
+def test_locked_desktop_backend_requires_local_and_user_tokens(monkeypatch):
+    monkeypatch.setattr(api_module, "_LOCAL_TOKEN", "desktop-install-token")
+    monkeypatch.setattr(api_module, "_server_mode", lambda: False)
+    session = auth.issue_session_jwt("dual-token-user")
+
+    # Either credential by itself is insufficient: the local token protects the
+    # loopback port, while the Lore JWT identifies the signed-in user.
+    assert client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {session}"},
+    ).status_code == 401
+    assert client.get(
+        "/auth/me",
+        headers={"X-Lore-Token": "desktop-install-token"},
+    ).status_code == 401
+
+    me = client.get(
+        "/auth/me",
+        headers={
+            "X-Lore-Token": "desktop-install-token",
+            "Authorization": f"Bearer {session}",
+        },
+    )
+    assert me.status_code == 200, me.text
+    assert me.json()["user_id"] == "dual-token-user"
 
 
 # --- Okta SSO: group → scope reconciliation ---------------------------------

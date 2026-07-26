@@ -62,6 +62,7 @@ lore capture --session <id> --title "<title>" --scope <scope> --owner <owner> --
 # HTTP
 curl -X POST http://localhost:8099/capture \\
   -H "Content-Type: application/json" \\
+  -H "X-Lore-Token: <local token from lore-config.json>" \\
   -d '{"session_id":"<id>","title":"<title>","text":"...","scope":"<scope>","owner":"<owner>","tenant":"<tenant>"}'`;
 
 // A copy-paste prompt for wiring ANY other LLM/agent tool into Lore manually —
@@ -74,13 +75,14 @@ After each work session (or after each significant reply), POST a summary of wha
 
 curl -X POST http://localhost:8099/capture \\
   -H "Content-Type: application/json" \\
+  -H "X-Lore-Token: <local token from lore-config.json>" \\
   -d '{"session_id":"<a stable id for this session>","title":"<short title>","text":"<distilled summary: what was asked, what you did, what you found>","scope":"${scope || '<scope>'}","owner":"<your identity/username>","tenant":"${tenant || '<tenant>'}"}'
 
 Rules:
 - session_id should stay the same across multiple messages in one conversation (POSTing again with the same id updates the note, it does not duplicate it).
 - Keep "text" a distilled summary, not a raw transcript dump — a few sentences is enough.
 - Secrets (API keys, tokens, passwords) are redacted server-side, but avoid including them anyway.
-- This is write-only: it does not read from Lore. To recall from Lore, POST to http://localhost:8099/search with {"query":"...", "scopes":["${scope || '<scope>'}"], "tenant_id":"${tenant || '<tenant>'}", "k":5} and use the results as context.`;
+- Send the same X-Lore-Token header when recalling from Lore. POST to http://localhost:8099/search with {"query":"...", "scopes":["${scope || '<scope>'}"], "tenant_id":"${tenant || '<tenant>'}", "k":5} and use the results as context.`;
 }
 
 // The capture-scope dropdown used to show bare internal values ("none / engineering /

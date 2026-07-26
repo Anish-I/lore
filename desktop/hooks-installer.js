@@ -292,10 +292,11 @@ function uninstallClaude() {
 
 // Proxies GET /capture/status from the backend.
 // @param {string} [sessionId]
+// @param {object} [headers] Local-backend authentication headers from main.
 // @returns {Promise<object>}
-async function captureStatus(sessionId) {
+async function captureStatus(sessionId, headers = {}) {
   const qs = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : '';
-  const r = await fetch(`${runtime.backendUrl()}/capture/status${qs}`);
+  const r = await fetch(`${runtime.backendUrl()}/capture/status${qs}`, { headers });
   if (!r.ok) throw new Error(`/capture/status returned ${r.status}`);
   return r.json();
 }

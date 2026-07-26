@@ -1520,6 +1520,10 @@ ipcMain.handle('auth:login-okta', async () => {
 ipcMain.handle('auth:status', async () => {
   const sess = loadSession();
   if (!sess || !sess.token) return null;
+  // The renderer asks for identity during its first paint, while the Python
+  // backend may still be starting. Waiting here prevents a valid stored session
+  // from being cached as "signed out" in the header for the rest of the run.
+  await whenBackendReady();
   try {
     const r = await fetch(`${BACKEND_URL()}/auth/me`, {
       headers: authedBackendHeaders(authHeaders(), sess.token),
@@ -1688,7 +1692,7 @@ ipcMain.handle('wizards:uninstall', async (_e, id) => {
     try {
       const fr = await fetch(`${BACKEND_URL()}/forget`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ tenant: cfg.tenant, path_prefix: dirFwd }),
       });
       if (!fr.ok) return { ok: false, error: `Could not de-index (backend ${fr.status}); try again.` };
@@ -1831,7 +1835,7 @@ ipcMain.handle('hooks:status', () => {
 
 // Per-session capture status (object) — used to confirm a session was indexed.
 ipcMain.handle('hooks:capture-status', async (_e, sessionId) => {
-  try { return await installer.captureStatus(sessionId); }
+  try { return await installer.captureStatus(sessionId, authHeaders()); }
   catch (e) { return { ok: false, error: String(e) }; }
 });
 

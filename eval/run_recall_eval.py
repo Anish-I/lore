@@ -23,6 +23,25 @@ URL = f"http://localhost:{PORT}/search"
 TENANT = os.environ.get("LORE_TENANT", "local")
 SCOPES = [s for s in os.environ.get("LORE_SCOPES", "engineering").split(",") if s]
 
+
+def _token():
+    token = os.environ.get("LORE_TOKEN") or os.environ.get("LORE_LOCAL_TOKEN")
+    if token:
+        return token
+    appdata = os.environ.get("APPDATA") or os.path.expanduser("~/.config")
+    for app_name in ("lore-desktop", "Lore"):
+        try:
+            with open(os.path.join(appdata, app_name, "lore-config.json"), encoding="utf-8") as f:
+                token = (json.load(f) or {}).get("localToken")
+                if token:
+                    return token
+        except Exception:
+            continue
+    return ""
+
+
+TOKEN = _token()
+
 # (query, expected-title-substring) — wording deliberately paraphrased away from
 # the note titles/bodies so this tests semantic recall, not keyword echo.
 GOLD = [
@@ -59,7 +78,10 @@ def search(query, k=5):
     body = json.dumps({
         "query": query, "scopes": SCOPES, "tenant_id": TENANT, "k": k,
     }).encode()
-    req = urllib.request.Request(URL, data=body, headers={"content-type": "application/json"})
+    headers = {"content-type": "application/json"}
+    if TOKEN:
+        headers["X-Lore-Token"] = TOKEN
+    req = urllib.request.Request(URL, data=body, headers=headers)
     with urllib.request.urlopen(req, timeout=15) as r:
         data = json.loads(r.read())
     return data.get("results") or data.get("hits") or []
