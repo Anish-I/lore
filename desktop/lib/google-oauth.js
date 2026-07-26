@@ -45,16 +45,24 @@ function buildAuthUrl(clientCfg, redirectUri, challenge, state) {
 }
 
 // Exchange the authorization code for tokens at Google's token endpoint.
+//
+// Two callers: the loopback flow (PKCE — passes a `verifier` and a real
+// http://127.0.0.1 redirect_uri) and the in-app GIS auth-code popup (no PKCE —
+// passes verifier=null and redirect_uri='postmessage', the value Google requires
+// for the popup postMessage flow; the web client_secret authenticates instead).
 function exchangeCode(clientCfg, code, verifier, redirectUri) {
   return new Promise((resolve, reject) => {
-    const body = new URLSearchParams({
+    const params = {
       code,
       client_id: clientCfg.client_id,
       client_secret: clientCfg.client_secret || '',
-      code_verifier: verifier,
       grant_type: 'authorization_code',
       redirect_uri: redirectUri,
-    }).toString();
+    };
+    // Only send code_verifier when PKCE was actually used. An empty/blank verifier
+    // makes Google reject the exchange ("code_verifier is invalid").
+    if (verifier) params.code_verifier = verifier;
+    const body = new URLSearchParams(params).toString();
     const tokenUrl = new URL(clientCfg.token_uri || 'https://oauth2.googleapis.com/token');
     const req = https.request(
       { method: 'POST', hostname: tokenUrl.hostname, path: tokenUrl.pathname,

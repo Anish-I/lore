@@ -31,6 +31,9 @@ function unconfiguredEnv() {
   // plain Node process — no GUI, no `app` object — which makes launch() fail. Strip
   // it so the real windowed app boots regardless of the ambient environment.
   delete env.ELECTRON_RUN_AS_NODE;
+  // Keep the automated boot clean: don't let the dev DevTools gate auto-open a
+  // detached DevTools window during the smoke.
+  env.LORE_DEVTOOLS = '0';
   env.OKTA_CLIENT_FILE = path.join(os.tmpdir(), 'definitely-no-okta-here.json');
   return env;
 }

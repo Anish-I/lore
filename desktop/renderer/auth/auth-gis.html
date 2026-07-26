@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<!--
+  Lore — isolated Google Identity Services (GIS) sign-in surface.
+
+  This page is DELIBERATELY separate from the main renderer. Google prohibits its
+  OAuth *authorization endpoint* inside embedded webviews (disallowed_useragent),
+  but GIS (accounts.google.com/gsi) IS allowed — provided it runs on a registered
+  http(s) origin, not file://. So instead of relaxing the hardened main renderer
+  (strict 'self' CSP, file://, nav-lockdown — all guarding the IPC->filesystem
+  bridge), we confine every Google-scoped relaxation to THIS throwaway page, which
+  the main process serves over http://localhost:<port> in a small child window and
+  which holds no IPC bridge beyond a one-way token relay (auth-gis-preload.js).
+
+  The CSP below opens up ONLY Google's domains — nothing else, no 'self' script
+  eval, no wildcard. The page's only job: run GIS, hand the token back, close.
+-->
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="
+  default-src 'none';
+  script-src 'self' https://accounts.google.com https://apis.google.com https://www.gstatic.com;
+  style-src 'self' 'unsafe-inline' https://accounts.google.com https://www.gstatic.com;
+  frame-src https://accounts.google.com;
+  connect-src https://accounts.google.com https://www.googleapis.com;
+  img-src 'self' data: https://*.googleusercontent.com https://accounts.google.com https://www.gstatic.com;
+  font-src 'self' data: https://fonts.gstatic.com;
+  base-uri 'none';
+  form-action 'none';
+">
+<title>Sign in to Lore</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px; padding: 28px; box-sizing: border-box;
+    background: #101116; color: #e8e8ee;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    text-align: center;
+  }
+  .logo { width: 40px; height: 40px; opacity: .95; }
+  h1 { font-size: 17px; font-weight: 700; margin: 0; }
+  p  { font-size: 12.5px; color: #a6a6b3; margin: 0; max-width: 320px; line-height: 1.5; }
+  #btn { min-height: 44px; display: flex; align-items: center; justify-content: center; }
+  #connect {
+    height: 44px; padding: 0 20px; border-radius: 10px; border: 1px solid #2c2c38;
+    background: #1a1a22; color: #e8e8ee; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  #connect:hover { background: #22222c; }
+  #status { font-size: 12px; min-height: 16px; }
+  #status.err { color: #ff6b6b; }
+  .link { background: none; border: none; color: #7c7c8a; font: inherit; font-size: 11.5px; cursor: pointer; text-decoration: underline; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid #3a3a48; border-top-color: #8ab4f8; border-radius: 50%; animation: s 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes s { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="none" stroke="#8ab4f8" stroke-width="2"/><circle cx="12" cy="12" r="3.5" fill="#8ab4f8"/></svg>
+  <h1 id="title">Sign in to Lore</h1>
+  <p id="sub">Choose a Google account to continue. This window closes automatically when you're done.</p>
+  <div id="btn"><span id="status"><span class="spin"></span>Loading Google sign-in…</span></div>
+  <button id="fallback" class="link" hidden>Trouble? Sign in with your browser instead</button>
+
+  <!-- GIS client, from accounts.google.com (the only script host the CSP allows).
+       NOTE: no Subresource Integrity hash on purpose — Google rotates gsi/client
+       continuously and publishes no stable hash, so a pinned `integrity=` would
+       break sign-in on their next release. Trust is bounded instead by the CSP,
+       which restricts script-src to Google's first-party identity origins only. -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script src="auth-gis.js"></script>
+</body>
+</html>

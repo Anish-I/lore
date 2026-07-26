@@ -80,8 +80,8 @@ function AuthModal({ onClose, onSignedIn }) {
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface-inset)' } }, /*#__PURE__*/
     React.createElement(AuIcon, { name: "loader", size: 18, style: { color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite', flexShrink: 0 } }), /*#__PURE__*/
     React.createElement("div", { style: { minWidth: 0 } }, /*#__PURE__*/
-    React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' } }, "Finish in your browser"), /*#__PURE__*/
-    React.createElement("div", { style: { fontSize: 12, color: 'var(--text-subtle)', marginTop: 1, lineHeight: 1.45 } }, "We opened your browser to sign in \u2014 approve it there, then come back here.")
+    React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' } }, "Finish in the sign-in window"), /*#__PURE__*/
+    React.createElement("div", { style: { fontSize: 12, color: 'var(--text-subtle)', marginTop: 1, lineHeight: 1.45 } }, "A Google sign-in window opened \u2014 pick your account there, and this closes automatically.")
     )
     ) :
     state === 'success' ? /*#__PURE__*/

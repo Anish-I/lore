@@ -4,6 +4,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, safeStorage, Menu, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const http = require('http');            // loopback static server for the isolated GIS sign-in page
 const { spawn } = require('child_process');
 const { runScrape } = require('./scraper');
 const installer    = require('./hooks-installer');
@@ -22,6 +23,17 @@ const backupMirror = require('./lib/backup-mirror');
 // only valid after app is ready (see configPath() below).
 function BACKEND_PORT() { return runtime.backendPort(loadConfig); }
 function BACKEND_URL() { return runtime.backendUrl(loadConfig); }
+
+// DevTools gate. ON in local dev so renderer + auth-window console logs are
+// visible; OFF automatically in a packaged/deploy build (app.isPackaged) so
+// nothing has to be stripped by hand at release. Force off in dev with
+// LORE_DEVTOOLS=0. openDevTools() is called through this everywhere.
+const DEVTOOLS = process.env.LORE_DEVTOOLS !== '0' && !app.isPackaged;
+function openDevToolsIf(wc) {
+  if (!DEVTOOLS || !wc) return;
+  try { wc.openDevTools({ mode: 'detach' }); } catch { /* ignore */ }
+}
+
 const CORE_DIR = path.join(__dirname, '..', 'core');
 const ENV_VAULT_ROOT = process.env.LORE_VAULT || null;
 
@@ -48,6 +60,7 @@ if (process.env.LORE_USER_DATA) app.setPath('userData', process.env.LORE_USER_DA
 
 let win = null;
 let backendProc = null;
+let backendReadyPromise = null; // resolves when ensureBackend() settles; see whenBackendReady
 let watcher = null;
 let upkeepInterval = null;
 let embeddedPgStop = null; // set when config.serverMode === true
@@ -327,6 +340,19 @@ async function ensureBackend() {
     await new Promise((r) => setTimeout(r, 500));
   }
   return 'timeout';
+}
+
+// Boot-race guard. The window (and its first graph/digest/todos fetches) loads
+// before ensureBackend() has uvicorn listening — on first boot the backend also
+// loads embedding models, so there's a real gap. Without this, that first fetch
+// hits a closed port and Electron logs a scary "Error occurred in handler …
+// ECONNREFUSED" even though the app recovers a second later. Awaiting the shared
+// readiness promise makes those early reads WAIT for the backend instead of
+// failing. It resolves the instant the backend is up; if the backend never comes
+// up the promise still settles (~40s cap → 'timeout'), so the handler proceeds
+// and surfaces the backend's own error rather than hanging here forever.
+function whenBackendReady() {
+  return backendReadyPromise ? backendReadyPromise.catch(() => {}) : Promise.resolve();
 }
 
 // ---------- file tree ----------
@@ -1226,21 +1252,161 @@ function decodeJwtClaims(jwt) {
   } catch { return {}; }
 }
 
-// Sign in: run the loopback flow → get Google id_token → exchange at the Lore
-// server for a session JWT → store it. Also persists the Google display name as
-// the library owner so the greeting/avatar update. Returns { ok, user_id, email,
-// name, scopes } or { ok:false, reason }.
+// ---------- in-app Google sign-in (GIS) ----------
+// Google blocks its OAuth *authorization endpoint* inside embedded app windows
+// (disallowed_useragent), but Google Identity Services (accounts.google.com/gsi)
+// is allowed — on a registered http(s) origin. So rather than opening the system
+// browser (or relaxing the hardened main renderer), we serve a tiny, single-
+// purpose GIS page (renderer/auth/) over http://localhost:<port> and show it in a
+// small child window. It returns a token via a one-way bridge; the main renderer
+// keeps its strict file:// + 'self' CSP + nav-lockdown untouched.
+//
+// The origin http://localhost:<AUTH_PORT> must be registered as an "Authorized
+// JavaScript origin" on the Google *Web* OAuth client (override port via
+// LORE_AUTH_PORT / config.authPort). If GIS can't run (origin not yet registered,
+// offline), the callers below fall back to the system-browser loopback flow.
+const AUTH_PORT_DEFAULT = 8130;
+function authServerPort() {
+  const cfg = loadConfig() || {};
+  const n = parseInt(process.env.LORE_AUTH_PORT || cfg.authPort, 10);
+  return Number.isInteger(n) && n > 0 && n < 65536 ? n : AUTH_PORT_DEFAULT;
+}
+
+let authServer = null;
+let authOrigin = null;
+// Serve ONLY renderer/auth/ over loopback http (GET only, no path traversal).
+function startAuthServer() {
+  if (authOrigin) return Promise.resolve(authOrigin);
+  const AUTH_DIR = path.join(__dirname, 'renderer', 'auth');
+  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml' };
+  return new Promise((resolve) => {
+    const port = authServerPort();
+    authServer = http.createServer((req, res) => {
+      try {
+        if (req.method !== 'GET') { res.writeHead(405); res.end(); return; }
+        const u = new URL(req.url, `http://localhost:${port}`);
+        let rel = decodeURIComponent(u.pathname).replace(/^\/+/, '') || 'auth-gis.html';
+        const abs = path.normalize(path.join(AUTH_DIR, rel));
+        // Confine to AUTH_DIR — reject any traversal outside it.
+        if (abs !== AUTH_DIR && !abs.startsWith(AUTH_DIR + path.sep)) { res.writeHead(403); res.end(); return; }
+        fs.readFile(abs, (err, buf) => {
+          if (err) { res.writeHead(404); res.end(); return; }
+          res.writeHead(200, { 'content-type': TYPES[path.extname(abs).toLowerCase()] || 'application/octet-stream' });
+          res.end(buf);
+        });
+      } catch { res.writeHead(400); res.end(); }
+    });
+    authServer.on('error', (e) => { console.error('[auth-server]', e && e.message); authServer = null; resolve(null); });
+    authServer.listen(port, '127.0.0.1', () => { authOrigin = `http://localhost:${port}`; resolve(authOrigin); });
+  });
+}
+
+// GIS keeps its popup attached to the opener so it can post the credential back;
+// severing it to the OS browser strands both windows. So allow ONLY an
+// accounts.google.com popup as a child window — everything else is denied.
+function isGoogleSignInUrl(rawUrl) {
+  try { const u = new URL(rawUrl); return u.protocol === 'https:' && u.hostname === 'accounts.google.com'; }
+  catch { return false; }
+}
+
+// Open the isolated GIS window. mode: 'login' → { ok, code } (auth code from the
+// popup account chooser, exchanged for an id_token by the caller) ; 'gmail' →
+// { ok, accessToken }. On cancel/failure → { ok:false, error } (error==='cancelled'
+// means the user closed/dismissed it; anything else is a real failure the caller
+// may fall back on).
+async function openGisAuthWindow(mode) {
+  // Async prep is done BEFORE the Promise so its executor stays synchronous (an
+  // async executor that threw would leave the Promise pending forever).
+  let client = null;
+  try { client = loadGoogleClient(); } catch { client = null; }
+  if (!client || !client.client_id) return { ok: false, error: 'unconfigured' };
+  const origin = await startAuthServer();
+  if (!origin) return { ok: false, error: 'no-auth-surface' };
+
+  return new Promise((resolve) => {
+    const child = new BrowserWindow({
+      width: 480, height: 640, parent: win || undefined, modal: !!win, show: false,
+      resizable: false, minimizable: false, maximizable: false,
+      title: mode === 'gmail' ? 'Connect Gmail' : 'Sign in to Lore',
+      backgroundColor: '#101116', autoHideMenuBar: true,
+      webPreferences: {
+        preload: path.join(__dirname, 'auth-gis-preload.js'),
+        contextIsolation: true, nodeIntegration: false, sandbox: true,
+      },
+    });
+    child.removeMenu();
+    child.webContents.setWindowOpenHandler(({ url }) => {
+      if (isGoogleSignInUrl(url)) {
+        return { action: 'allow', overrideBrowserWindowOptions: { width: 480, height: 640, autoHideMenuBar: true } };
+      }
+      if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+      return { action: 'deny' };
+    });
+
+    let settled = false;
+    const onResult = (e, payload) => {
+      if (e.sender !== child.webContents) return;   // ignore any other window's result
+      finish(payload && typeof payload === 'object' ? payload : { ok: false, error: 'bad-result' });
+    };
+    function finish(payload) {
+      if (settled) return;
+      settled = true;
+      ipcMain.removeListener('auth-gis:result', onResult);
+      try { if (!child.isDestroyed()) child.close(); } catch { /* ignore */ }
+      resolve(payload);
+    }
+    ipcMain.on('auth-gis:result', onResult);
+    child.on('closed', () => finish({ ok: false, error: 'cancelled' }));
+
+    const scope = mode === 'gmail'
+      ? 'openid email https://www.googleapis.com/auth/gmail.readonly'
+      : 'openid email profile';
+    const q = new URLSearchParams({ mode, cid: client.client_id, scope }).toString();
+    child.once('ready-to-show', () => { child.show(); openDevToolsIf(child.webContents); });
+    child.loadURL(`${origin}/auth-gis.html?${q}`);
+  });
+}
+
+// Sign in: get a Google id_token (in-app GIS window first, system-browser
+// loopback as fallback) → exchange at the Lore server for a session JWT → store
+// it. Also persists the Google display name as the library owner so the
+// greeting/avatar update. Returns { ok, user_id, email, name, scopes } or
+// { ok:false, reason }.
 ipcMain.handle('auth:login', async () => {
   try {
     const clientCfg = loadGoogleClient();
     if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Google sign-in isn’t configured in this build.' };
-    const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url), { port: oauthPort() });
-    if (!tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
-    const claims = decodeJwtClaims(tokens.id_token);
+    // Primary: in-app GIS window (id_token, no browser). Fallback: system-browser
+    // loopback — used only when GIS can't run (origin not registered, offline),
+    // NOT when the user simply closes the window.
+    let idToken = null;
+    const gis = await openGisAuthWindow('login');
+    if (gis && gis.ok && gis.code) {
+      // The GIS window ran the account chooser and handed back an auth code (popup
+      // flow). Exchange it here — the client_secret stays in main, never the window.
+      // redirect_uri='postmessage' + no PKCE verifier is Google's popup-code contract.
+      try {
+        const tokens = await googleOauth.exchangeCode(clientCfg, gis.code, null, 'postmessage');
+        idToken = tokens && tokens.id_token;
+      } catch (e) {
+        console.error('[auth] GIS code exchange failed, will fall back to loopback', e);
+      }
+    } else if (gis && gis.ok && gis.idToken) {
+      idToken = gis.idToken;   // (legacy id-token path, still accepted)
+    } else if (gis && gis.error === 'cancelled') {
+      return { ok: false, reason: 'cancelled' };
+    }
+    if (!idToken) {
+      const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url), { port: oauthPort() });
+      idToken = tokens && tokens.id_token;
+    }
+    if (!idToken) return { ok: false, reason: 'no id_token from Google' };
+    const claims = decodeJwtClaims(idToken);
     const r = await fetch(`${BACKEND_URL()}/auth/google`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ id_token: tokens.id_token }),
+      body: JSON.stringify({ id_token: idToken }),
     });
     const body = await r.json();
     if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
@@ -1996,6 +2162,7 @@ ipcMain.handle('stats:get', async (_e, tenant) => {
 // This-week digest for the Home tab: notes grouped by day × section, plus the
 // created-since-yesterday count. Backend does the grouping (no LLM).
 ipcMain.handle('digest:get', async (_e, opts) => {
+  await whenBackendReady();   // avoid the boot-race empty-state flash on the first paint
   const cfg = loadConfig() || {};
   const { tenant, days, scopes } = opts || {};
   const t = tenant || cfg.tenant || '';
@@ -2016,6 +2183,7 @@ ipcMain.handle('digest:get', async (_e, opts) => {
 });
 
 ipcMain.handle('graph:get', async (_e, opts) => {
+  await whenBackendReady();   // avoid the boot-race ECONNREFUSED on the first paint
   const cfg = loadConfig() || {};
   const scopes = Array.isArray(opts) ? opts.join(',') : (opts && opts.scopes ? opts.scopes : '');
   const tenant = (opts && opts.tenant) || cfg.tenant || '';
@@ -2058,6 +2226,7 @@ ipcMain.handle('todos:extract', async (_e, opts) => {
 });
 
 ipcMain.handle('todos:list', async (_e, opts) => {
+  await whenBackendReady();   // avoid the boot-race empty-state flash on the first paint
   const cfg = loadConfig() || {};
   const { tenant, scopes, status } = opts || {};
   const t = tenant || cfg.tenant || '';
@@ -2143,15 +2312,23 @@ ipcMain.handle('todos:sync-gmail', async (_e, opts) => {
   const { scope, owner, tenant, query, limit } = opts || {};
   const clientCfg = loadGoogleClient();
   if (!clientCfg) return { error: 'Google isn’t configured in this build.' };
-  let tokens;
-  try {
-    tokens = await googleOauth.runLoopbackFlow(
-      { ...clientCfg, scope: 'openid email https://www.googleapis.com/auth/gmail.readonly' },
-      (url) => shell.openExternal(url), { port: oauthPort() });
-  } catch (e) {
-    return { error: `Google sign-in failed: ${e.message}` };
+  // Primary: in-app GIS token client (access_token, no browser). Fallback:
+  // system-browser loopback — only when GIS can't run, not on a user cancel.
+  let accessToken = null;
+  const gis = await openGisAuthWindow('gmail');
+  if (gis && gis.ok && gis.accessToken) accessToken = gis.accessToken;
+  else if (gis && gis.error === 'cancelled') return { error: 'cancelled' };
+  if (!accessToken) {
+    try {
+      const tokens = await googleOauth.runLoopbackFlow(
+        { ...clientCfg, scope: 'openid email https://www.googleapis.com/auth/gmail.readonly' },
+        (url) => shell.openExternal(url), { port: oauthPort() });
+      accessToken = tokens && tokens.access_token;
+    } catch (e) {
+      return { error: `Google sign-in failed: ${e.message}` };
+    }
   }
-  if (!tokens || !tokens.access_token) return { error: 'no access token from Google' };
+  if (!accessToken) return { error: 'no access token from Google' };
   try {
     const r = await fetch(`${BACKEND_URL()}/connectors/gmail/sync`, {
       method: 'POST',
@@ -2160,7 +2337,7 @@ ipcMain.handle('todos:sync-gmail', async (_e, opts) => {
         tenant_id: tenant || cfg.tenant || '',
         scope: scope || cfg.scope || null,
         owner: owner || cfg.owner || null,
-        access_token: tokens.access_token,
+        access_token: accessToken,
         query: query || null,
         limit: limit || 50,
       }),
@@ -2288,6 +2465,7 @@ async function createWindow() {
   win.webContents.on('render-process-gone', (_e, d) => { try { fs.appendFileSync(rlog, `RENDER-GONE ${JSON.stringify(d)}\n`); } catch { /* ignore */ } });
   await win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.show();
+  openDevToolsIf(win.webContents);   // dev only (see DEVTOOLS gate)
 }
 
 app.whenReady().then(async () => {
@@ -2352,9 +2530,10 @@ app.whenReady().then(async () => {
   // search is unavailable, so startup never blocks the window (origin/master behavior).
   // Once the backend resolves, kick off the async disk<->index reconcile in the
   // background (see reconcileIndex above) — never awaited, never blocks the window.
-  ensureBackend()
-    .then((status) => { reconcileIndex(status).catch((e) => console.error('[reconcile] uncaught', e)); })
-    .catch((e) => console.error('backend startup error', e));
+  // Keep the readiness promise so early read handlers can await it (whenBackendReady).
+  backendReadyPromise = ensureBackend()
+    .then((status) => { reconcileIndex(status).catch((e) => console.error('[reconcile] uncaught', e)); return status; })
+    .catch((e) => { console.error('backend startup error', e); return 'error'; });
   await createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -2364,6 +2543,7 @@ app.on('before-quit', () => {
   // Stop embedded Postgres if it was started (fire-and-forget on quit).
   if (embeddedPgStop) try { embeddedPgStop(); } catch {}
   if (backendProc) try { backendProc.kill(); } catch {}
+  if (authServer) try { authServer.close(); } catch {}
   if (watcher) try { watcher.close(); } catch {}
   stopUpkeepInterval();
 });

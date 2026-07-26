@@ -80,8 +80,8 @@ function AuthModal({ onClose, onSignedIn }) {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', border: '1px solid var(--border)', borderRadius: 12, background: 'var(--surface-inset)' }}>
               <AuIcon name="loader" size={18} style={{ color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite', flexShrink: 0 }} />
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>Finish in your browser</div>
-                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1, lineHeight: 1.45 }}>We opened your browser to sign in — approve it there, then come back here.</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>Finish in the sign-in window</div>
+                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1, lineHeight: 1.45 }}>A Google sign-in window opened — pick your account there, and this closes automatically.</div>
               </div>
             </div>
           ) : state === 'success' ? (
