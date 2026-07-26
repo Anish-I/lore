@@ -64,6 +64,15 @@ describe('local backend token audit', () => {
     expect(offenders, `Tokenless preload backend fetches:\n${offenders.join('\n')}`).toEqual([]);
   });
 
+  it('keeps refresh, logout, and retried user requests behind local authentication', () => {
+    const calls = backendFetchCalls('lib/auth-session.js', 'baseUrl()');
+    const offenders = missingAuth(calls, /local\(\)|authedBackendHeaders\(/);
+    expect(
+      offenders,
+      `Tokenless auth-session backend fetches:\n${offenders.join('\n')}`,
+    ).toEqual([]);
+  });
+
   it('passes authentication into hook status polling', () => {
     const calls = backendFetchCalls('hooks-installer.js', 'runtime.backendUrl()');
     const offenders = missingAuth(calls, /\{\s*headers\s*\}/);

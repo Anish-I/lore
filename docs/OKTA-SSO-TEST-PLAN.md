@@ -42,7 +42,8 @@ and the full loopback flow, against local mock servers with real crypto.
 
 - [ ] **1.1 Server-side auth suite**
   ``bash cd core VAULT_FAKE=1 python -m pytest tests/test_auth.py -p no:asyncio -q ``
-  **✅ Pass =** `14 passed, 1 skipped`. (The skip is the Google-client-file test — expected.)
+  **Pass =** `20 passed`, or `19 passed, 1 skipped` when the optional gitignored
+  Google client file is not installed.
 - [ ] **1.2 Desktop loopback unit tests**
   ``bash cd desktop npx vitest run tests/okta-oauth.test.js ``
   **✅ Pass =** `4 passed`.
@@ -69,6 +70,10 @@ and the full loopback flow, against local mock servers with real crypto.
   > as a plain Node process with no window and `launch()` fails. The test strips that var for the
   > child so the real app boots anyway — but if you run the app by hand (`npm start`) in such a
   > shell, `unset ELECTRON_RUN_AS_NODE` first.
+- [ ] **1.6 Refresh-session lifecycle**
+  ``bash cd desktop npx vitest run tests/auth-session.test.js ``
+  **Pass =** `8 passed`. This covers proactive refresh, concurrent callers, 401 retry,
+  logout/revocation races, terminal rejection, failed persistence, and secure-storage fallback.
 
 > **Debugging:** `.vscode/launch.json` has ready configs — *Electron: main (debug)*, *Vitest:
 > current file*, *Vitest: Electron smoke*, and *Pytest: current file (core)* — so you can set
@@ -88,6 +93,15 @@ and the full loopback flow, against local mock servers with real crypto.
 The Lore **server** verifies the token and maps groups → scopes. The **desktop** only fetches the
 token. Both read config from env. For a locally spawned backend, the desktop also forwards the
 public verifier settings from a gitignored desktop config file.
+
+After either Google or Okta login, Lore issues a one-hour access JWT plus a rotating 30-day
+refresh token. The desktop keeps both in Electron `safeStorage`; the server stores only the
+refresh token's SHA-256 hash. Refresh is automatic before expiry, every refresh invalidates the
+previous token, and Sign out revokes the current refresh session.
+
+Existing installs with a legacy access-only session must sign in once after upgrading. On Linux,
+the desktop requires a working Secret Service or KWallet backend for persistent sign-in. Lore
+rejects Electron's `basic_text` fallback because it does not securely protect refresh credentials.
 
 - [ ] **2.1 Server env** (in the shell that starts the backend):
   ``bash export LORE_SERVER_MODE=1 export OKTA_ISSUER="https://<your-okta-domain>/oauth2/default" export OKTA_CLIENT_ID="0oa15cs51goDdEdok698" export OKTA_GROUP_SCOPE_MAP='{"Engineering":"t-eng"}'   # your group → team id from 0.4 export LORE_JWT_SECRET="<a-32+-char-random-string>"     # signs Lore session JWTs ``
@@ -137,13 +151,17 @@ This is the whole point of the feature: the user's Okta **group** became a Lore 
   out and back in.
   **✅ Pass =** that `team:` scope is **gone** from `scopes` on the next login (the membership is
   revoked server-side). Any invite-based team the user has stays untouched.
+- [ ] **4.3 Session renewal.** Leave Lore signed in for more than one hour, or reopen it after the
+  original access JWT expires.
+  **✅ Pass =** Lore remains signed in and Teams still loads without opening Okta again. Signing
+  out still returns the app to the signed-out state.
 
 ---
 
 ## Part 5 — Negative checks (should fail cleanly, not crash)
 
-- [ ] **5.1 Not configured.** Unset the desktop Okta config and click "Continue with Okta SSO."
-  **✅ Pass =** a clean message ("Okta SSO isn't configured in this build"), no crash.
+- [ ] **5.1 Not configured.** Unset the desktop Okta config and open the sign-in modal.
+  **✅ Pass =** the Okta SSO option is hidden; Google remains available and the app does not crash.
 - [ ] **5.2 Bad token.** (If you can craft one, or point `OKTA_ISSUER` at the wrong domain.)
   **✅ Pass =** server returns **401**, modal shows a sign-in error, no session is stored.
 
@@ -156,7 +174,8 @@ This is the whole point of the feature: the user's Okta **group** became a Lore 
 | Browser: "The redirect URI ... did not match" | `127.0.0.1/callback` not registered                   | Redo**0.2**                                                                                                                 |
 | Okta rejects the request:`invalid_scope`    | authz server doesn't allow the`groups` scope          | Set`OKTA_SCOPES="openid email profile"` and make the groups claim "always include" (**0.3**)                              |
 | Login works but`scopes` is empty            | groups claim not in the token, or group name ≠ map key | Verify**0.3**; the `OKTA_GROUP_SCOPE_MAP` **key** must equal the Okta group name **exactly** (case-sensitive) |
-| `token exchange failed` in the app          | wrong/old client secret                                 | Use the**rotated** secret from **0.1**                                                                                |
+| `token exchange failed` in the app          | client auth method/secret does not match Okta            | Prefer a Native App with auth method `none`; otherwise match `OKTA_TOKEN_ENDPOINT_AUTH_METHOD` and rotate the secret |
+| Sign-in cannot save on Linux                 | no secure OS credential-store backend                    | Install/enable Secret Service or KWallet; Lore intentionally refuses Electron's insecure `basic_text` fallback |
 | Server 401 on a real token                    | issuer/audience mismatch                                | `OKTA_ISSUER` and `OKTA_CLIENT_ID` must match the app + authz server exactly                                                  |
 | `scopes` never enforced anywhere            | backend not in server mode                              | `LORE_SERVER_MODE=1` must be set on the **backend** process                                                               |
 

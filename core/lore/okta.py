@@ -189,9 +189,10 @@ def login_with_okta(conn, id_token_str: str) -> dict:
         # slip). Don't reconcile: leaving memberships untouched beats silently
         # revoking every SSO-managed team on a misconfiguration. Use what's on record.
         scopes = tenancy.authorized_team_scope_ids(conn, user_id)
-    token = auth.issue_session_jwt(user_id)
+    auth.prune_refresh_tokens(conn)
+    session = auth.issue_session_bundle(conn, user_id)
     return {
-        "token": token,
+        **session,
         "user_id": user_id,
         "email": identity["email"],
         "scopes": scopes,

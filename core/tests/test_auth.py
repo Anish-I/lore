@@ -5,6 +5,7 @@ everything else (JWT issue/verify, user upsert, scope resolution, login wiring)
 is exercised for real against Postgres.
 """
 import os
+import hashlib
 
 # Deterministic signing secret for the suite (>=32 bytes, before lore.auth reads it).
 os.environ.setdefault("LORE_JWT_SECRET", "test-secret-please-do-not-use-in-production-0123456789")
@@ -78,6 +79,44 @@ def test_login_with_google_verifies_issues_jwt_and_resolves_scopes(monkeypatch):
     # The issued session JWT verifies back to the same user.
     claims = auth.verify_session_jwt(result["token"])
     assert claims["sub"] == "sub-eng"
+    assert result["refresh_token"].startswith("lore_rt_")
+    assert result["expires_in"] == 3600
+
+
+def test_refresh_token_rotates_rejects_replay_and_revokes():
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    auth.upsert_user(conn, "refresh-user", "refresh@example.com", "Refresh User")
+
+    first = auth.issue_session_bundle(conn, "refresh-user")
+    token_hash = hashlib.sha256(first["refresh_token"].encode()).hexdigest()
+    stored = conn.execute(
+        "select token_hash from refresh_sessions where token_hash=%s", (token_hash,)
+    ).fetchone()
+    assert stored == (token_hash,)
+    assert stored[0] != first["refresh_token"]
+
+    second = auth.rotate_refresh_token(conn, first["refresh_token"])
+    assert second["refresh_token"] != first["refresh_token"]
+    assert auth.verify_session_jwt(second["token"])["sub"] == "refresh-user"
+
+    with pytest.raises(auth.AuthError, match="invalid refresh token"):
+        auth.rotate_refresh_token(conn, first["refresh_token"])
+
+    auth.revoke_refresh_token(conn, second["refresh_token"])
+    with pytest.raises(auth.AuthError, match="invalid refresh token"):
+        auth.rotate_refresh_token(conn, second["refresh_token"])
+
+
+def test_refresh_token_expiry_is_enforced():
+    conn = db.connect()
+    db.bootstrap_schema(conn)
+    tenancy.bootstrap_tenancy(conn)
+    auth.upsert_user(conn, "expired-user", "expired@example.com", "Expired User")
+    expired = auth.issue_refresh_token(conn, "expired-user", ttl=1, now=100)
+    with pytest.raises(auth.AuthError, match="refresh token expired"):
+        auth.rotate_refresh_token(conn, expired, now=101)
 
 
 def test_login_rejects_unverified_identity(monkeypatch):
@@ -112,11 +151,43 @@ def test_auth_google_endpoint_returns_token_then_me_works(monkeypatch):
     body = r.json()
     assert body["user_id"] == "sub-http"
     token = body["token"]
+    assert body["refresh_token"].startswith("lore_rt_")
 
     # The Lore JWT authenticates the protected /auth/me endpoint.
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert me.status_code == 200, me.text
     assert me.json()["user_id"] == "sub-http"
+
+
+def test_refresh_endpoint_rotates_and_logout_revokes(monkeypatch):
+    monkeypatch.setattr(auth, "verify_google_id_token",
+                        lambda token, client_id=None: {
+                            "sub": "sub-refresh-http", "email": "refresh@acme.com",
+                            "name": "Refresh Http", "email_verified": True})
+    login = client.post("/auth/google", json={"id_token": "fake"}).json()
+
+    rotated = client.post(
+        "/auth/refresh", json={"refresh_token": login["refresh_token"]}
+    )
+    assert rotated.status_code == 200, rotated.text
+    next_session = rotated.json()
+    assert next_session["refresh_token"] != login["refresh_token"]
+    assert next_session["expires_in"] == 3600
+    assert auth.verify_session_jwt(next_session["token"])["sub"] == "sub-refresh-http"
+
+    replay = client.post(
+        "/auth/refresh", json={"refresh_token": login["refresh_token"]}
+    )
+    assert replay.status_code == 401
+
+    logged_out = client.post(
+        "/auth/logout", json={"refresh_token": next_session["refresh_token"]}
+    )
+    assert logged_out.status_code == 200
+    assert logged_out.json() == {"ok": True}
+    assert client.post(
+        "/auth/refresh", json={"refresh_token": next_session["refresh_token"]}
+    ).status_code == 401
 
 
 def test_auth_google_endpoint_rejects_bad_identity(monkeypatch):
@@ -157,6 +228,20 @@ def test_locked_desktop_backend_requires_local_and_user_tokens(monkeypatch):
     )
     assert me.status_code == 200, me.text
     assert me.json()["user_id"] == "dual-token-user"
+
+    auth.upsert_user(
+        api_module._conn, "dual-refresh-user", "dual-refresh@example.com", "Dual Refresh"
+    )
+    refresh = auth.issue_session_bundle(api_module._conn, "dual-refresh-user")
+    assert client.post(
+        "/auth/refresh", json={"refresh_token": refresh["refresh_token"]}
+    ).status_code == 401
+    renewed = client.post(
+        "/auth/refresh",
+        headers={"X-Lore-Token": "desktop-install-token"},
+        json={"refresh_token": refresh["refresh_token"]},
+    )
+    assert renewed.status_code == 200, renewed.text
 
 
 # --- Okta SSO: group → scope reconciliation ---------------------------------
@@ -264,6 +349,7 @@ def test_login_with_okta_verifies_syncs_and_issues_jwt(monkeypatch):
     assert result["email"] == "eng@corp.com"
     assert result["scopes"] == ["team:t-eng"]
     assert result["groups"] == ["Engineering"]
+    assert result["refresh_token"].startswith("lore_rt_")
 
     # The issued session JWT verifies back to the same user.
     assert auth.verify_session_jwt(result["token"])["sub"] == "00u-okta-1"
@@ -283,6 +369,7 @@ def test_auth_okta_endpoint_returns_token_then_me_works(monkeypatch):
     body = r.json()
     assert body["user_id"] == "00u-http"
     assert body["scopes"] == ["team:t-eng"]
+    assert body["refresh_token"].startswith("lore_rt_")
 
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {body['token']}"})
     assert me.status_code == 200, me.text

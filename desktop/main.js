@@ -16,7 +16,10 @@ const oktaConfig   = require('./lib/okta-config');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
 const backupMirror = require('./lib/backup-mirror');
-const { authedBackendHeaders } = require('./lib/backend-auth');
+const {
+  createAuthSessionManager,
+  secureCredentialStorageAvailable,
+} = require('./lib/auth-session');
 
 // Backend URL/port are wiring values, not constants: resolved lazily (env var > cfg
 // field > default) via desktop/lib/runtime.js so a config edit or LORE_PORT/
@@ -1250,21 +1253,69 @@ function oauthPort() {
   return Number.isInteger(n) && n > 0 && n < 65536 ? n : 0;
 }
 
-// Lore session JWT is stored encrypted (Electron safeStorage) in userData.
+// Lore access + refresh credentials are encrypted with Electron safeStorage.
+// Long-lived refresh credentials fail closed when OS encryption is unavailable.
 function authStorePath() { return path.join(app.getPath('userData'), 'lore-auth.bin'); }
 function saveSession(obj) {
   const json = Buffer.from(JSON.stringify(obj), 'utf8');
-  const enc = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(json.toString('utf8')) : json;
+  const encryptionAvailable = safeStorage.isEncryptionAvailable();
+  if (obj && obj.refresh_token && !secureCredentialStorageAvailable(safeStorage)) {
+    throw new Error('Secure credential storage is unavailable on this computer.');
+  }
+  const enc = encryptionAvailable ? safeStorage.encryptString(json.toString('utf8')) : json;
   fs.writeFileSync(authStorePath(), enc);
 }
 function loadSession() {
   try {
     const raw = fs.readFileSync(authStorePath());
     const json = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8');
-    return JSON.parse(json);
+    const session = JSON.parse(json);
+    if (session && session.refresh_token && !secureCredentialStorageAvailable(safeStorage)) {
+      clearSession();
+      return null;
+    }
+    return session;
   } catch { return null; }
 }
 function clearSession() { try { fs.unlinkSync(authStorePath()); } catch { /* ignore */ } }
+let authSessionManager = null;
+function sessions() {
+  if (!authSessionManager) {
+    authSessionManager = createAuthSessionManager({
+      fetchImpl: fetch,
+      backendUrl: BACKEND_URL,
+      localHeaders: authHeaders,
+      loadSession,
+      saveSession,
+      clearSession,
+      waitUntilReady: whenBackendReady,
+    });
+  }
+  return authSessionManager;
+}
+
+function refreshTokenFromLogin(body) {
+  const token = body && body.refresh_token;
+  if (typeof token !== 'string' || !token.startsWith('lore_rt_') || token.length > 1024) {
+    throw new Error('The Lore server did not issue a valid refresh session.');
+  }
+  return token;
+}
+
+async function saveNewSession(session) {
+  try {
+    saveSession(session);
+  } catch (error) {
+    try {
+      await fetch(`${BACKEND_URL()}/auth/logout`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ refresh_token: session.refresh_token }),
+      });
+    } catch { /* the orphan still expires server-side */ }
+    throw error;
+  }
+}
 
 // Decode a JWT payload (no verification — the backend already verified the
 // id_token; we only need the display-name/email/avatar claims for the UI).
@@ -1407,9 +1458,10 @@ async function completeGoogleLogin(idToken) {
     });
     const body = await r.json();
     if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
+    const refreshToken = refreshTokenFromLogin(body);
     const email = body.email || claims.email || null;
     const name = body.name || claims.name || (email ? email.split('@')[0] : null);
-    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes, provider: 'google' });
+    await saveNewSession({ token: body.token, refresh_token: refreshToken, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes, provider: 'google' });
     // Persist the display name as the owner so the UI shows the real name (this is
     // the "sign-in changed nothing" fix — the name now propagates to config).
     try {
@@ -1509,9 +1561,10 @@ ipcMain.handle('auth:login-okta', async () => {
     });
     const body = await r.json();
     if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
+    const refreshToken = refreshTokenFromLogin(body);
     const email = body.email || claims.email || null;
     const name = body.name || claims.name || (email ? email.split('@')[0] : null);
-    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes, provider: 'okta' });
+    await saveNewSession({ token: body.token, refresh_token: refreshToken, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes, provider: 'okta' });
     try {
       const c = loadConfig() || {};
       if (name) c.owner = name;
@@ -1526,35 +1579,25 @@ ipcMain.handle('auth:login-okta', async () => {
 
 // Current session: validates the stored JWT against the server. Returns the user or null.
 ipcMain.handle('auth:status', async () => {
-  const sess = loadSession();
-  if (!sess || !sess.token) return null;
-  // The renderer asks for identity during its first paint, while the Python
-  // backend may still be starting. Waiting here prevents a valid stored session
-  // from being cached as "signed out" in the header for the rest of the run.
-  await whenBackendReady();
   try {
-    const r = await fetch(`${BACKEND_URL()}/auth/me`, {
-      headers: authedBackendHeaders(authHeaders(), sess.token),
-    });
-    if (!r.ok) return null;
-    const me = await r.json();
+    const response = await sessions().authenticatedFetch('/auth/me');
+    if (!response || !response.ok) return null;
+    const me = await response.json();
+    const sess = loadSession();
+    if (!sess) return null;
     return { user_id: me.user_id, email: sess.email, name: sess.name || (sess.email ? String(sess.email).split('@')[0] : null), picture: sess.picture || null, scopes: me.scopes, provider: sess.provider || null };
   } catch { return null; }
 });
 
-ipcMain.handle('auth:logout', () => { clearSession(); return { ok: true }; });
+ipcMain.handle('auth:logout', async () => sessions().logout());
 
 // ---------- IPC: teams + invites (share a base with another user) ----------
 // Thin authenticated proxies over the backend endpoints; the stored session JWT
 // travels server-side only (renderer never sees the token).
 async function authedFetch(pathname, opts = {}) {
-  const sess = loadSession();
-  if (!sess || !sess.token) return { ok: false, status: 401, body: { detail: 'not signed in' } };
   try {
-    const r = await fetch(`${BACKEND_URL()}${pathname}`, {
-      ...opts,
-      headers: authedBackendHeaders(authHeaders(), sess.token, opts.headers),
-    });
+    const r = await sessions().authenticatedFetch(pathname, opts);
+    if (!r) return { ok: false, status: 401, body: { detail: 'not signed in' } };
     const body = await r.json().catch(() => ({}));
     return { ok: r.ok, status: r.status, body };
   } catch (e) {

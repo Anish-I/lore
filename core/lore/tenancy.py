@@ -26,6 +26,13 @@ _SCHEMA = [
          status text default 'pending',
          created_at timestamptz default now(), accepted_at timestamptz,
          accepted_by text)""",
+    """create table if not exists refresh_sessions (
+         token_hash text primary key, user_id text not null,
+         created_at_epoch bigint not null, expires_at_epoch bigint not null,
+         revoked_at_epoch bigint)""",
+    "create index if not exists refresh_sessions_user on refresh_sessions(user_id)",
+    "create index if not exists refresh_sessions_expiry on refresh_sessions(expires_at_epoch)",
+    "create index if not exists refresh_sessions_revoked on refresh_sessions(revoked_at_epoch)",
 ]
 
 # SQLite variant of the tenancy DDL: mirrors _SCHEMA above with dialect-legal
@@ -50,6 +57,13 @@ _SCHEMA_SQLITE = [
          status text default 'pending',
          created_at timestamp default current_timestamp, accepted_at timestamp,
          accepted_by text)""",
+    """create table if not exists refresh_sessions (
+         token_hash text primary key, user_id text not null,
+         created_at_epoch integer not null, expires_at_epoch integer not null,
+         revoked_at_epoch integer)""",
+    "create index if not exists refresh_sessions_user on refresh_sessions(user_id)",
+    "create index if not exists refresh_sessions_expiry on refresh_sessions(expires_at_epoch)",
+    "create index if not exists refresh_sessions_revoked on refresh_sessions(revoked_at_epoch)",
 ]
 
 

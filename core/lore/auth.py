@@ -6,8 +6,9 @@ Flow (server side of the desktop-loopback design):
   2. It POSTs that ID token to the Lore server (`POST /auth/google`).
   3. `login_with_google` here VERIFIES the ID token against Google (signature via
      Google's keys + audience == our client_id), upserts the user, resolves the
-     user's team scopes from membership, and issues a short-lived **Lore session
-     JWT** the client then sends on `/sync` and `/ask`.
+     user's team scopes from membership, and issues a short-lived **Lore access
+     JWT** plus a rotating, server-revocable refresh token. The desktop stores
+     both in the OS credential vault and renews the JWT without another IdP login.
 
 Trust boundary: we never trust client-supplied identity or scopes — the Google
 ID token is cryptographically verified, and scopes come from the membership
@@ -17,6 +18,7 @@ import os
 import json
 import time
 import secrets as _secrets
+import hashlib
 
 import jwt  # PyJWT
 from google.oauth2 import id_token as google_id_token
@@ -34,6 +36,8 @@ _DEFAULT_CLIENT_FILE = os.path.join(
 _JWT_ALG = "HS256"
 _JWT_TTL_SECONDS = 3600
 _JWT_ISSUER = "lore"
+_REFRESH_TTL_SECONDS = 30 * 24 * 60 * 60
+_REFRESH_PREFIX = "lore_rt_"
 
 
 def load_google_client(path: str = None) -> dict:
@@ -108,7 +112,10 @@ def verify_google_id_token(token: str, client_id: str = None) -> dict:
 def issue_session_jwt(user_id: str, ttl: int = _JWT_TTL_SECONDS, now: int = None) -> str:
     """Issue a short-lived Lore session JWT for an authenticated user."""
     iat = now if now is not None else int(time.time())
-    payload = {"sub": user_id, "iss": _JWT_ISSUER, "iat": iat, "exp": iat + ttl}
+    payload = {
+        "sub": user_id, "iss": _JWT_ISSUER, "typ": "access",
+        "iat": iat, "exp": iat + ttl,
+    }
     return jwt.encode(payload, _jwt_secret(), algorithm=_JWT_ALG)
 
 
@@ -117,9 +124,97 @@ def verify_session_jwt(token: str) -> dict:
     or expired. NOTE: this proves identity only — authorization (which scopes the
     user may read) is always re-derived from membership, never from these claims."""
     try:
-        return jwt.decode(token, _jwt_secret(), algorithms=[_JWT_ALG], issuer=_JWT_ISSUER)
+        claims = jwt.decode(token, _jwt_secret(), algorithms=[_JWT_ALG], issuer=_JWT_ISSUER)
     except jwt.PyJWTError as e:
         raise AuthError(f"invalid session token: {e}") from e
+    # Tokens issued before refresh sessions shipped have no typ claim. Continue
+    # accepting those as access tokens until their one-hour lifetime elapses.
+    if claims.get("typ", "access") != "access":
+        raise AuthError("invalid session token type")
+    return claims
+
+
+def _refresh_hash(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def issue_refresh_token(conn, user_id: str, ttl: int = _REFRESH_TTL_SECONDS,
+                        now: int = None) -> str:
+    """Issue an opaque refresh token and store only its SHA-256 hash."""
+    issued_at = now if now is not None else int(time.time())
+    token = _REFRESH_PREFIX + _secrets.token_urlsafe(48)
+    conn.execute(
+        "insert into refresh_sessions"
+        "(token_hash,user_id,created_at_epoch,expires_at_epoch,revoked_at_epoch) "
+        "values(%s,%s,%s,%s,null)",
+        (_refresh_hash(token), user_id, issued_at, issued_at + ttl),
+    )
+    return token
+
+
+def issue_session_bundle(conn, user_id: str, now: int = None) -> dict:
+    """Issue a short access JWT plus a long-lived, server-revocable refresh token."""
+    issued_at = now if now is not None else int(time.time())
+    return {
+        "token": issue_session_jwt(user_id, now=issued_at),
+        "refresh_token": issue_refresh_token(conn, user_id, now=issued_at),
+        "expires_in": _JWT_TTL_SECONDS,
+    }
+
+
+def rotate_refresh_token(conn, token: str, now: int = None) -> dict:
+    """Atomically consume one refresh token and replace it.
+
+    The conditional revoke makes concurrent replay fail: only one caller can
+    change revoked_at_epoch from NULL and receive the replacement token.
+    """
+    if not isinstance(token, str) or not token.startswith(_REFRESH_PREFIX) or len(token) > 1024:
+        raise AuthError("invalid refresh token")
+    current_time = now if now is not None else int(time.time())
+    token_hash = _refresh_hash(token)
+    with conn.transaction():
+        row = conn.execute(
+            "select r.user_id,r.expires_at_epoch,r.revoked_at_epoch "
+            "from refresh_sessions r join users u on u.id=r.user_id "
+            "where r.token_hash=%s",
+            (token_hash,),
+        ).fetchone()
+        if not row or row[2] is not None:
+            raise AuthError("invalid refresh token")
+        if int(row[1]) <= current_time:
+            raise AuthError("refresh token expired")
+        consumed = conn.execute(
+            "update refresh_sessions set revoked_at_epoch=%s "
+            "where token_hash=%s and revoked_at_epoch is null",
+            (current_time, token_hash),
+        )
+        if consumed.rowcount != 1:
+            raise AuthError("invalid refresh token")
+        user_id = row[0]
+        bundle = issue_session_bundle(conn, user_id, now=current_time)
+    return {"user_id": user_id, **bundle}
+
+
+def revoke_refresh_token(conn, token: str, now: int = None) -> None:
+    """Idempotently revoke a refresh token without revealing whether it existed."""
+    if not isinstance(token, str) or not token.startswith(_REFRESH_PREFIX) or len(token) > 1024:
+        return
+    current_time = now if now is not None else int(time.time())
+    conn.execute(
+        "update refresh_sessions set revoked_at_epoch=%s "
+        "where token_hash=%s and revoked_at_epoch is null",
+        (current_time, _refresh_hash(token)),
+    )
+
+
+def prune_refresh_tokens(conn, now: int = None) -> None:
+    """Remove expired and old revoked sessions during successful login/refresh."""
+    current_time = now if now is not None else int(time.time())
+    conn.execute(
+        "delete from refresh_sessions where expires_at_epoch<=%s "
+        "or (revoked_at_epoch is not null and revoked_at_epoch<=%s)",
+        (current_time, current_time - 24 * 60 * 60),
+    )
 
 
 # --- user upsert + login ----------------------------------------------------
@@ -144,5 +239,6 @@ def login_with_google(conn, id_token_str: str, client_id: str = None) -> dict:
     identity = verify_google_id_token(id_token_str, client_id=client_id)
     user_id = upsert_user(conn, identity["sub"], identity["email"], identity["name"])
     scopes = tenancy.authorized_team_scope_ids(conn, user_id)
-    token = issue_session_jwt(user_id)
-    return {"token": token, "user_id": user_id, "email": identity["email"], "scopes": scopes}
+    prune_refresh_tokens(conn)
+    session = issue_session_bundle(conn, user_id)
+    return {**session, "user_id": user_id, "email": identity["email"], "scopes": scopes}

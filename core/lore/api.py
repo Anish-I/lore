@@ -175,7 +175,8 @@ class GoogleLoginReq(BaseModel):
 def auth_google(req: GoogleLoginReq):
     """Exchange a Google ID token (from the desktop loopback flow) for a Lore session JWT.
 
-    Body: {id_token}. Returns {token, user_id, email, scopes}. 401 on bad identity.
+    Body: {id_token}. Returns {token, refresh_token, expires_in, user_id, email,
+    scopes}. 401 on bad identity.
     The Google ID token is cryptographically verified (signature + audience); scopes
     come from membership, never from the client.
     """
@@ -194,15 +195,43 @@ def auth_okta(req: OktaLoginReq):
     """Exchange an Okta ID token (from the desktop OIDC loopback flow) for a Lore
     session JWT, reconciling team membership from the token's `groups` claim.
 
-    Body: {id_token}. Returns {token, user_id, email, scopes, groups}. 401 on bad
-    identity. The Okta ID token is cryptographically verified (RS256 signature +
-    issuer + audience); scopes are derived from SSO-group membership, never from
-    the client. See `lore.okta` for the group→scope mapping (OKTA_* env config).
+    Body: {id_token}. Returns {token, refresh_token, expires_in, user_id, email,
+    scopes, groups}. 401 on bad identity. The Okta ID token is cryptographically
+    verified (RS256 signature + issuer + audience); scopes are derived from
+    SSO-group membership, never from the client. See `lore.okta` for the
+    group→scope mapping (OKTA_* env config).
     """
     try:
         return okta.login_with_okta(_conn, req.id_token)
     except auth.AuthError as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+
+class RefreshSessionReq(BaseModel):
+    refresh_token: str
+
+
+@app.post("/auth/refresh")
+def auth_refresh(req: RefreshSessionReq):
+    """Rotate a refresh token and issue a new one-hour access JWT.
+
+    Refresh tokens are opaque, stored hashed, one-time-use credentials. A replay
+    of a consumed, revoked, expired, or unknown token fails closed.
+    """
+    try:
+        result = auth.rotate_refresh_token(_conn, req.refresh_token)
+        auth.prune_refresh_tokens(_conn)
+        result["scopes"] = tenancy.authorized_team_scope_ids(_conn, result["user_id"])
+        return result
+    except auth.AuthError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+@app.post("/auth/logout")
+def auth_logout(req: RefreshSessionReq):
+    """Revoke the current refresh session. Idempotent to avoid token oracles."""
+    auth.revoke_refresh_token(_conn, req.refresh_token)
+    return {"ok": True}
 
 
 def require_user(authorization: Optional[str] = Header(default=None)) -> str:
