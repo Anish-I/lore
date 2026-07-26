@@ -82,7 +82,7 @@ function main() {
   object-src 'none';
   base-uri 'self';
   form-action 'none';
-  frame-src 'none';
+  frame-src http://localhost:*;
 ">`);
 
   // Refresh the CSP explainer comment.

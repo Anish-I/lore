@@ -58,6 +58,23 @@ app.setPath('userData', path.join(app.getPath('appData'), 'lore-desktop'));
 // renderer log all derive from it.
 if (process.env.LORE_USER_DATA) app.setPath('userData', process.env.LORE_USER_DATA);
 
+// Single-instance lock. A second normal launch (or a leftover zombie from a
+// crashed run) must NOT spin up a rival process: two instances collide on the
+// backend port (8099) and the GIS auth-server port (8130), and the classic
+// symptom is EADDRINUSE on 8130 → the in-app Google window can't open and login
+// silently falls back to the browser. Instead, hand focus to the running window.
+// Skipped when LORE_USER_DATA is set — that override exists precisely to run
+// isolated instance copies side by side (each with its own data dir + ports).
+if (!process.env.LORE_USER_DATA) {
+  if (!app.requestSingleInstanceLock()) {
+    app.quit();
+  } else {
+    app.on('second-instance', () => {
+      if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+    });
+  }
+}
+
 let win = null;
 let backendProc = null;
 let backendReadyPromise = null; // resolves when ensureBackend() settles; see whenBackendReady
@@ -1310,11 +1327,10 @@ function isGoogleSignInUrl(rawUrl) {
   catch { return false; }
 }
 
-// Open the isolated GIS window. mode: 'login' → { ok, code } (auth code from the
-// popup account chooser, exchanged for an id_token by the caller) ; 'gmail' →
-// { ok, accessToken }. On cancel/failure → { ok:false, error } (error==='cancelled'
-// means the user closed/dismissed it; anything else is a real failure the caller
-// may fall back on).
+// Open the isolated GIS window. mode: 'login' → { ok, idToken } (GIS credential
+// from the rendered button / One Tap) ; 'gmail' → { ok, accessToken }. On
+// cancel/failure → { ok:false, error } (error==='cancelled' means the user
+// closed/dismissed it; anything else is a real failure the caller may fall back on).
 async function openGisAuthWindow(mode) {
   // Async prep is done BEFORE the Promise so its executor stays synchronous (an
   // async executor that threw would leave the Promise pending forever).
@@ -1368,40 +1384,13 @@ async function openGisAuthWindow(mode) {
   });
 }
 
-// Sign in: get a Google id_token (in-app GIS window first, system-browser
-// loopback as fallback) → exchange at the Lore server for a session JWT → store
-// it. Also persists the Google display name as the library owner so the
-// greeting/avatar update. Returns { ok, user_id, email, name, scopes } or
-// { ok:false, reason }.
-ipcMain.handle('auth:login', async () => {
+// Complete a Google sign-in after either GIS or the loopback flow returns an
+// ID token. The backend performs the real signature/audience verification.
+async function completeGoogleLogin(idToken) {
   try {
-    const clientCfg = loadGoogleClient();
-    if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Google sign-in isn’t configured in this build.' };
-    // Primary: in-app GIS window (id_token, no browser). Fallback: system-browser
-    // loopback — used only when GIS can't run (origin not registered, offline),
-    // NOT when the user simply closes the window.
-    let idToken = null;
-    const gis = await openGisAuthWindow('login');
-    if (gis && gis.ok && gis.code) {
-      // The GIS window ran the account chooser and handed back an auth code (popup
-      // flow). Exchange it here — the client_secret stays in main, never the window.
-      // redirect_uri='postmessage' + no PKCE verifier is Google's popup-code contract.
-      try {
-        const tokens = await googleOauth.exchangeCode(clientCfg, gis.code, null, 'postmessage');
-        idToken = tokens && tokens.id_token;
-      } catch (e) {
-        console.error('[auth] GIS code exchange failed, will fall back to loopback', e);
-      }
-    } else if (gis && gis.ok && gis.idToken) {
-      idToken = gis.idToken;   // (legacy id-token path, still accepted)
-    } else if (gis && gis.error === 'cancelled') {
-      return { ok: false, reason: 'cancelled' };
+    if (typeof idToken !== 'string' || idToken.length > 20000 || idToken.split('.').length !== 3) {
+      return { ok: false, reason: 'Google returned an invalid ID token.' };
     }
-    if (!idToken) {
-      const tokens = await googleOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url), { port: oauthPort() });
-      idToken = tokens && tokens.id_token;
-    }
-    if (!idToken) return { ok: false, reason: 'no id_token from Google' };
     const claims = decodeJwtClaims(idToken);
     const r = await fetch(`${BACKEND_URL()}/auth/google`, {
       method: 'POST',
@@ -1422,6 +1411,48 @@ ipcMain.handle('auth:login', async () => {
       saveConfig(c);
     } catch { /* non-fatal */ }
     return { ok: true, user_id: body.user_id, email, name, scopes: body.scopes };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+}
+
+// Configuration for the official GIS button embedded in the Lore auth modal.
+// Only the public client id and the isolated localhost page URL cross IPC.
+ipcMain.handle('auth:google-config', async () => {
+  try {
+    const clientCfg = loadGoogleClient();
+    if (!clientCfg || !clientCfg.client_id) {
+      return { ok: false, reason: 'Google sign-in isn’t configured in this build.' };
+    }
+    const origin = await startAuthServer();
+    if (!origin) return { ok: false, reason: 'Could not start Google sign-in.' };
+    const q = new URLSearchParams({
+      mode: 'login',
+      embed: '1',
+      cid: clientCfg.client_id,
+      scope: 'openid email profile',
+    }).toString();
+    return { ok: true, origin, url: `${origin}/auth-gis.html?${q}` };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+});
+
+ipcMain.handle('auth:login-token', (_e, idToken) => completeGoogleLogin(idToken));
+
+// Legacy/fallback entry point used by a few secondary screens. The primary
+// auth modal uses the official in-app GIS button above, matching WatchParty.
+ipcMain.handle('auth:login', async () => {
+  try {
+    const clientCfg = loadGoogleClient();
+    if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Google sign-in isn’t configured in this build.' };
+    const tokens = await googleOauth.runLoopbackFlow(
+      clientCfg,
+      (url) => shell.openExternal(url),
+      { port: oauthPort() },
+    );
+    if (!tokens || !tokens.id_token) return { ok: false, reason: 'no id_token from Google' };
+    return completeGoogleLogin(tokens.id_token);
   } catch (e) {
     return { ok: false, reason: e.message };
   }
@@ -2441,10 +2472,25 @@ async function createWindow() {
   win.removeMenu();
 
   // Navigation lockdown: the renderer should only ever be the bundled index.html.
-  // Any attempt to navigate elsewhere (e.g. injected code doing location=…) is blocked,
-  // and window.open / target=_blank goes to the OS browser, never a node-less Electron
-  // child window. Defends the IPC bridge even if renderer content is compromised.
+  // Keep the GIS popup attached to this renderer so it can return the credential,
+  // exactly like WatchParty. Other web links still go to the system browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (isGoogleSignInUrl(url)) {
+      return {
+        action: 'allow',
+        overrideBrowserWindowOptions: {
+          width: 520,
+          height: 720,
+          autoHideMenuBar: true,
+          backgroundColor: '#202124',
+          webPreferences: {
+            contextIsolation: true,
+            nodeIntegration: false,
+            sandbox: true,
+          },
+        },
+      };
+    }
     if (/^https?:\/\//i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });

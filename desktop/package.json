@@ -42,6 +42,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "auth-gis-preload.js",
       "renderer/**/*",
       "lib/**/*",
       "scraper.js",

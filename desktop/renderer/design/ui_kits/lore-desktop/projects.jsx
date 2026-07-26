@@ -10,7 +10,7 @@ const prS = {
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 14 },
 };
 
-function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, inviteBusy, onAcceptInvite, onRefreshInvites }) {
+function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, inviteBusy, onAcceptInvite, onRefreshInvites, onRequestSignIn }) {
   const [tab, setTab] = React.useState('teams');
   const [authUser, setAuthUser] = React.useState(null); // {user_id, email, scopes} | null
   const [busy, setBusy] = React.useState('');            // '' | 'create' | 'join' | 'invite'
@@ -42,11 +42,11 @@ function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, in
     fontFamily: 'var(--font-sans)', fontSize: 13, outline: 'none', minWidth: 180,
   };
 
-  // Signs in via the Google loopback flow if there is no session yet; returns the user or null.
+  // Opens the shared in-app Google modal if there is no session yet.
   const ensureSignedIn = async () => {
     if (authUser) return authUser;
-    if (!window.lore?.auth?.login) { setError('Sign-in is unavailable in this build.'); return null; }
-    const r = await window.lore.auth.login();
+    if (!onRequestSignIn) { setError('Sign-in is unavailable in this build.'); return null; }
+    const r = await onRequestSignIn();
     if (!r || !r.ok) { setError((r && r.reason) || 'Sign-in failed.'); return null; }
     const user = { user_id: r.user_id, email: r.email, scopes: r.scopes || [] };
     setAuthUser(user);

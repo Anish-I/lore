@@ -74,7 +74,7 @@ function stAgo(iso) {
   return `${Math.round(s / 86400)}d ago`;
 }
 
-function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSetup }) {
+function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSetup, onRequestSignIn }) {
   const s = {
     account: {},
     indexing: {},
@@ -203,10 +203,10 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   }, []);
 
   const stSignIn = async () => {
-    if (!window.lore || !window.lore.auth) return;
+    if (!onRequestSignIn) return;
     setAuthBusy(true); setAuthError('');
     try {
-      const r = await window.lore.auth.login();
+      const r = await onRequestSignIn();
       if (r && r.ok) setAuthUser({ user_id: r.user_id, email: r.email, scopes: r.scopes });
       else setAuthError((r && (r.detail || r.reason)) || 'sign-in failed');
     } catch (e) { setAuthError(String((e && e.message) || e)); }

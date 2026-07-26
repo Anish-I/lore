@@ -434,6 +434,7 @@ function App() {
   // Hoisted above onRailSelect (which resets threads on section switches).
   const askThreadRef = React.useRef(null);
   const progressUnsubRef = React.useRef(null);
+  const authWaitersRef = React.useRef([]);
   const progressDoneTimerRef = React.useRef(null);
 
   React.useEffect(() => {document.documentElement.setAttribute('data-theme', theme);}, [theme]);
@@ -452,17 +453,29 @@ function App() {
     try {setAuthUser((await window.lore.auth.status()) || null);} catch {/* signed out */}
   }, []);
   React.useEffect(() => {refreshAuth();}, [refreshAuth]);
-  // Sign-in now opens an in-app page (LoreAuthModal) instead of silently launching
-  // a browser. The modal runs auth.login and calls onAuthSignedIn on success.
-  const signIn = React.useCallback(() => {setAuthModalOpen(true);}, []);
+  // Every renderer sign-in entry point uses the same in-app GIS modal. Callers
+  // that need the resulting user can await this promise.
+  const signIn = React.useCallback(() => {
+    setAuthModalOpen(true);
+    return new Promise((resolve) => {authWaitersRef.current.push(resolve);});
+  }, []);
+  const settleAuthWaiters = React.useCallback((result) => {
+    const waiters = authWaitersRef.current.splice(0);
+    waiters.forEach((resolve) => resolve(result || null));
+  }, []);
+  const closeAuthModal = React.useCallback(() => {
+    setAuthModalOpen(false);
+    settleAuthWaiters(null);
+  }, [settleAuthWaiters]);
   const onAuthSignedIn = React.useCallback(async (r) => {
     setAuthModalOpen(false);
+    settleAuthWaiters(r);
     await refreshAuth();
     refreshInvites();
     // Pull the freshly-persisted owner name so the greeting/avatar update at once.
     try {if (window.lore?.config?.get) {const c = await window.lore.config.get();setAppConfig(c);}} catch {/* config refresh is best-effort */}
     flash(r && r.name ? `Signed in as ${r.name}.` : 'Signed in.');
-  }, [refreshAuth, flash]);
+  }, [refreshAuth, flash, settleAuthWaiters]);
   const signOut = React.useCallback(async () => {
     try {if (window.lore?.auth?.logout) await window.lore.auth.logout();} catch {/* ignore */}
     setAuthUser(null);
@@ -772,9 +785,9 @@ function App() {
     setTeamBusy(true);setTeamError('');
     try {
       let user = authUser;
-      if (!user && window.lore?.auth?.login) {
+      if (!user) {
         try {
-          const r = await window.lore.auth.login();
+          const r = await signIn();
           if (r && r.ok) {user = { user_id: r.user_id, email: r.email, scopes: r.scopes || [] };setAuthUser(user);}
         } catch {/* offline sign-in */}
       }
@@ -795,7 +808,7 @@ function App() {
       }
     } catch (e) {setTeamError(String(e && e.message || e));}
     setTeamBusy(false);
-  }, [authUser, flash, refreshAuth]);
+  }, [authUser, flash, refreshAuth, signIn]);
   const joinTeam = React.useCallback(async () => {
     await signIn();
     refreshInvites();
@@ -1832,7 +1845,8 @@ function App() {
     React.createElement(BackBar, { label: (window.LorePlaceMeta[place] || {}).label, onBack: () => setView('workspace') }), /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', minWidth: 0, minHeight: 0 } }, /*#__PURE__*/
     React.createElement(TeamsView, { config: appConfig, onConfig: setAppConfig, buckets: M.buckets, onOpenWizard: (b) => openBucket(b),
-      pendingInvites: pendingInvites, inviteBusy: inviteBusy, onAcceptInvite: acceptInvite, onRefreshInvites: refreshInvites }),
+      pendingInvites: pendingInvites, inviteBusy: inviteBusy, onAcceptInvite: acceptInvite,
+      onRefreshInvites: refreshInvites, onRequestSignIn: signIn }),
     askOpen && askPanel
     )
     ),
@@ -1872,7 +1886,8 @@ function App() {
     view === 'settings' && /*#__PURE__*/
     React.createElement("div", { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 } }, /*#__PURE__*/
     React.createElement(BackBar, { label: (window.LorePlaceMeta[place] || {}).label, onBack: () => setView('workspace') }), /*#__PURE__*/
-    React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions, onConfig: setAppConfig, onOpenSetup: () => setShowOnboarding(true) })
+    React.createElement(SettingsView, { settings: M.settings, config: appConfig, scopeOptions: scopeOptions,
+      onConfig: setAppConfig, onOpenSetup: () => setShowOnboarding(true), onRequestSignIn: signIn })
     ),
 
     view === 'hooks' && advancedMode && HooksView && /*#__PURE__*/
@@ -1909,7 +1924,7 @@ function App() {
     ),
 
 
-    showOnboarding && Onboarding && /*#__PURE__*/React.createElement(Onboarding, { onDone: handleOnboardingDone }),
+    showOnboarding && Onboarding && /*#__PURE__*/React.createElement(Onboarding, { onDone: handleOnboardingDone, onRequestSignIn: signIn }),
 
     showImportModal && ImportModal && /*#__PURE__*/
     React.createElement(ImportModal, {
@@ -1934,7 +1949,7 @@ function App() {
 
 
     authModalOpen && window.LoreAuthModal && /*#__PURE__*/
-    React.createElement(window.LoreAuthModal, { onClose: () => setAuthModalOpen(false), onSignedIn: onAuthSignedIn }),
+    React.createElement(window.LoreAuthModal, { onClose: closeAuthModal, onSignedIn: onAuthSignedIn }),
 
 
     previewNote && /*#__PURE__*/

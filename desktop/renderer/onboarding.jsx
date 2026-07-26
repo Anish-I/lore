@@ -213,7 +213,7 @@ function OB_DropTarget({ dragging, onDrop, onDragEnter, onDragLeave, onDragOver,
   );
 }
 
-function OB_Onboarding({ onDone }) {
+function OB_Onboarding({ onDone, onRequestSignIn }) {
   const [stepIndex, setStepIndex] = React.useState(0);
   const [accountMode] = React.useState('local');
   const [email] = React.useState('');
@@ -264,10 +264,10 @@ function OB_Onboarding({ onDone }) {
 
   const teamSignIn = async () => {
     setTeamAuthError('');
-    if (!window.lore?.auth?.login) { setTeamAuthError('unavailable'); return; }
+    if (!onRequestSignIn) { setTeamAuthError('unavailable'); return; }
     setTeamAuthBusy(true);
     try {
-      const r = await window.lore.auth.login();
+      const r = await onRequestSignIn();
       if (r && r.ok) { setTeamEmail(r.email || ''); setTeamAuthError(''); }
       else setTeamAuthError(classifyAuthReason(r && r.reason));
     } catch (e) {
