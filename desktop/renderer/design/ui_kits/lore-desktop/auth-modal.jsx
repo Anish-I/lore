@@ -11,6 +11,7 @@ function AuthModal({ onClose, onSignedIn }) {
   const [msg, setMsg] = React.useState('');
   const [who, setWho] = React.useState('');
   const [googleCfg, setGoogleCfg] = React.useState(null);
+  const [oktaAvailable, setOktaAvailable] = React.useState(false);
   const [googleFrameKey, setGoogleFrameKey] = React.useState(0);
   const googleFrameRef = React.useRef(null);
   const googleBusyRef = React.useRef(false);
@@ -39,6 +40,17 @@ function AuthModal({ onClose, onSignedIn }) {
     fn()
       .then((cfg) => { if (active) setGoogleCfg(cfg && cfg.ok ? cfg : { ok: false, reason: (cfg && cfg.reason) || 'Google sign-in is unavailable.' }); })
       .catch(() => { if (active) setGoogleCfg({ ok: false, reason: 'Could not start Google sign-in.' }); });
+    return () => { active = false; };
+  }, []);
+
+  React.useEffect(() => {
+    let active = true;
+    const fn = window.lore && window.lore.auth && window.lore.auth.oktaConfig;
+    if (fn) {
+      fn()
+        .then((cfg) => { if (active) setOktaAvailable(Boolean(cfg && cfg.ok)); })
+        .catch(() => { if (active) setOktaAvailable(false); });
+    }
     return () => { active = false; };
   }, []);
 
@@ -134,7 +146,7 @@ function AuthModal({ onClose, onSignedIn }) {
               <AuIcon name="loader" size={18} style={{ color: 'var(--brand-fg)', animation: 'lore-pulse 1s linear infinite', flexShrink: 0 }} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-strong)' }}>Completing sign-in</div>
-                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1, lineHeight: 1.45 }}>Google verified your account. Lore is creating your session.</div>
+                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1, lineHeight: 1.45 }}>Your identity provider verified your account. Lore is creating your session.</div>
               </div>
             </div>
           ) : state === 'success' ? (
@@ -161,15 +173,17 @@ function AuthModal({ onClose, onSignedIn }) {
                   <div style={{ fontSize: 12, color: 'var(--danger-fg)', textAlign: 'center' }}>{googleCfg.reason}</div>
                 )}
               </div>
-              {/* Enterprise SSO. The server maps the user's Okta groups → team scopes,
-                  so signing in here is what grants Teams access at work. */}
-              <button onClick={goOkta}
-                style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10, height: 44, borderRadius: 10, border: '1px solid var(--border-strong)', background: 'var(--surface-base)', color: 'var(--text-strong)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 14, fontWeight: 600 }}
-                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
-                onMouseLeave={(e) => e.currentTarget.style.background = 'var(--surface-base)'}>
-                <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="none" stroke="var(--text-strong)" strokeWidth="2.4"/><circle cx="12" cy="12" r="4.4" fill="var(--text-strong)"/></svg>
-                Continue with Okta SSO
-              </button>
+              {/* Enterprise SSO is an alternative sign-in path, not a sign-up
+                  mechanism. Only show it when this deployment has an Okta tenant. */}
+              {!isSignup && oktaAvailable && (
+                <button onClick={goOkta}
+                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 10, height: 44, borderRadius: 10, border: '1px solid var(--border-strong)', background: 'var(--surface-base)', color: 'var(--text-strong)', cursor: 'pointer', fontFamily: 'var(--font-sans)', fontSize: 14, fontWeight: 600 }}
+                  onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface-hover)'}
+                  onMouseLeave={(e) => e.currentTarget.style.background = 'var(--surface-base)'}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="none" stroke="var(--text-strong)" strokeWidth="2.4"/><circle cx="12" cy="12" r="4.4" fill="var(--text-strong)"/></svg>
+                  Continue with Okta SSO
+                </button>
+              )}
               {state === 'error' && (
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--danger-fg)', lineHeight: 1.5 }}>
                   <AuIcon name="alert-circle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />{msg}

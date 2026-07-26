@@ -100,7 +100,10 @@ def verify_okta_id_token(token: str, issuer: str = None, client_id: str = None) 
         )
     except Exception as e:  # PyJWTError + JWKS/network failures
         raise auth.AuthError(f"invalid Okta ID token: {e}") from e
-    if claims.get("email_verified") is False:
+    email = claims.get("email")
+    if not email:
+        raise auth.AuthError("Okta ID token has no email claim")
+    if claims.get("email_verified") is not True:
         raise auth.AuthError("email not verified by Okta")
     sub = claims.get("sub")
     if not sub:  # no durable account key -> can't identify the user; fail closed as 401
@@ -113,9 +116,9 @@ def verify_okta_id_token(token: str, issuer: str = None, client_id: str = None) 
         groups = [groups]
     return {
         "sub": sub,
-        "email": claims.get("email"),
+        "email": email,
         "name": claims.get("name") or claims.get("preferred_username"),
-        "email_verified": claims.get("email_verified", True),
+        "email_verified": True,
         "groups": [str(g) for g in groups],
         "groups_present": groups_present,
     }

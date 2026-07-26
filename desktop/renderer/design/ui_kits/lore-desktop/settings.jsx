@@ -207,7 +207,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     setAuthBusy(true); setAuthError('');
     try {
       const r = await onRequestSignIn();
-      if (r && r.ok) setAuthUser({ user_id: r.user_id, email: r.email, scopes: r.scopes });
+      if (r && r.ok) setAuthUser({ user_id: r.user_id, email: r.email, scopes: r.scopes, provider: r.provider });
       else setAuthError((r && (r.detail || r.reason)) || 'sign-in failed');
     } catch (e) { setAuthError(String((e && e.message) || e)); }
     setAuthBusy(false);
@@ -455,6 +455,11 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const accountKind = (authUser && Array.isArray(authUser.scopes)
     && authUser.scopes.some((s) => /enterprise|company/i.test(String(s))))
     ? 'Enterprise' : 'Personal — on this computer';
+  const signInLabel = authUser && authUser.provider === 'okta'
+    ? 'Okta SSO'
+    : authUser && authUser.provider === 'google'
+      ? 'Google sign-in'
+      : 'Account sign-in';
   const displayNone = (v) => stText(v, 'None');
 
   return (
@@ -474,14 +479,14 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
             <StBadge tone={identityReady ? 'success' : 'neutral'}>{identityReady ? 'configured' : 'not configured'}</StBadge>
             <StButton variant="secondary" size="sm" onClick={onOpenSetup}>Configure</StButton>
           </div>
-          <Row label="Google sign-in" hint={authUser ? `Signed in — ${(authUser.scopes && authUser.scopes.length) || 0} team space(s)` : 'Sign in to sync team/enterprise notes and ask across your team.'}>
+          <Row label={signInLabel} hint={authUser ? `Signed in — ${(authUser.scopes && authUser.scopes.length) || 0} team space(s)` : 'Sign in to sync team/enterprise notes and ask across your team.'}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               {authUser
                 ? <>
                     <span style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-muted)' }}>{authUser.email}</span>
                     <StButton variant="secondary" size="sm" onClick={stSignOut}>Sign out</StButton>
                   </>
-                : <StButton variant="primary" size="sm" onClick={stSignIn} disabled={authBusy}>{authBusy ? 'Opening browser…' : 'Sign in with Google'}</StButton>}
+                : <StButton variant="primary" size="sm" onClick={stSignIn} disabled={authBusy}>{authBusy ? 'Opening sign-in…' : 'Sign in'}</StButton>}
             </div>
           </Row>
           {authError && <div style={{ padding: '0 16px 10px', color: 'var(--clay-400)', fontSize: 12 }}>{authError}</div>}

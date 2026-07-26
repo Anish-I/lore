@@ -12,6 +12,7 @@ const mcpInstaller = require('./mcp-installer');
 const cliInstaller = require('./cli-installer');
 const googleOauth  = require('./lib/google-oauth');
 const oktaOauth    = require('./lib/okta-oauth');
+const oktaConfig   = require('./lib/okta-config');
 const runtime      = require('./lib/runtime');
 const loreManifest = require('./lib/lore-manifest');
 const backupMirror = require('./lib/backup-mirror');
@@ -278,6 +279,11 @@ async function ensureBackend() {
   // which the embedded-Postgres block in app.whenReady set before we ran (item 4).
   const childEnv = { ...process.env };
   childEnv.LORE_LOCAL_TOKEN = localToken();  // lock the on-device backend port
+  // A gitignored Okta config file is a supported local-development input for the
+  // desktop. Forward its public verification values to the spawned backend so
+  // the browser half and token-verification half cannot disagree about config.
+  try { oktaConfig.applyOktaBackendEnv(childEnv, loadOktaClient()); }
+  catch (e) { console.warn('Okta config could not be loaded:', e.message); }
 
   // Local embedding model cache — fastembed defaults to %TEMP%/fastembed_cache,
   // which Windows temp cleanup can half-delete (snapshot dir survives, .onnx
@@ -1393,6 +1399,7 @@ async function completeGoogleLogin(idToken) {
       return { ok: false, reason: 'Google returned an invalid ID token.' };
     }
     const claims = decodeJwtClaims(idToken);
+    await whenBackendReady();
     const r = await fetch(`${BACKEND_URL()}/auth/google`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders() },
@@ -1402,7 +1409,7 @@ async function completeGoogleLogin(idToken) {
     if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
     const email = body.email || claims.email || null;
     const name = body.name || claims.name || (email ? email.split('@')[0] : null);
-    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes });
+    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes, provider: 'google' });
     // Persist the display name as the owner so the UI shows the real name (this is
     // the "sign-in changed nothing" fix — the name now propagates to config).
     try {
@@ -1411,7 +1418,7 @@ async function completeGoogleLogin(idToken) {
       if (email) c.ownerEmail = email;
       saveConfig(c);
     } catch { /* non-fatal */ }
-    return { ok: true, user_id: body.user_id, email, name, scopes: body.scopes };
+    return { ok: true, user_id: body.user_id, email, name, scopes: body.scopes, provider: 'google' };
   } catch (e) {
     return { ok: false, reason: e.message };
   }
@@ -1459,29 +1466,26 @@ ipcMain.handle('auth:login', async () => {
   }
 });
 
-// The Okta client config. Env-first (OKTA_ISSUER / OKTA_CLIENT_ID /
-// OKTA_CLIENT_SECRET / OKTA_SCOPES) so the secret stays out of the repo — matching
-// the server's env-only policy — falling back to a gitignored
+// The Okta client config. Env-first so deployment settings stay outside the
+// repository, falling back to a gitignored
 // <repo>/secrets/okta_client.json for local dev. Returns null when issuer or
 // client_id is missing so callers can surface a clean "not configured" message.
 // The client_secret is optional (a native/public Okta app uses PKCE only).
 function loadOktaClient() {
-  let cfg = {
-    issuer: process.env.OKTA_ISSUER,
-    client_id: process.env.OKTA_CLIENT_ID,
-    client_secret: process.env.OKTA_CLIENT_SECRET,
-    scope: process.env.OKTA_SCOPES,
-  };
-  if (!cfg.issuer || !cfg.client_id) {
-    const p = process.env.OKTA_CLIENT_FILE || path.join(__dirname, '..', 'secrets', 'okta_client.json');
-    try {
-      const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-      cfg = { issuer: data.issuer, client_id: data.client_id, client_secret: data.client_secret, scope: data.scope, ...data };
-    } catch (e) { if (e.code !== 'ENOENT') throw e; }
-  }
-  if (!cfg.issuer || !cfg.client_id) return null;
-  return cfg;
+  return oktaConfig.loadOktaClient({
+    defaultFile: path.join(__dirname, '..', 'secrets', 'okta_client.json'),
+  });
 }
+
+// Only expose availability to the renderer. Issuer/client details and secrets
+// remain in the main process.
+ipcMain.handle('auth:okta-config', () => {
+  try {
+    return { ok: Boolean(loadOktaClient()) };
+  } catch (e) {
+    return { ok: false, reason: e.message };
+  }
+});
 
 // Sign in with Okta SSO: run the loopback flow → get the Okta id_token → exchange
 // at the Lore server (`/auth/okta`) for a session JWT → store it. The server
@@ -1492,8 +1496,12 @@ ipcMain.handle('auth:login-okta', async () => {
     const clientCfg = loadOktaClient();
     if (!clientCfg) return { ok: false, reason: 'unavailable', detail: 'Okta SSO isn’t configured in this build.' };
     const tokens = await oktaOauth.runLoopbackFlow(clientCfg, (url) => shell.openExternal(url), { port: oauthPort() });
-    if (!tokens.id_token) return { ok: false, reason: 'no id_token from Okta' };
+    if (!tokens.id_token || typeof tokens.id_token !== 'string'
+        || tokens.id_token.length > 20000 || tokens.id_token.split('.').length !== 3) {
+      return { ok: false, reason: 'Okta returned an invalid ID token.' };
+    }
     const claims = decodeJwtClaims(tokens.id_token);
+    await whenBackendReady();
     const r = await fetch(`${BACKEND_URL()}/auth/okta`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...authHeaders() },
@@ -1503,14 +1511,14 @@ ipcMain.handle('auth:login-okta', async () => {
     if (!r.ok) return { ok: false, reason: body.detail || `server ${r.status}` };
     const email = body.email || claims.email || null;
     const name = body.name || claims.name || (email ? email.split('@')[0] : null);
-    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes });
+    saveSession({ token: body.token, user_id: body.user_id, email, name, picture: claims.picture || null, scopes: body.scopes, provider: 'okta' });
     try {
       const c = loadConfig() || {};
       if (name) c.owner = name;
       if (email) c.ownerEmail = email;
       saveConfig(c);
     } catch { /* non-fatal */ }
-    return { ok: true, user_id: body.user_id, email, name, scopes: body.scopes };
+    return { ok: true, user_id: body.user_id, email, name, scopes: body.scopes, provider: 'okta' };
   } catch (e) {
     return { ok: false, reason: e.message };
   }
@@ -1530,7 +1538,7 @@ ipcMain.handle('auth:status', async () => {
     });
     if (!r.ok) return null;
     const me = await r.json();
-    return { user_id: me.user_id, email: sess.email, name: sess.name || (sess.email ? String(sess.email).split('@')[0] : null), picture: sess.picture || null, scopes: me.scopes };
+    return { user_id: me.user_id, email: sess.email, name: sess.name || (sess.email ? String(sess.email).split('@')[0] : null), picture: sess.picture || null, scopes: me.scopes, provider: sess.provider || null };
   } catch { return null; }
 });
 

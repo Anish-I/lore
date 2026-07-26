@@ -45,3 +45,19 @@ describe('buildAuthUrl', () => {
     expect(withNonce.searchParams.get('nonce')).toBe('n0nce');
   });
 });
+
+describe('exchangeCode configuration', () => {
+  it('rejects unsupported token endpoint authentication methods before networking', async () => {
+    await expect(okta.exchangeCode(
+      { ...CFG, token_endpoint_auth_method: 'private_key_jwt' },
+      'code', 'verifier', 'http://127.0.0.1/callback',
+    )).rejects.toThrow(/unsupported Okta token endpoint auth method/i);
+  });
+
+  it('requires a secret for confidential-client authentication', async () => {
+    await expect(okta.exchangeCode(
+      { ...CFG, token_endpoint_auth_method: 'client_secret_basic' },
+      'code', 'verifier', 'http://127.0.0.1/callback',
+    )).rejects.toThrow(/requires a client_secret/i);
+  });
+});

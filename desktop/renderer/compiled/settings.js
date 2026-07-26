@@ -207,7 +207,7 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     setAuthBusy(true);setAuthError('');
     try {
       const r = await onRequestSignIn();
-      if (r && r.ok) setAuthUser({ user_id: r.user_id, email: r.email, scopes: r.scopes });else
+      if (r && r.ok) setAuthUser({ user_id: r.user_id, email: r.email, scopes: r.scopes, provider: r.provider });else
       setAuthError(r && (r.detail || r.reason) || 'sign-in failed');
     } catch (e) {setAuthError(String(e && e.message || e));}
     setAuthBusy(false);
@@ -455,6 +455,11 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
   const accountKind = authUser && Array.isArray(authUser.scopes) &&
   authUser.scopes.some((s) => /enterprise|company/i.test(String(s))) ?
   'Enterprise' : 'Personal — on this computer';
+  const signInLabel = authUser && authUser.provider === 'okta' ?
+  'Okta SSO' :
+  authUser && authUser.provider === 'google' ?
+  'Google sign-in' :
+  'Account sign-in';
   const displayNone = (v) => stText(v, 'None');
 
   return (/*#__PURE__*/
@@ -474,14 +479,14 @@ function SettingsView({ settings, config, scopeOptions = [], onConfig, onOpenSet
     React.createElement(StBadge, { tone: identityReady ? 'success' : 'neutral' }, identityReady ? 'configured' : 'not configured'), /*#__PURE__*/
     React.createElement(StButton, { variant: "secondary", size: "sm", onClick: onOpenSetup }, "Configure")
     ), /*#__PURE__*/
-    React.createElement(Row, { label: "Google sign-in", hint: authUser ? `Signed in — ${authUser.scopes && authUser.scopes.length || 0} team space(s)` : 'Sign in to sync team/enterprise notes and ask across your team.' }, /*#__PURE__*/
+    React.createElement(Row, { label: signInLabel, hint: authUser ? `Signed in — ${authUser.scopes && authUser.scopes.length || 0} team space(s)` : 'Sign in to sync team/enterprise notes and ask across your team.' }, /*#__PURE__*/
     React.createElement("div", { style: { display: 'flex', alignItems: 'center', gap: 8 } },
     authUser ? /*#__PURE__*/
     React.createElement(React.Fragment, null, /*#__PURE__*/
     React.createElement("span", { style: { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-muted)' } }, authUser.email), /*#__PURE__*/
     React.createElement(StButton, { variant: "secondary", size: "sm", onClick: stSignOut }, "Sign out")
     ) : /*#__PURE__*/
-    React.createElement(StButton, { variant: "primary", size: "sm", onClick: stSignIn, disabled: authBusy }, authBusy ? 'Opening browser…' : 'Sign in with Google')
+    React.createElement(StButton, { variant: "primary", size: "sm", onClick: stSignIn, disabled: authBusy }, authBusy ? 'Opening sign-in…' : 'Sign in')
     )
     ),
     authError && /*#__PURE__*/React.createElement("div", { style: { padding: '0 16px 10px', color: 'var(--clay-400)', fontSize: 12 } }, authError), /*#__PURE__*/

@@ -34,7 +34,9 @@ function makeIdToken(payload) {
 
 // Per-test control over how the mock Okta behaves.
 let scenario;
-function resetScenario() { scenario = { seenAuth: null, sentNonce: null }; }
+function resetScenario() {
+  scenario = { seenAuth: null, sentNonce: null, tokenHeaders: null, tokenBody: null };
+}
 
 let server, port, tmpDir, savedCa;
 
@@ -70,6 +72,8 @@ beforeAll(async () => {
         let body = '';
         req.on('data', (c) => (body += c));
         req.on('end', () => {
+          scenario.tokenHeaders = req.headers;
+          scenario.tokenBody = Object.fromEntries(new URLSearchParams(body));
           if (scenario.tokenError) {
             res.writeHead(400, { 'content-type': 'application/json' });
             res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'bad code' }));
@@ -96,7 +100,7 @@ afterAll(() => {
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-function cfg() {
+function cfg(overrides = {}) {
   const base = `https://127.0.0.1:${port}/oauth2/default`;
   return {
     issuer: base,
@@ -104,6 +108,7 @@ function cfg() {
     client_secret: 'test-secret',            // exercise the confidential-client branch
     auth_uri: `${base}/v1/authorize`,
     token_uri: `${base}/v1/token`,
+    ...overrides,
   };
 }
 
@@ -134,6 +139,11 @@ describe('okta loopback flow (real, mock-Okta over HTTPS)', () => {
     expect(a.code_challenge_method).toBe('S256');
     expect(a.code_challenge).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(a.nonce).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(scenario.tokenHeaders.authorization).toBe(
+      `Basic ${Buffer.from('0oa-e2e-client:test-secret').toString('base64')}`,
+    );
+    expect(scenario.tokenBody.client_secret).toBeUndefined();
+    expect(scenario.tokenBody.code_verifier).toMatch(/^[A-Za-z0-9_-]+$/);
 
     // The id_token we accepted is bound to the nonce we sent.
     const claims = JSON.parse(Buffer.from(tokens.id_token.split('.')[1], 'base64').toString('utf8'));
@@ -166,6 +176,32 @@ describe('okta loopback flow (real, mock-Okta over HTTPS)', () => {
     scenario.tokenError = true;
     await expect(okta.runLoopbackFlow(cfg(), browser, { timeoutMs: 8000 }))
       .rejects.toThrow(/token exchange failed/i);
+  });
+
+  it('supports client_secret_post when the Okta app explicitly requires it', async () => {
+    resetScenario();
+    const tokens = await okta.runLoopbackFlow(
+      cfg({ token_endpoint_auth_method: 'client_secret_post' }),
+      browser,
+      { timeoutMs: 8000 },
+    );
+    expect(tokens.id_token).toBeTruthy();
+    expect(scenario.tokenHeaders.authorization).toBeUndefined();
+    expect(scenario.tokenBody.client_id).toBe('0oa-e2e-client');
+    expect(scenario.tokenBody.client_secret).toBe('test-secret');
+  });
+
+  it('uses a public PKCE client without sending a secret', async () => {
+    resetScenario();
+    const tokens = await okta.runLoopbackFlow(
+      cfg({ client_secret: undefined, token_endpoint_auth_method: 'none' }),
+      browser,
+      { timeoutMs: 8000 },
+    );
+    expect(tokens.id_token).toBeTruthy();
+    expect(scenario.tokenHeaders.authorization).toBeUndefined();
+    expect(scenario.tokenBody.client_id).toBe('0oa-e2e-client');
+    expect(scenario.tokenBody.client_secret).toBeUndefined();
   });
 
   it('honors a fixed loopback port (what a Google Web client needs)', async () => {

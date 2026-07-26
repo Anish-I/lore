@@ -42,7 +42,7 @@ function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, in
     fontFamily: 'var(--font-sans)', fontSize: 13, outline: 'none', minWidth: 180,
   };
 
-  // Opens the shared in-app Google modal if there is no session yet.
+  // Opens the shared provider modal if there is no session yet.
   const ensureSignedIn = async () => {
     if (authUser) return authUser;
     if (!onRequestSignIn) { setError('Sign-in is unavailable in this build.'); return null; }
@@ -163,7 +163,7 @@ function TeamsView({ config, onConfig, buckets, onOpenWizard, pendingInvites, in
                 <PrIcon name="users" size={26} style={{ color: 'var(--brand-fg)' }} />
               </span>
               <div style={{ fontFamily: 'var(--font-serif)', fontSize: 'var(--text-2xl)', fontWeight: 600, color: 'var(--text-strong)' }}>Join a team or create a team</div>
-              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-subtle)', maxWidth: 380 }}>Teams share Wizards — knowledge bases your whole team can browse and ask across. Sign in with Google to get started.</p>
+              <p style={{ margin: 0, fontSize: 13, lineHeight: 1.55, color: 'var(--text-subtle)', maxWidth: 380 }}>Teams share Wizards — knowledge bases your whole team can browse and ask across. Sign in to get started.</p>
               {!createInput ? (
                 <div style={{ display: 'flex', gap: 10, marginTop: 4 }}>
                   <PrButton variant="primary" icon="plus" disabled={Boolean(busy)} onClick={() => { setCreateInput(true); setTeamDraft(''); setError(''); }}>Create team</PrButton>

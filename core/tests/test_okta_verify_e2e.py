@@ -77,13 +77,14 @@ class _JwksServer:
 
 
 def _mint(private_key, issuer, aud, *, sub="00u-e2e", groups=("Engineering",),
-          groups_present=True, exp_delta=3600, alg="RS256", email="e2e@corp.com"):
+          groups_present=True, exp_delta=3600, alg="RS256", email="e2e@corp.com",
+          email_verified=True):
     """Mint a signed ID token the way Okta would. `exp_delta<0` => already expired."""
     import time
     now = int(time.time())
     claims = {
         "iss": issuer, "aud": aud, "sub": sub,
-        "email": email, "email_verified": True, "name": "E2E User",
+        "email": email, "email_verified": email_verified, "name": "E2E User",
         "iat": now, "exp": now + exp_delta, "nonce": "n-abc",
     }
     if groups_present:
@@ -181,6 +182,16 @@ def test_expired_token_is_rejected(okta_env):
     token = _mint(key, issuer, client_id, exp_delta=-30)
     with pytest.raises(auth.AuthError):
         okta.verify_okta_id_token(token, issuer, client_id)
+
+
+def test_missing_or_unverified_email_is_rejected(okta_env):
+    issuer, client_id, key = okta_env
+    with pytest.raises(auth.AuthError, match="no email claim"):
+        okta.verify_okta_id_token(_mint(key, issuer, client_id, email=None), issuer, client_id)
+    with pytest.raises(auth.AuthError, match="email not verified"):
+        okta.verify_okta_id_token(
+            _mint(key, issuer, client_id, email_verified=False), issuer, client_id
+        )
 
 
 def test_tampered_signature_is_rejected(okta_env):

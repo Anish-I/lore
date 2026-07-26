@@ -86,18 +86,24 @@ and the full loopback flow, against local mock servers with real crypto.
 ## Part 2 — Configure the app (server + desktop)
 
 The Lore **server** verifies the token and maps groups → scopes. The **desktop** only fetches the
-token. Both read config from env; the desktop also accepts a gitignored file.
+token. Both read config from env. For a locally spawned backend, the desktop also forwards the
+public verifier settings from a gitignored desktop config file.
 
 - [ ] **2.1 Server env** (in the shell that starts the backend):
   ``bash export LORE_SERVER_MODE=1 export OKTA_ISSUER="https://<your-okta-domain>/oauth2/default" export OKTA_CLIENT_ID="0oa15cs51goDdEdok698" export OKTA_GROUP_SCOPE_MAP='{"Engineering":"t-eng"}'   # your group → team id from 0.4 export LORE_JWT_SECRET="<a-32+-char-random-string>"     # signs Lore session JWTs ``
   > Note: the **server does not need the client secret** — it only verifies the ID token's
   > signature via Okta's public JWKS. The secret is a **desktop** concern (token exchange).
 - [ ] **2.2 Desktop config.** Pick **one**:
-  - **Env** (same machine as the app): `OKTA_ISSUER`, `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET`
-  (the rotated value), and optionally `OKTA_SCOPES` (defaults to `openid email profile groups`
-  — set to `openid email profile` if you made the groups claim "always include" in 0.3).
+  - **Recommended:** create an Okta **Native Application**, set client authentication to **None**,
+  and provide `OKTA_ISSUER` plus `OKTA_CLIENT_ID`. Authorization Code + PKCE protects the exchange;
+  no client secret is stored in the desktop app.
+  - For an existing confidential client, also set `OKTA_CLIENT_SECRET` and
+  `OKTA_TOKEN_ENDPOINT_AUTH_METHOD=client_secret_basic` (or `client_secret_post` if that exact
+  method is configured in Okta).
+  - `OKTA_SCOPES` is optional and defaults to `openid email profile groups`; set it to
+  `openid email profile` if the groups claim is configured to be included without that scope.
   - **File** (gitignored, never committed): create `secrets/okta_client.json`:
-  ``json { "issuer": "https://<your-okta-domain>/oauth2/default", "client_id": "0oa15cs51goDdEdok698", "client_secret": "<rotated-secret>" } ``
+  ``json { "issuer": "https://<your-okta-domain>/oauth2/default", "client_id": "<native-client-id>", "group_scope_map": {"Engineering":"t-eng"} } ``
   **✅ Check:** `git status` shows **no** `secrets/` file and **no** secret anywhere in tracked files.
 
 ---
@@ -108,8 +114,8 @@ token. Both read config from env; the desktop also accepts a gitignored file.
 - [ ] **3.2 Launch the desktop app** with the Part 2.2 config, open the sign-in modal.
   **✅ Pass =** you see **two** buttons: "Continue with Google" and **"Continue with Okta SSO"**.
 - [ ] **3.3 Click "Continue with Okta SSO."**
-  **✅ Pass =** your system browser opens to your Okta sign-in page; the modal shows
-  "Finish in your browser."
+  **✅ Pass =** your system browser opens to your Okta sign-in page; the modal shows that
+  sign-in is being completed.
 - [ ] **3.4 Sign in as the test user** from 0.4 and approve.
   **✅ Pass =** the browser tab shows "Lore sign-in complete — you can close this tab," and the app
   flips to **"Signed in / Welcome, <name></name>."**

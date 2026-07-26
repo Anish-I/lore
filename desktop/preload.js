@@ -276,13 +276,15 @@ contextBridge.exposeInMainWorld('lore', {
   // googleConfig() → isolated GIS button URL + expected postMessage origin
   // loginToken()   → verifies a GIS ID token and creates the Lore session
   // login()        → system-browser fallback used by secondary screens
+  // oktaConfig()   → whether enterprise SSO is configured for this deployment
   // loginOkta() → same, via Okta SSO (server maps groups → team scopes)
-  // status() → current signed-in user {user_id, email, scopes} or null
+  // status() → current signed-in user {user_id, email, scopes, provider} or null
   // logout() → clears the stored session
   auth: {
     googleConfig: () => ipcRenderer.invoke('auth:google-config'),
     loginToken: (idToken) => ipcRenderer.invoke('auth:login-token', idToken),
     login: () => ipcRenderer.invoke('auth:login'),
+    oktaConfig: () => ipcRenderer.invoke('auth:okta-config'),
     loginOkta: () => ipcRenderer.invoke('auth:login-okta'),
     status: () => ipcRenderer.invoke('auth:status'),
     logout: () => ipcRenderer.invoke('auth:logout'),

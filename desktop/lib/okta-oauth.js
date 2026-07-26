@@ -62,11 +62,22 @@ function buildAuthUrl(clientCfg, redirectUri, challenge, state, nonce) {
   return u.toString();
 }
 
-// Exchange the authorization code for tokens at Okta's token endpoint. A native
-// (public) client has no secret and relies on PKCE; a confidential client sends
-// client_secret too — both work because Okta accepts the code_verifier either way.
+// Exchange the authorization code for tokens at Okta's token endpoint. Native
+// clients use `none` + PKCE. Confidential clients must match the app integration's
+// configured token_endpoint_auth_method (`client_secret_basic` or
+// `client_secret_post`); Okta does not treat those methods as interchangeable.
 function exchangeCode(clientCfg, code, verifier, redirectUri) {
   return new Promise((resolve, reject) => {
+    const method = clientCfg.token_endpoint_auth_method
+      || (clientCfg.client_secret ? 'client_secret_basic' : 'none');
+    if (!['none', 'client_secret_basic', 'client_secret_post'].includes(method)) {
+      reject(new Error(`unsupported Okta token endpoint auth method: ${method}`));
+      return;
+    }
+    if (method !== 'none' && !clientCfg.client_secret) {
+      reject(new Error(`Okta ${method} requires a client_secret`));
+      return;
+    }
     const params = {
       code,
       client_id: clientCfg.client_id,
@@ -74,15 +85,24 @@ function exchangeCode(clientCfg, code, verifier, redirectUri) {
       grant_type: 'authorization_code',
       redirect_uri: redirectUri,
     };
-    if (clientCfg.client_secret) params.client_secret = clientCfg.client_secret;
+    const headers = { 'content-type': 'application/x-www-form-urlencoded' };
+    if (method === 'client_secret_post') params.client_secret = clientCfg.client_secret;
+    if (method === 'client_secret_basic') {
+      delete params.client_id;
+      headers.authorization = `Basic ${Buffer.from(`${clientCfg.client_id}:${clientCfg.client_secret}`).toString('base64')}`;
+    }
     const body = new URLSearchParams(params).toString();
     const tokenUrl = new URL(clientCfg.token_uri || `${issuerBase(clientCfg)}/v1/token`);
+    headers['content-length'] = Buffer.byteLength(body);
     const req = https.request(
-      { method: 'POST', hostname: tokenUrl.hostname, port: tokenUrl.port || 443, path: tokenUrl.pathname,
-        headers: { 'content-type': 'application/x-www-form-urlencoded', 'content-length': Buffer.byteLength(body) } },
+      { method: 'POST', hostname: tokenUrl.hostname, port: tokenUrl.port || 443,
+        path: `${tokenUrl.pathname}${tokenUrl.search}`, headers },
       (res) => {
         let data = '';
-        res.on('data', (c) => (data += c));
+        res.on('data', (c) => {
+          data += c;
+          if (data.length > 1024 * 1024) req.destroy(new Error('Okta token response is too large'));
+        });
         res.on('end', () => {
           try {
             const json = JSON.parse(data);
@@ -94,6 +114,7 @@ function exchangeCode(clientCfg, code, verifier, redirectUri) {
         });
       });
     req.on('error', reject);
+    req.setTimeout(30000, () => req.destroy(new Error('Okta token exchange timed out')));
     req.write(body);
     req.end();
   });
@@ -117,30 +138,49 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000, port = 0
     let redirectUri;
     // Ephemeral loopback port — Okta allows a 127.0.0.1 redirect for native apps;
     // register http://127.0.0.1/callback (any port) as a redirect URI in the app.
+    let callbackHandled = false;
+    const respond = (res, status, heading, detail) => {
+      res.writeHead(status, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff',
+      });
+      res.end('<!doctype html><html><body style="font-family:sans-serif;text-align:center;margin-top:80px">'
+        + `<h2>${heading}</h2><p>${detail}</p></body></html>`);
+    };
     const server = http.createServer(async (req, res) => {
       try {
         const reqUrl = new URL(req.url, redirectUri || 'http://127.0.0.1');
         if (reqUrl.pathname !== '/callback') { res.writeHead(404); res.end(); return; }
+        if (callbackHandled) {
+          respond(res, 409, 'Lore sign-in already handled', 'Return to Lore to continue.');
+          return;
+        }
+        callbackHandled = true;
         const err = reqUrl.searchParams.get('error');
         const code = reqUrl.searchParams.get('code');
         const gotState = reqUrl.searchParams.get('state');
-        res.writeHead(200, { 'content-type': 'text/html' });
-        res.end('<html><body style="font-family:sans-serif;text-align:center;margin-top:80px">'
-              + '<h2>Lore sign-in complete</h2><p>You can close this tab and return to Lore.</p></body></html>');
-        cleanup();
-        if (err) return reject(new Error(`Okta returned error: ${err}`));
-        if (gotState !== state) return reject(new Error('state mismatch (possible CSRF)'));
-        if (!code) return reject(new Error('no authorization code in callback'));
+        if (err) throw new Error(`Okta returned error: ${err}`);
+        if (gotState !== state) throw new Error('state mismatch (possible CSRF)');
+        if (!code) throw new Error('no authorization code in callback');
         const tokens = await exchangeCode(clientCfg, code, verifier, redirectUri);
         // Bind the id_token to THIS auth request: the nonce we sent must come back
         // in the token. Combined with the server's signature verification, this
         // rejects a replayed/injected id_token that wasn't minted for our flow.
         const claims = decodeJwtPayload(tokens.id_token);
         if (!claims.nonce || claims.nonce !== nonce) {
-          return reject(new Error('nonce mismatch (possible token replay)'));
+          throw new Error('nonce mismatch (possible token replay)');
         }
+        respond(res, 200, 'Lore sign-in complete', 'You can close this tab and return to Lore.');
+        cleanup();
         resolve(tokens);
-      } catch (e) { cleanup(); reject(e); }
+      } catch (e) {
+        if (!res.headersSent) {
+          respond(res, 400, 'Lore sign-in failed', 'Return to Lore and try again.');
+        }
+        cleanup();
+        reject(e);
+      }
     });
 
     const timer = setTimeout(() => { cleanup(); reject(new Error('sign-in timed out')); }, timeoutMs);
@@ -149,7 +189,8 @@ function runLoopbackFlow(clientCfg, openExternal, { timeoutMs = 180000, port = 0
     server.on('error', (e) => { cleanup(); reject(e); });
     server.listen(port, '127.0.0.1', () => {
       redirectUri = `http://127.0.0.1:${server.address().port}/callback`;
-      openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state, nonce));
+      Promise.resolve(openExternal(buildAuthUrl(clientCfg, redirectUri, challenge, state, nonce)))
+        .catch((e) => { cleanup(); reject(e); });
     });
   });
 }
