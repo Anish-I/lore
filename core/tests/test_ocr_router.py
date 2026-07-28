@@ -1,8 +1,9 @@
-"""OCR fallback router (2026-07-22): the per-page text-quality gate and the
-flag-gated extract path. Engine-level OCR accuracy is measured by the
-numeric-faithfulness harness on real scanned budget PDFs, not here."""
+"""OCR fallback router and the municipal budget regression fixture."""
 import os
+import re
+from pathlib import Path
 
+import pytest
 from lore import extract, ocr
 
 
@@ -45,40 +46,73 @@ def test_extract_text_unaffected_when_flag_off(monkeypatch, tmp_path):
     assert extract.extract_text(str(tmp_path / "x.rtf")) is None
 
 
-def test_numeric_check_flags_close_mismatch_only():
-    # clean single-total table → status ok (raises confidence)
-    clean = "110 Selectmen $5,000\n130 Finance $4,000\n330 Police $1,000\n" \
-            "540 Parks $2,000\nTOTAL $12,000"
-    r = ocr.numeric_check(clean)
-    assert r and r["status"] == "ok" and r["observed_sum"] == 12000
-
-    # TOTAL line OCR'd fine ($92,145 correct) but one item truncated
-    # (9,485 -> 485, a $9,000 drop): items now sum to 83,145 = 9.8% short → mismatch
-    damaged = "110 Selectmen $5,144\n130 Finance $9,076\n140 Clerk $485\n" \
-              "410 Roads $50,134\n750 Human Svcs $15,503\n795 Senior $2,803\nTOTAL $92,145"
-    r = ocr.numeric_check(damaged)
-    assert r and r["status"] == "total_mismatch"
-    assert r["stated_total"] == 92145 and r["delta"] == -9000
-
-    # multi-section / ambiguous (sum ~2x total) → SILENT, no false positive
-    ambiguous = "Transfer From 1065 $123,145\nTOTAL $123,145\n" \
-                "110 Selectmen $5,144\n410 Roads $50,134\n750 Human $15,503\n" \
-                "795 Senior $2,803\n130 Finance $9,076\n140 Clerk $9,485"
-    assert ocr.numeric_check(ambiguous) is None
-
-    # no total / too few items → silent
-    assert ocr.numeric_check("just some prose with $5 in it") is None
+def test_ocr_geometry_rebuilds_rows_in_reading_order():
+    result = [
+        ([[90, 40], [100, 40], [100, 50], [90, 50]], "$", 0.99),
+        ([[10, 42], [80, 42], [80, 52], [10, 52]], "Town Clerk", 0.97),
+        ([[105, 41], [145, 41], [145, 51], [105, 51]], "9,485", 0.95),
+        ([[10, 10], [80, 10], [80, 20], [10, 20]], "Heading", 0.98),
+    ]
+    text, confidence = ocr._format_ocr_result(result)
+    assert text.splitlines() == ["Heading", "Town Clerk\t$\t9,485"]
+    assert 0.95 < confidence < 1.0
 
 
-def test_needs_vlm_flag():
-    # low-confidence OCR page → escalation flagged
-    prov = {"pages": [{"source": "ocr_fast", "conf": 0.3}]}
-    assert ocr._needs_vlm(prov, None) is True
-    # totals mismatch → escalation flagged even at high conf
-    prov2 = {"pages": [{"source": "ocr_fast", "conf": 0.9}]}
-    assert ocr._needs_vlm(prov2, {"status": "total_mismatch"}) is True
-    # clean native doc → no escalation
-    assert ocr._needs_vlm({"pages": [{"source": "native"}]}, None) is False
+def test_missing_ocr_engine_is_not_silently_treated_as_an_empty_page(monkeypatch, tmp_path):
+    import fitz
+    monkeypatch.setenv("LORE_OCR_FALLBACK", "1")
+
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Native text with enough ordinary prose to pass the quality gate.")
+    pdf.new_page()  # low-quality page forces the OCR lane
+    path = tmp_path / "mixed.pdf"
+    pdf.save(path)
+    pdf.close()
+
+    def unavailable(_page, dpi=ocr._RENDER_DPI):
+        raise ocr.OCRUnavailable("missing")
+
+    monkeypatch.setattr(ocr, "ocr_page", unavailable)
+    with pytest.raises(ocr.OCRUnavailable):
+        extract.extract_document(str(path))
+
+
+def test_unreadable_page_is_visible_in_text_and_provenance(monkeypatch, tmp_path):
+    import fitz
+    monkeypatch.setenv("LORE_OCR_FALLBACK", "1")
+
+    pdf = fitz.open()
+    page = pdf.new_page()
+    page.insert_text((72, 72), "Native text with enough ordinary prose to pass the quality gate.")
+    pdf.new_page()
+    path = tmp_path / "mixed.pdf"
+    pdf.save(path)
+    pdf.close()
+
+    monkeypatch.setattr(ocr, "ocr_page", lambda _page, dpi=ocr._RENDER_DPI: ("", 0.0))
+    result = extract.extract_document(str(path))
+    assert result is not None
+    assert "No extractable text was recovered from this page" in result.text
+    assert result.provenance["pages"][1]["source"] == "unreadable"
+    assert result.provenance["review_pages"] == [2]
+
+
+def test_fully_unreadable_pdf_remains_empty_but_keeps_provenance(monkeypatch, tmp_path):
+    import fitz
+    monkeypatch.setenv("LORE_OCR_FALLBACK", "1")
+
+    pdf = fitz.open()
+    pdf.new_page()
+    path = tmp_path / "blank.pdf"
+    pdf.save(path)
+    pdf.close()
+
+    monkeypatch.setattr(ocr, "ocr_page", lambda _page, dpi=ocr._RENDER_DPI: ("", 0.0))
+    result = extract.extract_document(str(path))
+    assert result is not None and result.text == ""
+    assert result.provenance["pages"][0]["source"] == "unreadable"
+    assert extract.extract_text(str(path)) is None
 
 
 def test_provenance_shape():
@@ -98,3 +132,33 @@ def test_provenance_shape():
     assert prov["pages"][0]["source"] == "native"
     assert "Ellington" in text
     os.remove(path)
+
+
+def test_real_budget_ocr_preserves_label_value_digit_pairs():
+    pytest.importorskip("rapidocr_onnxruntime")
+    fixture = Path(__file__).parents[2] / "eval" / "scenarios" / "bof_salary.png"
+    if not fixture.exists():
+        pytest.skip("municipal OCR fixture not present")
+
+    text, confidence = ocr.ocr_image(fixture.read_bytes())
+    expected = {
+        "boardofselectmen": "5144",
+        "financeofficer": "9076",
+        "taxcollector": "5506",
+        "townclerk": "9485",
+        "townplanner": "3510",
+        "police": "6282",
+        "animalcontrolofficer": "1170",
+        "emergencymanagement": "836",
+        "buildingofficial": "5176",
+        "firemarshal": "3943",
+        "generaltownroads": "50134",
+        "parksrecreation": "4577",
+        "humanservices": "15503",
+        "seniorcenter": "2803",
+    }
+    normalized_rows = [re.sub(r"[^a-z0-9]", "", row.lower()) for row in text.splitlines()]
+    for label, digits in expected.items():
+        assert any(label in row and digits in row for row in normalized_rows), (label, digits)
+    assert confidence > 0.9
+    assert len(ocr._NUMERIC_TOKEN_RE.findall(text)) >= 4

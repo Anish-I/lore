@@ -47,6 +47,13 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
 def config() -> dict[str, Any]:
     enabled = os.environ.get("LORE_LEARN_ENABLED", "1").strip().lower()
     return {
@@ -58,6 +65,12 @@ def config() -> dict[str, Any]:
         "daily_tokens": _env_int("LORE_LEARN_DAILY_TOKENS", 2_000_000),
         "max_input_chars": _env_int("LORE_LEARN_MAX_INPUT_CHARS", 60_000),
         "wall_clock_s": _env_int("LORE_LEARN_WALL_CLOCK_S", 300),
+        # Validation gate on the auto-apply patch path. Off by default: enabling it
+        # can only make auto-apply *more* conservative (downgrade to human review),
+        # never the reverse.
+        "gate": _env_flag("LORE_LEARN_GATE", False),
+        "gate_strict": _env_flag("LORE_LEARN_GATE_STRICT", False),
+        "gate_min_probes": _env_int("LORE_LEARN_GATE_MIN_PROBES", 3),
     }
 
 
@@ -457,8 +470,76 @@ def sync_human_edits(conn, tenant: str, session_id: str) -> int:
     return sum(1 for row in rows if _freeze_human_edit(conn, row, session_id))
 
 
+# --- Validation gate (SkillOpt-style no-regression check) -------------------
+# Guards the ONE autonomous mutation Lore makes: auto-applying a lore-learn patch
+# to a live skill. The gate can only downgrade auto-apply to human review; it
+# never auto-applies anything that is staged today.
+
+_GATE_STOPWORDS = frozenset({
+    "the", "and", "for", "that", "this", "with", "from", "have", "will", "your",
+    "which", "into", "then", "than", "them", "they", "were", "been", "when",
+    "what", "where", "make", "made", "need", "used", "using", "step", "steps",
+})
+_GATE_WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _probe_terms(evidence: dict[str, Any], limit: int = 40) -> list[str]:
+    """Distinctive lexical terms from the session's evidence refs.
+
+    v1 proxy for "the situations this skill covers": deterministic and
+    dependency-free. The retrieval-based scorer is a later swap sitting behind
+    probe_coverage/gate_patch without changing evaluate_gate.
+    """
+    seen: list[str] = []
+    known: set[str] = set()
+    for ref in evidence.get("refs") or []:
+        for token in _GATE_WORD_RE.findall(str(ref.get("text") or "").lower()):
+            if len(token) < 4 or token in _GATE_STOPWORDS or token in known:
+                continue
+            known.add(token)
+            seen.append(token)
+            if len(seen) >= limit:
+                return seen
+    return seen
+
+
+def probe_coverage(body: str, terms: list[str]) -> float:
+    if not terms:
+        return 0.0
+    tokens = set(_GATE_WORD_RE.findall((body or "").lower()))
+    return sum(1 for term in terms if term in tokens) / len(terms)
+
+
+def evaluate_gate(*, baseline: float, candidate: float, probes: int,
+                  cfg: dict[str, Any]) -> dict[str, Any]:
+    """Pure decision core. Conservative: insufficient/unknown -> route to human."""
+    verdict = {"baseline": round(baseline, 4), "candidate": round(candidate, 4),
+               "delta": round(candidate - baseline, 4), "probes": probes}
+    if not cfg.get("gate"):
+        return {**verdict, "pass": True, "reason": "disabled"}
+    if probes < cfg.get("gate_min_probes", 3):
+        return {**verdict, "pass": False, "reason": "insufficient-probes"}
+    if cfg.get("gate_strict"):
+        ok = candidate > baseline
+        return {**verdict, "pass": ok, "reason": "improved" if ok else "not-improved"}
+    ok = candidate >= baseline
+    return {**verdict, "pass": ok, "reason": "no-regression" if ok else "regression"}
+
+
+def gate_patch(candidate_body: str, current_body: str, *, evidence: dict[str, Any],
+               cfg: dict[str, Any]) -> dict[str, Any]:
+    terms = _probe_terms(evidence or {})
+    return evaluate_gate(
+        baseline=probe_coverage(current_body, terms),
+        candidate=probe_coverage(candidate_body, terms),
+        probes=len(terms), cfg=cfg,
+    )
+
+
 def stage_skill(conn, *, tenant: str, owner: str, session_id: str,
-                action: dict[str, Any], body: str) -> dict[str, Any]:
+                action: dict[str, Any], body: str,
+                evidence: dict[str, Any] | None = None,
+                cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     name = action["name"]
     safe, frontmatter = validate_skill_body(body, name=name, session_id=session_id)
     row = _skill_row(conn, tenant, name)
@@ -494,12 +575,26 @@ def stage_skill(conn, *, tenant: str, owner: str, session_id: str,
         (uuid.uuid4().hex, skill_id, next_version, safe, _sha(safe), json.dumps(frontmatter), session_id),
     )
     if row[5] == "lore-learn" and not human_edited and active_path.exists():
-        _atomic_write(active_path, safe)
-        conn.execute(
-            "update skills set status='active',current_version=%s,patch_count=patch_count+1,"
-            "updated_at=now(),last_activity_at=now() where id=%s", (next_version, skill_id),
-        )
-        return {"name": name, "status": "active", "version": next_version, "auto_applied": True}
+        gate_cfg = cfg or {}
+        verdict = None
+        if gate_cfg.get("gate") and evidence is not None:
+            current_row = _version_row(conn, skill_id, current_version)
+            verdict = gate_patch(safe, current_row[1] if current_row else "",
+                                 evidence=evidence, cfg=gate_cfg)
+        if verdict is None or verdict["pass"]:
+            _atomic_write(active_path, safe)
+            conn.execute(
+                "update skills set status='active',current_version=%s,patch_count=patch_count+1,"
+                "updated_at=now(),last_activity_at=now() where id=%s", (next_version, skill_id),
+            )
+            result = {"name": name, "status": "active", "version": next_version, "auto_applied": True}
+            if verdict is not None:
+                result["gate"] = verdict
+            return result
+        # Gate refused the autonomous apply -> stage for a human, live file untouched.
+        conn.execute("update skills set status='pending_patch',updated_at=now() where id=%s", (skill_id,))
+        _atomic_write(_pending_path(name), safe)
+        return {"name": name, "status": "pending_patch", "version": next_version, "gate": verdict}
     conn.execute("update skills set status='pending_patch',updated_at=now() where id=%s", (skill_id,))
     _atomic_write(_pending_path(name), safe)
     return {"name": name, "status": "pending_patch", "version": next_version}
@@ -732,7 +827,7 @@ def review_run(conn, run_id: str, transcript_path: str,
             try:
                 body = _json_value(authored).get("body", "")
                 staged.append(stage_skill(conn, tenant=tenant, owner=owner, session_id=session_id,
-                                          action=action, body=body))
+                                          action=action, body=body, evidence=evidence, cfg=cfg))
             except (LearnError, ValueError, TypeError, AttributeError, json.JSONDecodeError) as exc:
                 if calls >= 3:
                     continue
@@ -742,7 +837,7 @@ def review_run(conn, run_id: str, transcript_path: str,
                 repaired = _call_with_deadline(call, repair_prompt, started, cfg["wall_clock_s"])
                 body = _json_value(repaired).get("body", "")
                 staged.append(stage_skill(conn, tenant=tenant, owner=owner, session_id=session_id,
-                                          action=action, body=body))
+                                          action=action, body=body, evidence=evidence, cfg=cfg))
         stored_actions = [{**action, "result": staged[i] if i < len(staged) else None}
                           for i, action in enumerate(actions)]
         _update_run(conn, run_id, status_value="done", started=started, provider=provider,

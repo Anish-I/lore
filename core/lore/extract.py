@@ -11,6 +11,7 @@ structure to work with.
 import os
 import re
 import zipfile
+from dataclasses import dataclass
 from xml.etree import ElementTree
 
 EXTRACTABLE_EXTS = {".pdf", ".docx"}
@@ -23,6 +24,13 @@ _DOCX_MAX_UNCOMPRESSED = 64 * 1024 * 1024  # 64 MB of XML is already absurd
 
 
 _DTD_RE = re.compile(rb"<!DOCTYPE|<!ENTITY", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class ExtractionResult:
+    title: str
+    text: str
+    provenance: dict | None = None
 
 
 def _safe_fromstring(xml_bytes):
@@ -64,11 +72,12 @@ def _docx_text(path: str) -> str:
     return "\n\n".join(paras)
 
 
-def extract_text(path: str):
-    """Return (title, markdown_text) for supported binary formats, else None.
+def extract_document(path: str) -> ExtractionResult | None:
+    """Return extracted text plus available provenance, else ``None``.
 
     A hostile or malformed document (DTD bomb, zip bomb, corrupt PDF) is treated
-    as unextractable → None; never raises to the caller.
+    as unextractable → None. ``OCRUnavailable`` is allowed to propagate when
+    OCR was explicitly enabled but its optional dependency is missing.
 
     PDFs: when LORE_OCR_FALLBACK is on, routing is per-page (native text where
     it passes a quality gate, RapidOCR where it doesn't) so scanned image pages
@@ -82,11 +91,11 @@ def extract_text(path: str):
         if ocr.enabled():
             try:
                 routed = ocr.extract_pdf_routed(path)
-            except Exception:
-                routed = None
+            except ocr.OCRUnavailable:
+                raise
             if routed:
-                title, text, _prov = routed
-                return title, text
+                title, text, provenance = routed
+                return ExtractionResult(title, text, provenance)
             # OCR path found nothing usable → fall through to the plain reader
             # (keeps behavior no-worse-than-off on genuinely blank scans).
     try:
@@ -97,4 +106,10 @@ def extract_text(path: str):
     if not body:
         return None
     title = os.path.splitext(os.path.basename(path))[0]
-    return title, f"# {title}\n\n{body}\n"
+    return ExtractionResult(title, f"# {title}\n\n{body}\n")
+
+
+def extract_text(path: str):
+    """Compatibility wrapper returning ``(title, markdown_text)`` or ``None``."""
+    result = extract_document(path)
+    return (result.title, result.text) if result and result.text.strip() else None
