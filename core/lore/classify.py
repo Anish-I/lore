@@ -25,6 +25,7 @@ _RUN_CAP = 80        # max untagged notes classified per upkeep run (cost/latenc
 _BATCH_SIZE = 8      # notes per LLM call — batched to keep the run cheap
 _BODY_CHARS = 500    # note text sent to the model per item
 _MAX_TAGS = 6
+_ROLES = ("correspondence", "solicitation", "bulk")
 
 _FM_RE = re.compile(r'^---\s*\r?\n(.*?)\r?\n---', re.DOTALL)
 _FM_TAGS_INLINE = re.compile(r'^tags:\s*\[([^\]]*)\]', re.MULTILINE)
@@ -174,8 +175,18 @@ def _classify_prompt(items: list, vocabulary: list = None) -> str:
         f"{notes_block}\n\n"
         "For EACH note return 1-5 short lowercase tags and ONE durable topic name "
         "(a project/subject the note belongs to, 1-4 words, title case).\n"
+        "When the note is a message (email/DM), also return its role:\n"
+        '  "correspondence" - a specific person wrote it to/with the owner about the '
+        "owner's matters (the owner's own sent mail counts; a human reply inside an "
+        "ongoing thread counts even if the thread began as a pitch);\n"
+        '  "solicitation" - unsolicited selling or pitching (vendor demos, cold '
+        "outreach, promotional offers);\n"
+        '  "bulk" - automated or mass-distributed mail (newsletters, digests, alerts, '
+        "receipts, association blasts).\n"
+        "Omit role when the note is not a message.\n"
         'Reply with a STRICT JSON array only — no prose, no markdown fences. Each item: '
-        '{"id":<note number>,"tags":["tag1","tag2"],"topic":"Topic Name"}'
+        '{"id":<note number>,"tags":["tag1","tag2"],"topic":"Topic Name",'
+        '"role":"correspondence|solicitation|bulk"}'
     )
 
 
@@ -207,11 +218,14 @@ def parse_classification(raw: str) -> dict:
         raw_topic = str(it.get("topic") or '')
         is_new = bool(re.match(r'^\s*NEW\s*:', raw_topic, re.IGNORECASE))
         topic = _norm_topic(re.sub(r'^\s*NEW\s*:\s*', '', raw_topic, flags=re.IGNORECASE)) or None
-        out[idx] = {"tags": tags[:_MAX_TAGS], "topic": topic, "is_new": is_new}
+        role = str(it.get("role") or '').strip().lower()
+        out[idx] = {"tags": tags[:_MAX_TAGS], "topic": topic, "is_new": is_new,
+                    "role": role if role in _ROLES else None}
     return out
 
 
-def _store(conn, tenant: str, note_id: str, tags: list, topic, source: str) -> None:
+def _store(conn, tenant: str, note_id: str, tags: list, topic, source: str,
+           role: str = None) -> None:
     for tag in tags:
         conn.execute(
             "insert into note_tags(note_id, tenant_id, tag, kind, source) "
@@ -225,6 +239,11 @@ def _store(conn, tenant: str, note_id: str, tags: list, topic, source: str) -> N
             "insert into note_tags(note_id, tenant_id, tag, kind, source) "
             "values(%s,%s,%s,'topic',%s) on conflict do nothing",
             (note_id, tenant, topic, source))
+    if role:
+        conn.execute(
+            "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+            "values(%s,%s,%s,'role',%s) on conflict do nothing",
+            (note_id, tenant, role, source))
 
 
 def classify_untagged(conn, tenant: str, llm_call=None, scope: str = None,
@@ -277,7 +296,8 @@ def classify_untagged(conn, tenant: str, llm_call=None, scope: str = None,
         for i, (nid, title, body) in enumerate(batch):
             res = parsed.get(i)
             if res and (res["tags"] or res["topic"]):
-                _store(conn, tenant, nid, res["tags"], res["topic"], "llm")
+                _store(conn, tenant, nid, res["tags"], res["topic"], "llm",
+                       role=res.get("role"))
                 llm_tagged += 1
                 continue
             fb = classify_fallback(title or '', body or '')
