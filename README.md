@@ -1,3 +1,10 @@
+> [!IMPORTANT]
+> **This repository is archived (2026-07-28).** The Lore engine now lives at
+> **[Anish-I/lore-arch](https://github.com/Anish-I/lore-arch)** — the canonical, headless,
+> API-first engine repo (knowledge graph, retrieval, classification, `/api/v1` contract).
+> All engine development continues there; the Electron desktop app in `desktop/` here is
+> retained for history only.
+
 <div align="center">
 
 <img src="desktop/renderer/design/assets/sprites/lore-familiar.png" alt="Lore" width="140" />
