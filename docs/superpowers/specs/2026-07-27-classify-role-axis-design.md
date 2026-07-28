@@ -32,11 +32,15 @@ no role axis, so post-hoc tag filtering caps at R≈0.54.
 ## Changes (all in core/lore/classify.py)
 
 - `_classify_prompt`: instruct the model to add `"role":"correspondence"|
-  "solicitation"|"bulk"` per item, with the three one-line definitions above
-  and: omit `role` when the note is not a message/email. Vocabulary block and
+  "solicitation"|"bulk"` per item, with the three one-line definitions above,
+  one disambiguation line — a message a human wrote inside an ongoing thread
+  is `correspondence` even if the thread began as a solicitation — and: omit
+  `role` when the note is not a message/email. Vocabulary block and
   topic/tags contract unchanged.
-- `parse_classification`: accept optional `role`; validate against the enum;
-  missing/invalid → `None`. Never inferred.
+- `parse_classification`: accept optional `role`; normalize
+  (`strip().lower()`) then validate against the enum; missing/invalid →
+  `None`. Never inferred. An invalid role never invalidates the item's
+  tags/topic.
 - `_store`: when role is present, insert one `note_tags` row with
   `kind='role'`, `tag=<role>`, same `source` as the rest of the item.
 - `classify_fallback`: unchanged — the deterministic path never emits a role.
@@ -57,6 +61,11 @@ back per note (fallback yields no role).
     accepts valid roles, drops invalid ones (`"advertisement"` → None);
   - `_store`/`classify_untagged` writes `kind='role'` rows for roled items and
     none for role-less items;
+  - an item with an invalid role but valid tags still stores its tags/topic
+    (and no role row);
+  - single-role invariant: a second `classify_untagged` run never revisits a
+    classified note, so no note accumulates two `kind='role'` rows (guards
+    the selection query if it is ever loosened);
   - fallback path stores no role row.
 - **Acceptance gate — rerun the Ellington eval.** The session harness is
   promoted into the repo as part of this change
@@ -67,6 +76,9 @@ back per note (fallback yields no role).
     detector: 0.543);
   - of emails whose ground-truth tags contain no SPAM label, ≤ 5% roled
     `solicitation`;
+  - ≥ 90% of human business mail (ground-truth Context, Search, Exhibit 1-3)
+    roled `correspondence` — closes the "role everything bulk" cheat, which
+    would otherwise satisfy the SPAM-recall floor;
   - topic quality within noise of the 2026-07-27 baseline: distinct topics
     ≤ 40 and purity ≥ 0.75 — the role axis must not degrade topic quality;
   - expected and correct: Personal-class school newsletters and utility bills
