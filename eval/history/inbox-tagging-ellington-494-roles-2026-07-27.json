@@ -1,0 +1,30 @@
+{
+  "eval": "inbox-tagging-ellington-roles",
+  "date": "2026-07-28",
+  "baseline": "inbox-tagging-ellington-494-2026-07-27.json (pre-role-axis run)",
+  "spec": "docs/superpowers/specs/2026-07-27-classify-role-axis-design.md",
+  "harness": {
+    "runner": "eval/scenarios/run_inbox_tagging.py",
+    "scorer": "eval/scenarios/score_inbox_tagging.py",
+    "corpus": "eval/scenarios/inbox_ellington_494.json (494 emails)",
+    "provider": "codex CLI, LORE_CODEX_EFFORT=low",
+    "runs": 7, "wall_per_80": "245-271s", "llm": 494, "fallback": 0
+  },
+  "gates": {
+    "G1_spam_recall_by_solicitation_or_bulk": {"got": 1.000, "floor": 0.85, "pass": true,
+      "baseline_tag_token_detector": 0.543},
+    "G2_nonspam_roled_solicitation": {"got": 0.000, "ceiling": 0.05, "pass": true},
+    "G3_human_mail_roled_correspondence": {"got": 0.965, "floor": 0.90, "pass": true},
+    "G4_distinct_topics": {"got": 40, "ceiling": 40, "pass": true, "baseline": 30},
+    "G5_topic_class_purity": {"got": 0.753, "floor": 0.75, "pass": true, "baseline": 0.775}
+  },
+  "role_distribution": {"correspondence": 358, "bulk": 96, "solicitation": 40},
+  "topic_metrics": {"nmi_vs_class": 0.539, "nmi_vs_thread": 0.739,
+    "baseline": {"nmi_vs_class": 0.566, "nmi_vs_thread": 0.700}},
+  "notes": [
+    "Every SPAM-class email (92/92) separated by role; the gray-bulk-mail miss pattern from the baseline run is fully closed.",
+    "solicitation used precisely (40 assignments, zero on non-SPAM mail); gray mail lands in bulk as designed.",
+    "Topic quality regressed slightly but within gates (30->40 topics, purity 0.775->0.753) - the longer prompt diffuses topic naming a little. G4/G5 sit exactly at their limits; watch on reruns.",
+    "Single-run result at temperature-equivalent settings; expect a few points of run-to-run noise on G3/G5."
+  ]
+}
