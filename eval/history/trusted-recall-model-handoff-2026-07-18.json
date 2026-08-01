@@ -1,0 +1,157 @@
+{
+  "failed_gates": [],
+  "measurement": "sanitized-before-after-model-replay",
+  "metrics": {
+    "after_completion": 1.0,
+    "before_completion": 0.0,
+    "cases_per_condition": 6,
+    "families": [
+      "claude",
+      "codex"
+    ],
+    "improvements": {
+      "claude": 3,
+      "codex": 3
+    },
+    "unsupported_after": 0
+  },
+  "privacy": {
+    "hidden_reasoning_requested": false,
+    "model_responses_persisted": false,
+    "raw_personal_notes_sent": false
+  },
+  "runs": [
+    {
+      "case_id": "immediate-milestone",
+      "condition": "before",
+      "family": "claude",
+      "forbidden_found": [],
+      "missing_required": [
+        "fact-milestone-71",
+        "trusted recall"
+      ],
+      "required_complete": false,
+      "response_sha256": "e28189f2b3b13313a5e8d18cdb48b957e1b8e593bdd10aa2abbe59fcc61c5c73"
+    },
+    {
+      "case_id": "immediate-milestone",
+      "condition": "after",
+      "family": "claude",
+      "forbidden_found": [],
+      "missing_required": [],
+      "required_complete": true,
+      "response_sha256": "22b3b16f9ff85790c3af4c2216f36d7eb90a7f18b2ebd03e1e3147c09e024998"
+    },
+    {
+      "case_id": "cache-boundary",
+      "condition": "before",
+      "family": "claude",
+      "forbidden_found": [],
+      "missing_required": [
+        "fact-cache-42",
+        "ephemeral"
+      ],
+      "required_complete": false,
+      "response_sha256": "b83ec6b4e7b4f892a0919a1ae0c662a02e615f1f1296542815b3d2a996a34d83"
+    },
+    {
+      "case_id": "cache-boundary",
+      "condition": "after",
+      "family": "claude",
+      "forbidden_found": [],
+      "missing_required": [],
+      "required_complete": true,
+      "response_sha256": "6c9fc84d0f165f23ee4b959fc2e4fc84ecc3f947c7a97be962b85bc0d5b09a3c"
+    },
+    {
+      "case_id": "completion-gates",
+      "condition": "before",
+      "family": "claude",
+      "forbidden_found": [],
+      "missing_required": [
+        "fact-delete-19",
+        "fact-handoff-23",
+        "fact-latency-31"
+      ],
+      "required_complete": false,
+      "response_sha256": "dd28166c2b99266afa775ea77179280bee08ba73e5f62bb6367f060d59aeafc7"
+    },
+    {
+      "case_id": "completion-gates",
+      "condition": "after",
+      "family": "claude",
+      "forbidden_found": [],
+      "missing_required": [],
+      "required_complete": true,
+      "response_sha256": "0bcc3833d280634749685e09d769d351f4931ba183e6ffa7ee8ed9cdf5c03b53"
+    },
+    {
+      "case_id": "immediate-milestone",
+      "condition": "before",
+      "family": "codex",
+      "forbidden_found": [],
+      "missing_required": [
+        "fact-milestone-71",
+        "trusted recall"
+      ],
+      "required_complete": false,
+      "response_sha256": "23759997b3c59884dc4c0ff5320d6301b0e7f63bf0f6483a7b54d7d43bc5ccd1"
+    },
+    {
+      "case_id": "immediate-milestone",
+      "condition": "after",
+      "family": "codex",
+      "forbidden_found": [],
+      "missing_required": [],
+      "required_complete": true,
+      "response_sha256": "06cb8112c279eade7af08e9bb1b220d1efa2989d48ebb3e0c6d72379cac11777"
+    },
+    {
+      "case_id": "cache-boundary",
+      "condition": "before",
+      "family": "codex",
+      "forbidden_found": [],
+      "missing_required": [
+        "fact-cache-42",
+        "ephemeral"
+      ],
+      "required_complete": false,
+      "response_sha256": "23759997b3c59884dc4c0ff5320d6301b0e7f63bf0f6483a7b54d7d43bc5ccd1"
+    },
+    {
+      "case_id": "cache-boundary",
+      "condition": "after",
+      "family": "codex",
+      "forbidden_found": [],
+      "missing_required": [],
+      "required_complete": true,
+      "response_sha256": "86aef77713d87fe2f6b8b828b3b6d3663cf1b1c241e530f4a0028571c3293fd4"
+    },
+    {
+      "case_id": "completion-gates",
+      "condition": "before",
+      "family": "codex",
+      "forbidden_found": [],
+      "missing_required": [
+        "fact-delete-19",
+        "fact-handoff-23",
+        "fact-latency-31"
+      ],
+      "required_complete": false,
+      "response_sha256": "23759997b3c59884dc4c0ff5320d6301b0e7f63bf0f6483a7b54d7d43bc5ccd1"
+    },
+    {
+      "case_id": "completion-gates",
+      "condition": "after",
+      "family": "codex",
+      "forbidden_found": [],
+      "missing_required": [],
+      "required_complete": true,
+      "response_sha256": "773917323009f9be11edd5d707869cd026b8a1cbce8faa95c888349d5917f8df"
+    }
+  ],
+  "schema": "lore-trusted-recall-model-handoff/v1",
+  "unavailable_families": {
+    "kimi": "kimi exited 1: error: failed to run prompt: No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.\nSee log: C:/Users/ivatu/.kimi-code/logs/kimi-code.log"
+  }
+}

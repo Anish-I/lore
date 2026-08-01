@@ -1,0 +1,56 @@
+{
+  "root": "C:\\Users\\ivatu\\Downloads\\anish-test-extract\\ANISH TEST",
+  "total_files": 789,
+  "supported_files": 789,
+  "file_types": {
+    ".pdf": 788,
+    ".docx": 1
+  },
+  "ingest": {
+    "indexed_with_chunks": 789,
+    "extracted_but_empty": 0,
+    "errored": 0,
+    "extraction_success_rate": 1.0,
+    "avg_chunks_per_doc": 6.89,
+    "seconds": 4975.9,
+    "resume_seconds": 0.0,
+    "docs_per_sec": 0.16,
+    "resumed_documents": 789,
+    "native_pages": 1626,
+    "ocr_pages": 1499,
+    "ocr_review_pages": null,
+    "ocr_numeric_review_pages": 1253,
+    "ocr_unreadable_pages": 43,
+    "truncated_documents": 5,
+    "ocr_metrics_reconstructed_from_index": true,
+    "ocr_pages_since_resume": 0,
+    "ocr_review_pages_since_resume": 0
+  },
+  "connections": {
+    "folder": 3954,
+    "tag": 3,
+    "total": 3957
+  },
+  "organization": {
+    "classified": 1,
+    "distinct_topics": 1,
+    "gold_folders": 10,
+    "top_topics": [
+      [
+        "VI",
+        1
+      ]
+    ],
+    "pairwise_vs_folders": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0
+    },
+    "classifier": "deterministic-fallback",
+    "llm_tagged": 0
+  },
+  "sections": {
+    "proposed": 0,
+    "detail": []
+  }
+}

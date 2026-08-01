@@ -5,6 +5,9 @@ class Embedder(Protocol):
     def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 class FakeEmbedder:
+    # Never binds an index — see embed_identity._UNBINDABLE.
+    model_id = "fake"
+
     def __init__(self, dim=8): self.dim = dim
     def embed(self, texts):
         out = []
@@ -17,7 +20,9 @@ class VoyageEmbedder:
     DEFAULT_MODEL = "voyage-4-large"
     def __init__(self, api_key, model=DEFAULT_MODEL):
         import voyageai
+        from .embed_identity import voyage_model_id
         self.client = voyageai.Client(api_key=api_key); self.model = model
+        self.model_id = voyage_model_id(model)
     def embed(self, texts):
         return self.client.embed(texts, model=self.model, input_type="document").embeddings
 
@@ -28,9 +33,12 @@ class LocalEmbedder:
     _cache = {}
     def __init__(self, model=DEFAULT_MODEL):
         from fastembed import TextEmbedding
+        from .embed_identity import local_model_id
         if model not in LocalEmbedder._cache:
             LocalEmbedder._cache[model] = TextEmbedding(model_name=model)
         self.model = LocalEmbedder._cache[model]
+        self.model_name = model
+        self.model_id = local_model_id(model)
     def embed(self, texts):
         return [v.tolist() for v in self.model.embed(list(texts))]
 

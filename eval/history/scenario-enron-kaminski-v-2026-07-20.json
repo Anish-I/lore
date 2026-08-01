@@ -1,0 +1,55 @@
+{
+  "scenario": "enron-kaminski-v",
+  "notes": 1500,
+  "queries": 55,
+  "index_seconds": {
+    "ctx0": 102.309363700002
+  },
+  "variants": {
+    "ctx0-qp0": {
+      "knownitem": {
+        "n": 40,
+        "recall@1": 0.95,
+        "recall@5": 1.0,
+        "mrr": 0.969,
+        "candidates_contain_gold@40": 1.0,
+        "rerank_input_contains_gold@20": 1.0
+      },
+      "noanswer": {
+        "n": 15
+      },
+      "_overall": {
+        "n": 40,
+        "recall@5": 1.0,
+        "recall@1": 0.95,
+        "mrr": 0.969,
+        "rerank_input_contains_gold@20": 1.0,
+        "candidates_contain_gold@40": 1.0,
+        "p50_ms": 416.7,
+        "p95_ms": 493.5,
+        "top1_score_answerable_mean": 0.6367,
+        "top1_score_noanswer_mean": 0.5352
+      }
+    }
+  },
+  "clustering": {
+    "gold_topics": 32,
+    "variant_topics": 32,
+    "fragmentation_index": 1.0,
+    "before": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0
+    },
+    "merge_proposals": 0,
+    "false_merges": 0,
+    "merge_precision": null,
+    "after": {
+      "pairwise_precision": 1.0,
+      "pairwise_recall": 1.0,
+      "pairwise_f1": 1.0,
+      "topics": 32
+    },
+    "merge_seconds": 13.3
+  }
+}

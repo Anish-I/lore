@@ -165,6 +165,37 @@ def test_proposal_created_at_threshold_not_below():
     assert len(list_sections(conn, tenant)) == 1
 
 
+def _set_role(conn, tenant, nid, role):
+    conn.execute(
+        "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+        "values(%s,%s,%s,'role','llm') on conflict do nothing",
+        (nid, tenant, role))
+
+
+def test_junk_roled_notes_do_not_count_toward_threshold():
+    """solicitation/bulk-roled notes neither trigger nor join a proposal;
+    role-less notes are untouched (absence of a role never implies junk)."""
+    tenant = "sec-junk-filter"
+    conn = _conn()
+    # 5 topic'd notes but 3 are junk -> only 2 clean -> below threshold, no proposal
+    _seed_topic_notes(conn, tenant, "Vendor Pitches", 5, prefix="vp")
+    for i in (0, 1, 2):
+        _set_role(conn, tenant, f"vp-{i}", "solicitation")
+    # 5 clean + 2 bulk on the same topic -> proposed with exactly the 5 clean members
+    _seed_topic_notes(conn, tenant, "Real Work", 7, prefix="rw")
+    _set_role(conn, tenant, "rw-5", "bulk")
+    _set_role(conn, tenant, "rw-6", "bulk")
+    # correspondence role never filters
+    _set_role(conn, tenant, "rw-0", "correspondence")
+
+    stats = propose_sections(conn, tenant, threshold=5)
+    assert stats["proposed"] == 1
+    secs = list_sections(conn, tenant)
+    assert len(secs) == 1 and secs[0]["name"] == "Real Work"
+    member_ids = {n["id"] for n in secs[0]["notes"]}
+    assert member_ids == {f"rw-{i}" for i in range(5)}
+
+
 def test_notes_already_in_topic_folder_are_not_proposed():
     tenant = "sec-already"
     conn = _conn()
@@ -253,6 +284,62 @@ def test_dismiss_is_sticky():
     # Never re-proposed after dismiss.
     stats = propose_sections(conn, tenant, threshold=5)
     assert stats["proposed"] == 0 and stats["updated"] == 0
+    assert list_sections(conn, tenant)[0]["status"] == "dismissed"
+
+
+def test_undo_with_dismiss_is_sticky_not_reapplied(tmp_path):
+    """Auto-apply mode's anti-reapply guard: undo(dismiss=True) lands the section
+    in 'dismissed' (not 'proposed'), still returns the restore plan, and the topic
+    is never re-proposed — otherwise the next auto-apply run would redo the exact
+    move the user just reverted."""
+    tenant = "sec-undo-dismiss"
+    conn = _conn()
+    files = []
+    for i in range(5):
+        p = tmp_path / f"ud-{i}.md"
+        p.write_text(f"# ud {i}\n", encoding="utf-8")
+        files.append(str(p))
+        nid = f"ud-{i}"
+        _insert_note(conn, tenant, nid, f"ud {i}", "body", path=str(p))
+        conn.execute(
+            "insert into note_tags(note_id, tenant_id, tag, kind, source) "
+            "values(%s,%s,'Theta Topic','topic','llm') on conflict do nothing",
+            (nid, tenant))
+    propose_sections(conn, tenant, threshold=5)
+    sid = list_sections(conn, tenant)[0]["id"]
+    apply_section(conn, tenant, sid, dest_dir=str(tmp_path / "Theta Topic").replace("\\", "/"))
+
+    undo = undo_section(conn, tenant, sid, dismiss=True)
+    assert undo["status"] == "dismissed"
+    assert {m["from"] for m in undo["moves"]} == set(files)   # restore plan intact
+    assert list_sections(conn, tenant)[0]["status"] == "dismissed"
+
+    # Sticky: the topic never comes back as a proposal.
+    stats = propose_sections(conn, tenant, threshold=5)
+    assert stats["proposed"] == 0 and stats["updated"] == 0
+    assert list_sections(conn, tenant)[0]["status"] == "dismissed"
+
+    # Undo (like dismiss-from-applied) is terminal here: nothing further to undo.
+    try:
+        undo_section(conn, tenant, sid, dismiss=True)
+        assert False, "undo should have raised on dismissed section"
+    except SectionError:
+        pass
+
+
+def test_undo_dismiss_flag_via_api(tmp_path):
+    """The HTTP body {dismiss:true} reaches undo_section (desktop auto mode path);
+    default body keeps the old proposed-revert behavior."""
+    tenant = "sec-undo-api"
+    conn = _conn()
+    _seed_topic_notes(conn, tenant, "Iota Topic", 5, prefix="ua")
+    propose_sections(conn, tenant, threshold=5)
+    sid = list_sections(conn, tenant)[0]["id"]
+    apply_section(conn, tenant, sid, dest_dir="/fake/lib/Iota Topic")
+
+    r = client.post(f"/sections/{sid}/undo", json={"tenant": tenant, "dismiss": True})
+    assert r.status_code == 200
+    assert r.json()["status"] == "dismissed"
     assert list_sections(conn, tenant)[0]["status"] == "dismissed"
 
 

@@ -1,0 +1,89 @@
+{
+  "user": "beck-s",
+  "cap": 3000,
+  "notes": 3000,
+  "hidden_folders": 4,
+  "duplicate_notes": 1588,
+  "duplicate_clusters": 793,
+  "index_seconds": 143.7,
+  "hygiene": {
+    "zero_chunk_notes": 790,
+    "avg_chunks_per_note": 1.69,
+    "note": "no cross-note dedup at ingest; redact.py runs on /capture only, NOT on direct indexing of dumped files"
+  },
+  "retrieval": {
+    "knownitem_scored": 36,
+    "recall@1": 0.889,
+    "recall@5": 1.0,
+    "dup_echo_rate_top5": 0.0,
+    "p50_ms": 415.2
+  },
+  "classification": {
+    "llm": "gemma4:e4b",
+    "runs_simulated": 5,
+    "notes_classified": 400,
+    "coverage": 0.133,
+    "distinct_topics": 21,
+    "top_topics": [
+      [
+        "Project Operations Management",
+        58
+      ],
+      [
+        "Internal Communications",
+        47
+      ],
+      [
+        "Personal Life Matters",
+        46
+      ],
+      [
+        "Business Correspondence",
+        42
+      ],
+      [
+        "Risk Management Strategy",
+        32
+      ],
+      [
+        "Performance Review",
+        27
+      ],
+      [
+        "Financial Data Systems",
+        25
+      ],
+      [
+        "Succession Planning",
+        22
+      ]
+    ],
+    "pairwise_vs_hidden_folders": {
+      "precision": 1.0,
+      "recall": 0.082,
+      "f1": 0.152
+    },
+    "classify_seconds": 742.0,
+    "runs_to_full_coverage_at_80_cap": 38
+  },
+  "day_one_sections": {
+    "auto_apply_default": true,
+    "sections_that_would_auto_create": 0,
+    "sections": [],
+    "merge_proposals": 0,
+    "merges_agreeing_with_hidden_folders": 0,
+    "merge_examples": []
+  },
+  "g10": {
+    "answerable_mean": 0.6327,
+    "noanswer_mean": 0.5357,
+    "calibrated_threshold": 0.5842,
+    "abstain_recall_on_noanswer": 0.933,
+    "false_abstain_on_answerable": 0.611
+  },
+  "session_start_telemetry": {
+    "inject_resolved_top8_avg_tokens": 1908,
+    "ids_first_digest_avg_tokens": 476,
+    "digest_plus_hydrate1_avg_tokens": 936
+  }
+}

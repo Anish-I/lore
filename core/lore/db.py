@@ -14,6 +14,8 @@ except Exception:  # pragma: no cover
 # a threadpool, and SQLite allows only one writer at a time.  Re-entrant so
 # execute() calls inside a held transaction() don't deadlock.
 _SQLITE_WRITE_LOCK = threading.RLock()
+# Same discipline for the Postgres lane — see _PgConn.
+_PG_WRITE_LOCK = threading.RLock()
 
 
 def _translate_placeholders(sql):
@@ -172,10 +174,43 @@ class _SqliteConn:
             pass
 
 
+class _PgConn:
+    """psycopg connection wrapper that serializes writes with a process-wide
+    RLock — parity with `_SqliteConn`.
+
+    FastAPI runs sync endpoints in a threadpool, so two requests can be inside
+    `with conn.transaction():` on the SAME shared module-level connection at
+    once. psycopg rejects the interleaved commit with
+    `OutOfOrderTransactionNesting` and the request 500s (seen in production
+    during the 2026-07-31 LoCoMo run). A single connection cannot do concurrent
+    work anyway, so serializing costs nothing that wasn't already serial.
+
+    Everything not overridden here delegates to the real connection, so
+    `cursor()`, `commit()`, `close()`, etc. behave exactly as before.
+    """
+    def __init__(self, conn):
+        self._db = conn
+
+    def execute(self, sql, params=()):
+        with _PG_WRITE_LOCK:
+            return self._db.execute(sql, params)
+
+    @contextlib.contextmanager
+    def transaction(self):
+        # The lock is re-entrant, so execute() calls inside the block (same
+        # thread) don't deadlock; other threads wait for the commit.
+        with _PG_WRITE_LOCK:
+            with self._db.transaction():
+                yield
+
+    def __getattr__(self, name):
+        return getattr(self._db, name)
+
+
 def _connect_url(url: str):
     if is_sqlite(url):
         return _SqliteConn(_sqlite_path(url))
-    return psycopg.connect(url, autocommit=True)
+    return _PgConn(psycopg.connect(url, autocommit=True))
 
 # Fresh-install schema.  All CREATE statements use IF NOT EXISTS; indexes use
 # CREATE INDEX IF NOT EXISTS so this is safe to call on every startup.
@@ -189,9 +224,24 @@ create table if not exists notes(
   source_path text, title text, source_type text,
   memory_type text default 'durable',
   body text, body_sha256 text, content_hash text,
+  builder_version text,
   importance real default 0,
   created_at timestamptz,
   updated_at timestamptz default now());
+create table if not exists doc_nodes(
+  id text primary key,
+  tenant_id text not null,
+  note_id text not null references notes(id) on delete cascade,
+  parent_id text,
+  title text not null,
+  level integer not null,
+  page_start integer,
+  page_end integer,
+  source text,
+  confidence real default 0,
+  builder_version text,
+  created_at timestamptz default now());
+create index if not exists doc_nodes_note on doc_nodes(note_id);
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
   heading_path text, text text, has_context boolean default false,
@@ -235,6 +285,8 @@ create table if not exists feedback(
   note_id text not null,
   vote integer not null,
   query_hash text,
+  event text,
+  weight real default 1.0,
   ts timestamptz default now());
 create index if not exists feedback_note on feedback(tenant_id, note_id);
 create table if not exists section_proposals(
@@ -248,7 +300,97 @@ create table if not exists section_proposals(
   created_at timestamptz default now(),
   updated_at timestamptz default now(),
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create table if not exists topic_registry(
+  tenant_id text not null,
+  slug_key text not null,
+  canonical text not null,
+  source text default 'llm',
+  first_seen timestamptz default now(),
+  primary key (tenant_id, slug_key));
+create table if not exists observations(
+  id text primary key,
+  tenant_id text not null,
+  session_id text,
+  ts timestamptz default now(),
+  type text not null,
+  summary text not null,
+  facts text,
+  concepts text,
+  files_read text,
+  files_modified text,
+  origin_note_id text,
+  outcome text);
+create index if not exists observations_session on observations(tenant_id, session_id);
+create table if not exists observation_files(
+  observation_id text not null,
+  tenant_id text not null,
+  path_key text not null,
+  path_norm text not null);
+create index if not exists observation_files_key on observation_files(tenant_id, path_key);
 create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists learn_runs(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  scope_id text,
+  session_key text,
+  transcript_sha text not null,
+  started_at timestamptz default now(),
+  duration_ms integer default 0,
+  provider text,
+  calls_made integer default 0,
+  input_chars integer default 0,
+  est_tokens integer default 0,
+  actions_json text,
+  status text not null default 'queued',
+  skip_reason text);
+create index if not exists learn_runs_tenant_started on learn_runs(tenant_id, started_at);
+create unique index if not exists learn_runs_tenant_transcript on learn_runs(tenant_id, transcript_sha);
+create table if not exists skills(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  name text not null,
+  description text,
+  status text not null default 'pending',
+  created_by text not null default 'lore-learn',
+  human_edited boolean default false,
+  use_count integer default 0,
+  view_count integer default 0,
+  patch_count integer default 0,
+  last_activity_at timestamptz,
+  current_version integer,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now());
+create unique index if not exists skills_tenant_name on skills(tenant_id, name);
+create table if not exists skill_versions(
+  id text primary key,
+  skill_id text not null references skills(id) on delete cascade,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  frontmatter_json text,
+  origin_session text,
+  origin text not null default 'lore-learn',
+  created_at timestamptz default now(),
+  constraint skill_versions_unique unique (skill_id, version));
+create index if not exists skill_versions_skill on skill_versions(skill_id, version);
+create table if not exists memory_versions(
+  id text primary key,
+  note_id text not null references notes(id) on delete cascade,
+  tenant_id text not null,
+  owner_id text not null,
+  scope_id text not null,
+  kind text not null,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  origin text not null default 'user',
+  origin_session text,
+  created_at timestamptz default now(),
+  constraint memory_kind_check check (kind in ('memory','user')),
+  constraint memory_versions_unique unique (note_id, version));
+create index if not exists memory_versions_note on memory_versions(note_id, version);
 create table if not exists personal_wizards(
   id text primary key,
   tenant_id text not null,
@@ -296,6 +438,17 @@ create table if not exists query_log(
   query_hash text,
   hits integer);
 create index if not exists query_log_ts on query_log(tenant_id, ts desc);
+create table if not exists retrieval_profiles(
+  tenant_id text not null,
+  name text not null,
+  config text not null,
+  updated_at timestamptz default now(),
+  primary key (tenant_id, name));
+create table if not exists index_identity(
+  collection text primary key,
+  model_id text not null,
+  dim integer,
+  recorded_at timestamptz default now());
 """
 
 # PG migration note: personal_wizards / personal_wizard_chats / ask_history are NEW tables, so the
@@ -309,6 +462,14 @@ create index if not exists query_log_ts on query_log(tenant_id, ts desc);
 # validates the value in code, so nothing invalid can be written either way.
 _WIZARD_SCOPE_MIGRATION = [
     "alter table personal_wizards add column if not exists share_scope text not null default 'private'",
+]
+
+# Feedback events (2026-07-29): generic button signals carry the event name and
+# a fractional weight; stores created before the columns shipped get them here
+# (PG) / via probe-and-add in bootstrap_schema (SQLite).
+_FEEDBACK_EVENT_MIGRATION = [
+    "alter table feedback add column if not exists event text",
+    "alter table feedback add column if not exists weight real default 1.0",
 ]
 
 # Columns added in M1 (Hooks milestone).  ADD COLUMN IF NOT EXISTS is idempotent
@@ -347,6 +508,13 @@ _CREATED_MIGRATION = [
     "alter table notes add column if not exists created_at timestamptz",
 ]
 
+# Doc-tree (LORE_DOC_TREE): which structure-builder version indexed this note.
+# NULL = flat path. Mismatch vs structure.BUILDER_VERSION → rebuild-or-refuse
+# (structure.stale_notes); prevents a silently mixed index after a flag flip.
+_DOC_TREE_MIGRATION = [
+    "alter table notes add column if not exists builder_version text",
+]
+
 # Unique constraint added in M1; applied opportunistically (no-op if already present).
 _EDGES_UNIQUE_CONSTRAINT = """
 do $$ begin
@@ -382,9 +550,24 @@ create table if not exists notes(
   source_path text, title text, source_type text,
   memory_type text default 'durable',
   body text, body_sha256 text, content_hash text,
+  builder_version text,
   importance real default 0,
   created_at timestamp,
   updated_at timestamp default current_timestamp);
+create table if not exists doc_nodes(
+  id text primary key,
+  tenant_id text not null,
+  note_id text not null references notes(id) on delete cascade,
+  parent_id text,
+  title text not null,
+  level integer not null,
+  page_start integer,
+  page_end integer,
+  source text,
+  confidence real default 0,
+  builder_version text,
+  created_at timestamp default current_timestamp);
+create index if not exists doc_nodes_note on doc_nodes(note_id);
 create table if not exists chunks(
   id text primary key, note_id text references notes(id) on delete cascade,
   heading_path text, text text, has_context integer default 0,
@@ -428,6 +611,8 @@ create table if not exists feedback(
   note_id text not null,
   vote integer not null,
   query_hash text,
+  event text,
+  weight real default 1.0,
   ts timestamp default current_timestamp);
 create index if not exists feedback_note on feedback(tenant_id, note_id);
 create table if not exists section_proposals(
@@ -441,7 +626,97 @@ create table if not exists section_proposals(
   created_at timestamp default current_timestamp,
   updated_at timestamp default current_timestamp,
   constraint section_status_check check (status in ('proposed','applied','dismissed')));
+create table if not exists topic_registry(
+  tenant_id text not null,
+  slug_key text not null,
+  canonical text not null,
+  source text default 'llm',
+  first_seen timestamp default current_timestamp,
+  primary key (tenant_id, slug_key));
+create table if not exists observations(
+  id text primary key,
+  tenant_id text not null,
+  session_id text,
+  ts timestamp default current_timestamp,
+  type text not null,
+  summary text not null,
+  facts text,
+  concepts text,
+  files_read text,
+  files_modified text,
+  origin_note_id text,
+  outcome text);
+create index if not exists observations_session on observations(tenant_id, session_id);
+create table if not exists observation_files(
+  observation_id text not null,
+  tenant_id text not null,
+  path_key text not null,
+  path_norm text not null);
+create index if not exists observation_files_key on observation_files(tenant_id, path_key);
 create index if not exists sections_tenant on section_proposals(tenant_id);
+create table if not exists learn_runs(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  scope_id text,
+  session_key text,
+  transcript_sha text not null,
+  started_at timestamp default current_timestamp,
+  duration_ms integer default 0,
+  provider text,
+  calls_made integer default 0,
+  input_chars integer default 0,
+  est_tokens integer default 0,
+  actions_json text,
+  status text not null default 'queued',
+  skip_reason text);
+create index if not exists learn_runs_tenant_started on learn_runs(tenant_id, started_at);
+create unique index if not exists learn_runs_tenant_transcript on learn_runs(tenant_id, transcript_sha);
+create table if not exists skills(
+  id text primary key,
+  tenant_id text not null,
+  owner_id text,
+  name text not null,
+  description text,
+  status text not null default 'pending',
+  created_by text not null default 'lore-learn',
+  human_edited integer default 0,
+  use_count integer default 0,
+  view_count integer default 0,
+  patch_count integer default 0,
+  last_activity_at timestamp,
+  current_version integer,
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp);
+create unique index if not exists skills_tenant_name on skills(tenant_id, name);
+create table if not exists skill_versions(
+  id text primary key,
+  skill_id text not null references skills(id) on delete cascade,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  frontmatter_json text,
+  origin_session text,
+  origin text not null default 'lore-learn',
+  created_at timestamp default current_timestamp,
+  constraint skill_versions_unique unique (skill_id, version));
+create index if not exists skill_versions_skill on skill_versions(skill_id, version);
+create table if not exists memory_versions(
+  id text primary key,
+  note_id text not null references notes(id) on delete cascade,
+  tenant_id text not null,
+  owner_id text not null,
+  scope_id text not null,
+  kind text not null,
+  version integer not null,
+  body text not null,
+  body_sha256 text not null,
+  origin text not null default 'user',
+  origin_session text,
+  created_at timestamp default current_timestamp,
+  constraint memory_kind_check check (kind in ('memory','user')),
+  constraint memory_versions_unique unique (note_id, version));
+create index if not exists memory_versions_note on memory_versions(note_id, version);
 create table if not exists personal_wizards(
   id text primary key,
   tenant_id text not null,
@@ -489,6 +764,17 @@ create table if not exists query_log(
   query_hash text,
   hits integer);
 create index if not exists query_log_ts on query_log(tenant_id, ts desc);
+create table if not exists retrieval_profiles(
+  tenant_id text not null,
+  name text not null,
+  config text not null,
+  updated_at timestamp default current_timestamp,
+  primary key (tenant_id, name));
+create table if not exists index_identity(
+  collection text primary key,
+  model_id text not null,
+  dim integer,
+  recorded_at timestamp default current_timestamp);
 """
 
 
@@ -525,6 +811,20 @@ def bootstrap_schema(conn):
             conn.execute("alter table notes add column memory_type text default 'durable'")
         except Exception:
             pass  # column already exists
+        # Doc-tree: builder_version for stores created before the column shipped.
+        try:
+            conn.execute("alter table notes add column builder_version text")
+        except Exception:
+            pass  # column already exists
+        # Feedback events: event/weight for stores created before they shipped.
+        try:
+            conn.execute("alter table feedback add column event text")
+        except Exception:
+            pass  # column already exists
+        try:
+            conn.execute("alter table feedback add column weight real default 1.0")
+        except Exception:
+            pass  # column already exists
         return
 
     # Step 1a: add source_type to notes (M1 migration).
@@ -556,7 +856,19 @@ def bootstrap_schema(conn):
         except Exception:
             pass  # table may not exist yet
 
+    # Step 1d2: add builder_version to notes (doc-tree milestone).
+    for stmt in _DOC_TREE_MIGRATION:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # table may not exist yet
+
     # Step 1e: add share_scope to personal_wizards (wizard sharing milestone).
+    for stmt in _FEEDBACK_EVENT_MIGRATION:
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # table may not exist yet on a truly fresh install
     for stmt in _WIZARD_SCOPE_MIGRATION:
         try:
             conn.execute(stmt)
