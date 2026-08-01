@@ -50,7 +50,12 @@ def propose_sections(conn, tenant: str, threshold: int = DEFAULT_THRESHOLD) -> d
     A proposal is created for a topic when >= `threshold` of its notes:
       * have a real file on disk (source_path is set), and
       * are not already inside a folder named after the topic, and
-      * are not already claimed by an applied section.
+      * are not already claimed by an applied section, and
+      * are not junk mail: notes roled 'solicitation' or 'bulk' never count
+        toward the threshold nor join the membership (Ellington eval
+        2026-07-28: filtering junk lifted section purity 0.716 -> 0.750 and
+        removed every spam-majority folder proposal). Notes with NO role row
+        are kept — absence of a role never implies junk.
     Dismissed/applied topics are sticky — never re-proposed.  Existing 'proposed'
     rows are refreshed with the current note set.  NO files are touched here.
     """
@@ -59,7 +64,10 @@ def propose_sections(conn, tenant: str, threshold: int = DEFAULT_THRESHOLD) -> d
     rows = conn.execute(
         "select t.tag, t.note_id, n.source_path from note_tags t "
         "join notes n on n.id = t.note_id and n.tenant_id = t.tenant_id "
-        "where t.tenant_id=%s and t.kind='topic' and n.source_path is not null",
+        "where t.tenant_id=%s and t.kind='topic' and n.source_path is not null "
+        "and not exists (select 1 from note_tags r "
+        "                where r.tenant_id = t.tenant_id and r.note_id = t.note_id "
+        "                and r.kind='role' and r.tag in ('solicitation','bulk'))",
         (tenant,)).fetchall()
 
     existing = {}          # slug -> (id, status)
@@ -135,6 +143,20 @@ def list_sections(conn, tenant: str) -> list:
                 [tenant, *params]).fetchall():
             meta[nid] = {"id": nid, "title": title, "path": spath}
 
+    # Auto-apply stability gate (2026-07-21 cold-start findings): expose each
+    # topic's registry first_seen so the desktop can refuse to auto-apply
+    # sections built on topics the classifier invented moments ago. Topics
+    # with no registry row predate the registry — grandfathered as stable.
+    from .classify import _slug_key
+    first_seen = {}
+    try:
+        for key, seen in conn.execute(
+                "select slug_key, first_seen from topic_registry where tenant_id=%s",
+                (tenant,)).fetchall():
+            first_seen[key] = seen.isoformat() if isinstance(seen, datetime.datetime) else seen
+    except Exception:
+        first_seen = {}
+
     out = []
     for sid, name, topic, ids, original_paths, status, created, updated in parsed:
         try:
@@ -145,6 +167,7 @@ def list_sections(conn, tenant: str) -> list:
             "id": sid,
             "name": name,
             "topic": topic,
+            "topic_first_seen": first_seen.get(_slug_key(topic)),
             "status": status,
             "notes": [meta.get(i, {"id": i, "title": None, "path": None}) for i in ids],
             "original_paths": originals,
@@ -248,11 +271,17 @@ def create_section_from_notes(conn, tenant: str, name: str, note_ids: list) -> d
             "note_count": len(valid), "note_ids": valid}
 
 
-def undo_section(conn, tenant: str, section_id: str) -> dict:
-    """Transition applied -> proposed and return the recorded original paths.
+def undo_section(conn, tenant: str, section_id: str, dismiss: bool = False) -> dict:
+    """Transition applied -> proposed (or -> dismissed) and return the recorded
+    original paths.
 
     The desktop moves each file from its section location back to `from` (the
     recorded original path).  The backend itself never touches the filesystem.
+
+    dismiss=True lands the section in 'dismissed' (sticky) instead of 'proposed'.
+    Required by auto-apply mode: with sections applying automatically on every
+    upkeep run, an undo that returned to 'proposed' would be re-applied on the
+    next run — undo must mean *gone*, not *pending again*.
     """
     sid, name, _topic, _ids, original_paths, status = _get(conn, tenant, section_id)
     if status != 'applied':
@@ -261,10 +290,11 @@ def undo_section(conn, tenant: str, section_id: str) -> dict:
         moves = json.loads(original_paths) if original_paths else []
     except Exception:
         moves = []
+    new_status = 'dismissed' if dismiss else 'proposed'
     conn.execute(
-        "update section_proposals set status='proposed', original_paths=null, updated_at=now() "
-        "where id=%s and tenant_id=%s", (sid, tenant))
-    return {"ok": True, "id": sid, "name": name, "moves": moves}
+        "update section_proposals set status=%s, original_paths=null, updated_at=now() "
+        "where id=%s and tenant_id=%s", (new_status, sid, tenant))
+    return {"ok": True, "id": sid, "name": name, "status": new_status, "moves": moves}
 
 
 # --- Personal Wizards: an APPLIED section promoted to a per-topic RAG assistant ---

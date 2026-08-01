@@ -1,21 +1,29 @@
-import datetime, hashlib, json, os, re, time, uuid
+import contextvars, datetime, hashlib, json, os, re, threading, time, uuid
 from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, Header
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Depends, HTTPException, Header, Form, UploadFile
+from fastapi import File as FastFile
 from pydantic import BaseModel
 from . import db, qdrant_store
 from .config import settings
 from .sqlutil import in_clause
 from .embed import FakeEmbedder, VoyageEmbedder, LocalEmbedder, LocalSparseEmbedder
 from .rerank import FakeReranker, VoyageReranker, LocalReranker
-from .index import index_note, index_document, backfill_created_at
+from .distill import distill_document
+from .index import index_note, index_document, backfill_created_at, parse_created_at, rebuild_index
 from .recall import retrieve, retrieve_traced
 from .redact import redact
 from . import llm
-from . import auth, mailer, tenancy
-from . import supersede
+from . import (apikeys, auth, embed_identity, mailer, profiles as profiles_mod,
+               tagscope, tenancy)
+from . import scopes as scopes_mod
+from . import supersede, personal_memory, sessions
 
 app = FastAPI(title="Lore Core")
+
+# The authenticated principal for the CURRENT request when identity came from an
+# API key: {id, user_id, tenant_id, role}. None for JWT/local callers. Used to
+# default tenant/scope so key-authed clients need zero tenancy parameters.
+_PRINCIPAL = contextvars.ContextVar("lore_principal", default=None)
 
 # --- Local API token -------------------------------------------------------
 # The backend binds 127.0.0.1, so remote machines can't reach it — but ANY
@@ -125,10 +133,40 @@ def _recent_note_rows(tenant: str, scopes: list, limit: int = 8, subject: str = 
 # and only Fake if explicitly forced (VAULT_FAKE=1) for fast unit tests.
 _FAKE = os.environ.get("VAULT_FAKE") == "1"
 
-def get_embedder():
+def _build_embedder():
+    """The embedder this engine resolves to, UNGATED. Only the rebuild path may
+    use it directly — a rebuild is precisely the operation that must still run
+    when the live model disagrees with the index."""
     if _FAKE:
         return FakeEmbedder()
-    return VoyageEmbedder(settings.voyage_api_key) if settings.voyage_api_key else LocalEmbedder()
+    return VoyageEmbedder(settings.voyage_api_key) if settings.voyage_api_key \
+        else LocalEmbedder()
+
+
+def get_embedder():
+    """The dense embedder for this request — gated on index compatibility.
+
+    Every retrieval endpoint (ask/search/context-pack/trace) and /reindex depends
+    on this, so the check here covers all of them. Setting VOYAGE_API_KEY on a box
+    whose index was built locally used to swap the model silently; now it fails
+    loudly with the rebuild instruction instead of returning nonsense."""
+    embedder = _build_embedder()
+    try:
+        embed_identity.check_read(_conn, embedder)
+    except embed_identity.IndexIdentityMismatch as e:
+        raise HTTPException(503, str(e))
+    return embedder
+
+def _live_embedder_id(voyage: bool = None):
+    """model_id the engine WOULD use right now, without loading the model.
+    None under VAULT_FAKE — a fake embedder never binds an index."""
+    if _FAKE:
+        return None
+    if voyage is None:
+        voyage = bool(settings.voyage_api_key)
+    return embed_identity.voyage_model_id(VoyageEmbedder.DEFAULT_MODEL) if voyage \
+        else embed_identity.local_model_id(LocalEmbedder.DEFAULT_MODEL)
+
 
 def get_reranker():
     if _FAKE:
@@ -185,12 +223,21 @@ def auth_google(req: GoogleLoginReq):
 
 def require_user(authorization: Optional[str] = Header(default=None)) -> str:
     """FastAPI dependency for protected endpoints: validate the `Authorization: Bearer
-    <lore-jwt>` header and return the authenticated user_id. 401 if missing/invalid.
+    <lore-jwt | lore_sk_...>` header and return the authenticated user_id. 401 if
+    missing/invalid. API keys resolve via the api_keys table (principal stashed in
+    _PRINCIPAL for tenancy defaults); anything else is treated as a session JWT.
     Authorization (which scopes the user may read) is re-derived from membership by the
     endpoint via tenancy.authorize_scopes — never trusted from the token."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="missing bearer token")
     token = authorization.split(None, 1)[1].strip()
+    if token.startswith("lore_sk_"):
+        principal = apikeys.verify_key(_conn, token)
+        if not principal:
+            raise HTTPException(status_code=401, detail="invalid or revoked API key")
+        _PRINCIPAL.set(principal)
+        return principal["user_id"]
+    _PRINCIPAL.set(None)
     try:
         claims = auth.verify_session_jwt(token)
     except auth.AuthError as e:
@@ -215,6 +262,12 @@ def _server_mode() -> bool:
     return os.environ.get("LORE_SERVER_MODE") == "1"
 
 
+def _service_mode() -> bool:
+    """Identity-required data plane: hosted server mode OR the API-key service
+    mode (LORE_API_KEYS=1). Local desktop/solo default stays passthrough."""
+    return _server_mode() or os.environ.get("LORE_API_KEYS") == "1"
+
+
 def private_scope_id(user_id: str) -> str:
     """Canonical per-user private scope id used for hosted (server-mode) data.
     Private notes are tagged `private:{user_id}`; only that user may read them."""
@@ -232,9 +285,12 @@ def _as_scope_list(scopes) -> list[str]:
 def _authorize_read(authorization, requested_scopes, tenant):
     """Server-mode read ACL. Returns (user_id|None, effective_scopes, tenant).
     Local mode: passthrough (trusts the request) — solo/desktop unchanged."""
-    if not _server_mode():
+    if not _service_mode():
         return None, requested_scopes, tenant
     user_id = require_user(authorization)               # 401 without a valid token
+    principal = _PRINCIPAL.get()
+    if principal and not tenant:
+        tenant = principal["tenant_id"]                 # personal-mode default
     requested = _as_scope_list(requested_scopes)
     allowed = set(tenancy.authorize_scopes(_conn, user_id, requested or None))
     priv = private_scope_id(user_id)
@@ -248,17 +304,47 @@ def _authorize_read(authorization, requested_scopes, tenant):
     return user_id, allowed, tenant
 
 
+def _resolve_profile(tenant, requested):
+    """Pick the retrieval tuning for this request → (RetrievalProfile|None, name).
+
+    Precedence: explicit request name > the API key's bound profile > the
+    engine's own tuning (None, i.e. recall._default_profile()).
+
+    An unknown name is a 400, never a silent fall back to the default: an app
+    that believes its tuning is live when it isn't is the failure this whole
+    mechanism exists to prevent.
+    """
+    principal = _PRINCIPAL.get()
+    name = requested or (principal or {}).get("profile")
+    if not name or name == profiles_mod.RESERVED_NAME:
+        return None, profiles_mod.RESERVED_NAME
+    p = profiles_mod.load_profile(_conn, tenant, name)
+    if p is None:
+        raise HTTPException(400, f"unknown retrieval profile: {name}")
+    return p, name
+
+
 def _authorize_write(authorization, scope, owner, tenant):
     """Server-mode write ACL. Returns (owner, scope, tenant). The write scope must be
     the caller's own private scope or an authorized team scope; owner is forced to the
     caller. Local mode: passthrough."""
-    if not _server_mode():
+    if not _service_mode():
         return owner, scope, tenant
     user_id = require_user(authorization)
+    principal = _PRINCIPAL.get()
+    if principal:                                       # personal-mode defaults
+        if not tenant:
+            tenant = principal["tenant_id"]
+        if not scope:
+            scope = private_scope_id(user_id)
     allowed = set(tenancy.authorize_scopes(_conn, user_id, [scope] if scope else None))
     allowed.add(private_scope_id(user_id))
     if scope not in allowed:
         raise HTTPException(status_code=403, detail="scope not authorized for this user")
+    # Named scopes (s:*) separate read from write: a read grant authorizes recall
+    # but never ingestion — write needs ownership or a write-level grant.
+    if scope.startswith("s:") and not scopes_mod.can_write(_conn, scope, user_id):
+        raise HTTPException(status_code=403, detail="scope is read-only for this user")
     if not tenant:
         raise HTTPException(status_code=422, detail="tenant is required")
     return user_id, scope, tenant
@@ -267,7 +353,7 @@ def _authorize_write(authorization, scope, owner, tenant):
 def _require_user_in_server_mode(authorization) -> Optional[str]:
     """For maintenance/destructive endpoints: require a valid token in server mode,
     no-op locally. Returns the user_id (or None in local mode)."""
-    if not _server_mode():
+    if not _service_mode():
         return None
     return require_user(authorization)
 
@@ -345,8 +431,9 @@ class ReindexReq(BaseModel):
     tenant_id: str
 class AskReq(BaseModel):
     question: str
-    principal_scopes: list[str]
-    tenant_id: str
+    # Optional since Phase B personal mode: key-authed callers omit both.
+    principal_scopes: Optional[list[str]] = None
+    tenant_id: Optional[str] = None
     model: Optional[str] = None
     # Optional prior turns [{role:'user'|'assistant', text}, ...] so follow-up
     # questions ("what about the second one?") resolve against the running chat.
@@ -355,16 +442,26 @@ class AskReq(BaseModel):
     # 'codex' | 'claude' | 'byok' — answer through the user's subscription/key
     # (see llm_providers). None → local Ollama / extractive fallback.
     provider: Optional[str] = None
+    # Named retrieval profile (see /profiles). None → the API key's bound
+    # profile, else the engine default.
+    profile: Optional[str] = None
 
 class IngestReq(BaseModel):
     source_id: str
     title: str
     text: str
-    scope: str
-    owner: str
-    tenant: str
+    # Optional since Phase B personal mode: a key-authed caller omits all three
+    # (tenant/owner come from the key, scope defaults to their private scope).
+    # Local mode still requires them explicitly (validated in the handler).
+    scope: Optional[str] = None
+    owner: Optional[str] = None
+    tenant: Optional[str] = None
     source_type: Optional[str] = None
     content_hash: Optional[str] = None
+    # ISO-8601 real creation date, for callers that know it (importers, the eval
+    # harness replaying dated corpora). Document frontmatter still wins; an
+    # unparseable value is ignored rather than failing the ingest.
+    created_at: Optional[str] = None
 
 def _allowed_vault_roots() -> list[str]:
     """Real-path'd list of directories /reindex may read from. Empty => unconfigured.
@@ -440,11 +537,16 @@ def ingest(req: IngestReq, authorization: Optional[str] = Header(default=None)):
         embedder = LocalEmbedder()       # never VoyageEmbedder here
         sparse = LocalSparseEmbedder()
 
+    if not (scope and owner and tenant):
+        # Local mode with fields omitted (service mode fills them from the key).
+        raise HTTPException(422, "scope, owner and tenant are required in local mode")
+    _stated = parse_created_at(req.created_at)
     n = index_document(
         source_id=req.source_id, title=req.title, text=req.text,
         scope_id=scope, owner_id=owner, tenant_id=tenant,
         embedder=embedder, conn=_conn, sparse_embedder=sparse,
         source_type=req.source_type, content_hash=req.content_hash,
+        mtime=_stated.timestamp() if _stated else None,
     )
     _maybe_propose_supersessions(tenant, req.source_id)
     _maybe_extract_people(tenant, req.source_id)
@@ -521,6 +623,20 @@ def _title_index_cached(tenant: str):
     return index
 
 
+def _tag_seed_ids(tenant: str, query: str, scopes) -> list:
+    """Note ids matched from query-named tags — recall's seed_note_ids, so
+    tag-relevant notes enter the candidate pool even when the vector lanes
+    miss them (they still have to EARN rank via rerank + tag boost)."""
+    try:
+        matched = tagscope.match_tags(
+            tagscope.load_tag_vocabulary(_conn, tenant), query or "")
+        if not matched:
+            return []
+        return tagscope.tag_note_ids(_conn, tenant, matched, scopes)
+    except Exception:
+        return []
+
+
 def _note_signals_provider(tenant: str, query: str):
     """Callable handed to recall.retrieve — resolves note-level ranking signals
     (importance, age, memory type, superseded, entity match) for the candidate
@@ -534,6 +650,15 @@ def _note_signals_provider(tenant: str, query: str):
                 entity_ids.add(nid)
     except Exception:
         entity_ids = set()
+
+    # Query-side tag matching, once per request: tags the question names
+    # ("algebra dogs") boost notes carrying them (tagscope.py — boost, never
+    # a filter, so untagged-but-relevant notes stay reachable).
+    try:
+        matched_tags = tagscope.match_tags(
+            tagscope.load_tag_vocabulary(_conn, tenant), query or "")
+    except Exception:
+        matched_tags = set()
 
     now = datetime.datetime.now(datetime.timezone.utc)
 
@@ -557,10 +682,17 @@ def _note_signals_provider(tenant: str, query: str):
                   and not ({frag2o})""",
             (tenant, *params2, *params2o)).fetchall()}
         frag3, params3 = in_clause("note_id", ids)
+        # weight-aware net: button events carry fractional weights (an 'edit'
+        # downvote at 0.5 counts half a thumb); classic /feedback rows have
+        # weight 1.0 (or NULL pre-migration) so nothing changes for them.
         fb = dict(_conn.execute(
-            f"""select note_id, coalesce(sum(vote),0) from feedback
-                where tenant_id=%s and {frag3} group by note_id""",
+            f"""select note_id, coalesce(sum(vote * coalesce(weight, 1.0)),0)
+                from feedback where tenant_id=%s and {frag3} group by note_id""",
             (tenant, *params3)).fetchall())
+        try:
+            tag_hits = tagscope.tag_hits_by_note(_conn, tenant, matched_tags, ids)
+        except Exception:
+            tag_hits = {}
         out = {}
         for nid, importance, created_at, memory_type, source_type in rows:
             age_days = None
@@ -582,7 +714,8 @@ def _note_signals_provider(tenant: str, query: str):
                 "memory_type": memory_type,
                 "superseded": nid in superseded,
                 "entity_hit": nid in entity_ids,
-                "feedback_net": int(fb.get(nid) or 0),
+                "feedback_net": float(fb.get(nid) or 0.0),
+                "tag_hits": tag_hits.get(nid, 0),
             }
         return out
 
@@ -627,17 +760,65 @@ def ask(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rerank
         sparse=Depends(get_sparse_embedder),
         authorization: Optional[str] = Header(default=None)):
     _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
+    if not tenant or not scopes:
+        raise HTTPException(422, "principal_scopes and tenant_id are required in local mode")
+    profile, profile_name = _resolve_profile(tenant, req.profile)
     hits = retrieve(req.question, embedder, reranker, scopes, tenant,
                     sparse_embedder=sparse,
-                    note_signals=_note_signals_provider(tenant, req.question))
+                    note_signals=_note_signals_provider(tenant, req.question),
+                    profile=profile,
+                    seed_note_ids=_tag_seed_ids(tenant, req.question, scopes))
     chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
     text, engine = llm.answer(req.question, chunks, model=req.model, history=req.history, provider=req.provider)
     _audit("ask", tenant, _uid, scopes, req.question, len(hits))
     citations = _citations_for(hits)
     return {"answer": text, "engine": engine,
             "scopes_used": list(scopes),
+            "profile": profile_name,
             "citations": citations,
             "conflicts": _conflicts_for(tenant, [c["note_id"] for c in citations])}
+
+class EmailDraftReq(BaseModel):
+    ask: str                                    # what the email should accomplish
+    to: Optional[str] = None                    # recipient: email address or name
+    # Optional since Phase B personal mode: key-authed callers omit both.
+    principal_scopes: Optional[list[str]] = None
+    tenant_id: Optional[str] = None
+    provider: Optional[str] = None              # 'codex' | 'claude' | 'byok'
+    owner_email: Optional[str] = None           # prefer these sent-mail style samples
+    style_limit: int = 4
+
+
+@app.post("/emails/draft")
+def emails_draft(req: EmailDraftReq, embedder=Depends(get_embedder),
+                 reranker=Depends(get_reranker), sparse=Depends(get_sparse_embedder),
+                 authorization: Optional[str] = Header(default=None)):
+    """Draft an email in the owner's voice: style from their correspondence,
+    facts ONLY from recall (tag-boosted, cited), recipient history from
+    people.py. Returns a DRAFT — Lore never sends (action boundary: delivery
+    belongs to the product backend)."""
+    _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
+    if not tenant or not scopes:
+        raise HTTPException(422, "principal_scopes and tenant_id are required in local mode")
+    hits = retrieve(req.ask, embedder, reranker, scopes, tenant,
+                    sparse_embedder=sparse,
+                    note_signals=_note_signals_provider(tenant, req.ask),
+                    seed_note_ids=_tag_seed_ids(tenant, req.ask, scopes))
+    chunks = [{"title": h.heading_path, "text": h.text} for h in hits]
+    from . import draft_email
+    try:
+        result = draft_email.compose(
+            _conn, tenant, scopes, req.ask, chunks, to=req.to,
+            provider=req.provider, owner_email=req.owner_email,
+            style_limit=req.style_limit)
+    except draft_email.DraftError as e:
+        raise HTTPException(503, str(e))
+    _audit("emails.draft", tenant, _uid, scopes, req.ask, len(hits))
+    citations = _citations_for(hits)
+    result["citations"] = citations
+    result["scopes_used"] = list(scopes)
+    return result
+
 
 @app.post("/trace")
 def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
@@ -654,6 +835,8 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
     with a reduced trace ("fallback" flag), never a dead end for the desktop chat.
     """
     _uid, scopes, tenant = _authorize_read(authorization, req.principal_scopes, req.tenant_id)
+    if not tenant or not scopes:
+        raise HTTPException(422, "principal_scopes and tenant_id are required in local mode")
     if _TEMPORAL_RE.search(req.question or ""):
         rows = _recent_note_rows(tenant, scopes, limit=8,
                                  subject=_temporal_subject(req.question) or None)
@@ -676,9 +859,10 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
         tr["scopes_asked"] = scopes
         _audit("trace", tenant, _uid, scopes, req.question, len(tr["final"]))
         return tr
+    profile, profile_name = _resolve_profile(tenant, req.profile)
     if sparse is None:
         hits = retrieve(req.question, embedder, reranker, scopes, tenant,
-                        sparse_embedder=None)
+                        sparse_embedder=None, profile=profile)
         tr = {
             "query": req.question,
             "classification": "hybrid",
@@ -690,7 +874,10 @@ def trace(req: AskReq, embedder=Depends(get_embedder), reranker=Depends(get_rera
     else:
         _, tr = retrieve_traced(req.question, embedder, reranker, sparse,
                                 scopes, tenant,
-                                note_signals=_note_signals_provider(tenant, req.question))
+                                note_signals=_note_signals_provider(tenant, req.question),
+                                profile=profile,
+                                seed_note_ids=_tag_seed_ids(tenant, req.question, scopes))
+    tr["profile"] = profile_name
     tr["citations"] = _citations_for(tr["final"])
     tr["conflicts"] = _conflicts_for(tenant, [c["note_id"] for c in tr["citations"]])
     # Stamp the NOTE-level scope back onto the final rows so the evidence trail
@@ -769,7 +956,7 @@ def graph(tenant: Optional[str] = None, scopes: Optional[str] = None,
     """
     # Server-mode: authenticate + restrict scopes to the caller's own; the returned
     # `scopes` replaces whatever was requested. Local mode: passthrough.
-    if _server_mode():
+    if _service_mode():
         _uid, srv_scopes, tenant = _authorize_read(authorization, scopes, tenant)
         scopes = ",".join(srv_scopes)
     profile = active_profile()
@@ -917,15 +1104,15 @@ def stats(tenant: Optional[str] = None):
 
 
 @app.get("/doctor")
-def doctor_endpoint(tenant: Optional[str] = None):
+def doctor_endpoint(tenant: Optional[str] = None,
+                    authorization: Optional[str] = Header(default=None)):
     """Local health diagnostics (`lore doctor` backend half): model cache,
     vector store, index counts, upkeep backlog, LLM availability, auth mode.
 
-    Refused in server mode — this surface reveals deployment internals and is
-    meant for the on-device install only.
+    Local mode: open. Service mode: admin API key required (deployment
+    internals are operator-only, never member-visible).
     """
-    if _server_mode():
-        raise HTTPException(403, "doctor is a local-mode diagnostic surface")
+    _require_key_admin(authorization)
     from . import doctor as _doctor
     return _doctor.run_checks(_conn, tenant or "local")
 
@@ -1029,8 +1216,16 @@ def config_retrieval(tenant: Optional[str] = None):
     else:
         embedding = {"provider": "local", "model": LocalEmbedder.DEFAULT_MODEL}
         rerank_m = {"provider": "local", "model": LocalReranker.DEFAULT_MODEL}
+    # The live model is only half the story: what matters for recall is whether it
+    # matches the model the VECTORS were built with. Reporting only the live one is
+    # how a silent swap stays invisible.
+    indexed = embed_identity.recorded(_conn)
+    live_id = _live_embedder_id(voyage)
     return {
         "embeddingModel": embedding,
+        "indexedWith": ({"model_id": indexed.model_id, "dim": indexed.dim}
+                        if indexed else None),
+        "indexMismatch": bool(indexed and live_id and indexed.model_id != live_id),
         "reranker": rerank_m,
         # apply_context() runs on every indexed chunk (see index.py); the blurb is the
         # deterministic metadata sentence — enabled by design, not user-toggleable.
@@ -1050,6 +1245,25 @@ class CaptureReq(BaseModel):
     owner: str
     tenant: str
     mode: Optional[str] = None  # reserved for future routing; unused in M1
+
+
+class LearnEnqueueReq(BaseModel):
+    session_id: str
+    transcript_path: str
+    cwd: str = ""
+    scope: str
+    owner: str
+    tenant: str
+
+
+class LearnMutationReq(BaseModel):
+    tenant: str
+    scope: Optional[str] = None
+    owner: Optional[str] = None
+
+
+class LearnRollbackReq(LearnMutationReq):
+    version: int
 
 def _session_note_id(session_id: str) -> str:
     """Stable note_id derived from session_id (SHA-1, first 16 hex chars)."""
@@ -1085,6 +1299,166 @@ def capture(req: CaptureReq, authorization: Optional[str] = Header(default=None)
     _maybe_propose_supersessions(tenant, note_id)
     _maybe_extract_people(tenant, note_id)
     return {"ok": True, "note_id": note_id, "chunks": n}
+
+
+# --- Lore Learn (bounded post-session skill review) -------------------------
+
+@app.post("/learn/enqueue")
+def learn_enqueue(req: LearnEnqueueReq, authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not req.tenant or not req.transcript_path:
+        raise HTTPException(status_code=422, detail="tenant and transcript_path are required")
+    owner, scope, tenant = _authorize_write(authorization, req.scope, req.owner, req.tenant)
+    _require_key_admin(authorization)   # service mode: operator-only surface
+    result = learn.enqueue(
+        _conn, session_id=req.session_id, transcript_path=req.transcript_path, cwd=req.cwd,
+        scope=scope, owner=owner, tenant=tenant,
+    )
+    if not result.get("duplicate") or result.get("status") in {"failed", "timeout"}:
+        threading.Thread(
+            target=learn.run_queued,
+            args=(result["run_id"], req.transcript_path),
+            name=f"lore-learn-{result['run_id'][:8]}",
+            daemon=True,
+        ).start()
+    return {key: result[key] for key in ("ok", "run_id", "status", "duplicate")}
+
+
+class ObservationExtractReq(BaseModel):
+    tenant: str
+    session_id: str
+    # Exactly one of the two: a local path (desktop Stop hook) or the raw
+    # transcript payload itself (remote API callers — Phase C loop closure).
+    transcript_path: Optional[str] = None
+    transcript: Optional[dict] = None
+    origin_note_id: Optional[str] = None
+
+
+@app.post("/observations/extract")
+def observations_extract(req: ObservationExtractReq):
+    """Extract ONE structured observation from a captured session transcript
+    (#4 file-anchored recall). Deterministic file activity from tool_use
+    blocks; type/summary/facts LLM-enriched when a provider is configured,
+    deterministic fallback otherwise. Called by the desktop Stop hook after
+    /capture (path variant) or by remote services (body variant);
+    idempotency is per-call (re-extraction appends — ADD-only)."""
+    from . import observations
+    if bool(req.transcript_path) == bool(req.transcript is not None):
+        raise HTTPException(422, "provide exactly one of transcript_path | transcript")
+    path = req.transcript_path
+    tmp = None
+    if req.transcript is not None:
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json",
+                                          delete=False, encoding="utf-8")
+        json.dump(req.transcript, tmp)
+        tmp.close()
+        path = tmp.name
+    try:
+        result = observations.extract_and_store(
+            _conn, tenant=req.tenant, session_id=req.session_id,
+            transcript_path=path, origin_note_id=req.origin_note_id)
+    except OSError:
+        raise HTTPException(status_code=422, detail="transcript_path unreadable")
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+    return result
+
+
+@app.get("/observations")
+def observations_list(tenant: Optional[str] = None, file: Optional[str] = None,
+                      session: Optional[str] = None, limit: int = 5):
+    """File-anchored recall query (#3 hook contract): newest-first observations
+    touching `file` (last-two-segment path key match), or all observations for
+    a session. Exactly one of file/session is required."""
+    from . import observations
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    if bool(file) == bool(session):
+        raise HTTPException(status_code=422,
+                            detail="exactly one of file or session is required")
+    if file:
+        rows = observations.for_file(_conn, tenant=tenant, file_path=file, limit=limit)
+    else:
+        rows = observations.for_session(_conn, tenant=tenant, session_id=session, limit=limit)
+    return {"observations": rows}
+
+
+@app.get("/learn/status")
+def learn_status(tenant: Optional[str] = None, scopes: Optional[str] = None,
+                 authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    _authorize_read(authorization, scopes, tenant)
+    return learn.status(_conn, tenant)
+
+
+@app.get("/learn/skills")
+def learn_skills(tenant: Optional[str] = None, pending: bool = True,
+                 scopes: Optional[str] = None,
+                 authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    _authorize_read(authorization, scopes, tenant)
+    return {"skills": learn.list_skills(_conn, tenant, pending_only=pending)}
+
+
+@app.get("/learn/skills/{name}/diff")
+def learn_skill_diff(name: str, tenant: Optional[str] = None, scopes: Optional[str] = None,
+                     authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    if not tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    _authorize_read(authorization, scopes, tenant)
+    try:
+        return learn.skill_diff(_conn, tenant, name)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _learn_authorized(req: LearnMutationReq, authorization: Optional[str]):
+    if not req.tenant:
+        raise HTTPException(status_code=422, detail="tenant is required")
+    return _authorize_write(authorization, req.scope, req.owner, req.tenant)
+
+
+@app.post("/learn/skills/{name}/approve")
+def learn_skill_approve(name: str, req: LearnMutationReq,
+                        authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    _learn_authorized(req, authorization)
+    try:
+        return learn.approve_skill(_conn, req.tenant, name)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/learn/skills/{name}/reject")
+def learn_skill_reject(name: str, req: LearnMutationReq,
+                       authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    _learn_authorized(req, authorization)
+    try:
+        return learn.reject_skill(_conn, req.tenant, name)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/learn/skills/{name}/rollback")
+def learn_skill_rollback(name: str, req: LearnRollbackReq,
+                         authorization: Optional[str] = Header(default=None)):
+    from . import learn
+    _learn_authorized(req, authorization)
+    try:
+        return learn.rollback_skill(_conn, req.tenant, name, req.version)
+    except learn.LearnError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 # --- URL ingestion (M4) -------------------------------------------------------
 class IngestUrlReq(BaseModel):
@@ -1210,11 +1584,10 @@ def memory_write(req: MemoryReq, authorization: Optional[str] = Header(default=N
     """Write an agent memory (redacted, chunked, embedded) into the agent's own
     scope. Returns the scope so the caller knows where to recall from.
 
-    Local-first v1: refused in server mode — hosted deployments need real
-    per-agent authn (M4 backlog item I3) before agents write cross-network.
+    Local mode: open. Service mode: admin API key (per-agent authn remains the
+    M4 backlog item I3; admin keys are the interim operator gate).
     """
-    if _server_mode():
-        raise HTTPException(403, "agent memory writes are local-mode only for now")
+    _require_key_admin(authorization)
     agent = (req.agent or "").strip().lower()
     if not _AGENT_NAME_RE.match(agent):
         raise HTTPException(422, "agent must match ^[a-z0-9][a-z0-9_-]{0,39}$")
@@ -1285,6 +1658,60 @@ class FeedbackReq(BaseModel):
     note_id: str
     vote: int                      # +1 / -1
     query_hash: Optional[str] = None
+
+
+class FeedbackEventReq(BaseModel):
+    """A UI button became a ranking signal. The button's meaning lives in the
+    CALLER: any event name, any valence — 'email_sent' +1, 'draft_edited' -1,
+    'copied' +1 — Lore stores the event label and fans the vote out to the
+    artifact's evidence notes."""
+    event: str                          # free-form button/action name
+    vote: int                           # +1 (the artifact worked) or -1
+    note_ids: list[str]                 # evidence notes: citations, style sources...
+    weight: float = 1.0                 # 0 < w <= 1: soft signals (edit) vs hard (sent)
+    tenant: Optional[str] = None        # personal mode: defaults from the API key
+    query_hash: Optional[str] = None
+    source: Optional[str] = None        # surface: 'email-draft' | 'ask' | ...
+
+
+@app.post("/feedback/event")
+def feedback_event(req: FeedbackEventReq,
+                   authorization: Optional[str] = Header(default=None)):
+    """Generic implicit-feedback endpoint: one button press → per-note votes.
+
+    Same contract as /feedback (votes only land on notes that exist in the
+    tenant), batched over the artifact's evidence set and stamped with the
+    event name + weight — which also makes every press labeled training
+    exhaust for the learning-to-rank loop (2026-07-28 SLM spec §4)."""
+    tenant = req.tenant
+    if not tenant:
+        principal = _PRINCIPAL.get()
+        if principal:
+            tenant = principal["tenant_id"]
+    if not tenant:
+        raise HTTPException(422, "tenant is required in local mode")
+    ids = [n for n in dict.fromkeys(req.note_ids or []) if n][:50]
+    if not ids:
+        raise HTTPException(422, "note_ids must not be empty")
+    event = (req.event or "").strip()[:60]
+    if not event:
+        raise HTTPException(422, "event is required")
+    vote = 1 if req.vote > 0 else -1
+    weight = min(max(float(req.weight), 0.05), 1.0)
+    frag, params = in_clause("id", ids)
+    known = {r[0] for r in _conn.execute(
+        f"select id from notes where tenant_id=%s and {frag}",
+        (tenant, *params)).fetchall()}
+    label = f"{req.source}:{event}" if req.source else event
+    for nid in ids:
+        if nid not in known:
+            continue
+        _conn.execute(
+            "insert into feedback(tenant_id, note_id, vote, query_hash, event, weight) "
+            "values(%s,%s,%s,%s,%s,%s)",
+            (tenant, nid, vote, req.query_hash, label, weight))
+    return {"ok": True, "event": label, "vote": vote, "weight": weight,
+            "recorded": len(known & set(ids)), "skipped": len(ids) - len(known & set(ids))}
 
 
 @app.post("/feedback")
@@ -1418,7 +1845,7 @@ def get_note(note_id: str, tenant: Optional[str] = None, scopes: Optional[str] =
     """
     # Server-mode: authenticate and force the scope filter to the caller's own scopes
     # (never optional). Local mode: preserve the existing optional-filter behavior.
-    if _server_mode():
+    if _service_mode():
         _uid, srv_scopes, tenant = _authorize_read(authorization, scopes, tenant)
         scopes = ",".join(srv_scopes)
     active_tenant = tenant or active_profile().get("tenant")
@@ -1492,10 +1919,12 @@ def _count_tokens(text: str) -> int:
 
 class ContextPackReq(BaseModel):
     task: str
-    scopes: list[str]
-    tenant_id: str
+    # Optional since Phase B personal mode: key-authed callers omit both.
+    scopes: Optional[list[str]] = None
+    tenant_id: Optional[str] = None
     budget: int = 4000          # token budget for the pack body
     max_per_note: int = 2       # chunk dedupe cap per note
+    profile: Optional[str] = None   # named retrieval profile (see /profiles)
 
 
 @app.post("/context-pack")
@@ -1507,10 +1936,15 @@ def context_pack(req: ContextPackReq, embedder=Depends(get_embedder),
     cited. The output is designed to be pasted straight into an agent prompt
     (Hooks' lore-inject becomes budget-aware by calling this)."""
     _uid, scopes, tenant = _authorize_read(authorization, req.scopes, req.tenant_id)
+    if not tenant or not scopes:
+        raise HTTPException(422, "scopes and tenant_id are required in local mode")
     budget = max(200, min(req.budget, 32000))
+    profile, profile_name = _resolve_profile(tenant, req.profile)
     hits = retrieve(req.task, embedder, reranker, scopes, tenant,
                     limit=24, sparse_embedder=sparse,
-                    note_signals=_note_signals_provider(tenant, req.task))
+                    note_signals=_note_signals_provider(tenant, req.task),
+                    profile=profile,
+                    seed_note_ids=_tag_seed_ids(tenant, req.task, scopes))
     metas = _note_meta([h.note_id for h in hits])
 
     items, parts = [], []
@@ -1532,7 +1966,7 @@ def context_pack(req: ContextPackReq, embedder=Depends(get_embedder),
         parts.append(block)
         items.append({
             "note_id": h.note_id, "title": title, "heading_path": h.heading_path,
-            "score": round(h.score, 4), "tokens": t,
+            "score": round(h.score, 4), "tokens": t, "why": h.why,
         })
         if used >= budget:
             break
@@ -1543,14 +1977,17 @@ def context_pack(req: ContextPackReq, embedder=Depends(get_embedder),
         "tokens_total": used,
         "budget": budget,
         "scopes_used": list(scopes),
+        "profile": profile_name,
     }
 
 
 class SearchReq(BaseModel):
     query: str
-    scopes: list[str]
+    # Optional since Phase B personal mode: key-authed callers omit both.
+    scopes: Optional[list[str]] = None
     k: int = 10
-    tenant_id: str
+    tenant_id: Optional[str] = None
+    profile: Optional[str] = None      # named retrieval profile (see /profiles)
 
 @app.post("/search")
 def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_reranker),
@@ -1566,13 +2003,16 @@ def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_
     """
     if not req.query or not req.query.strip():
         raise HTTPException(status_code=422, detail="query must not be blank")
-    if not req.scopes or not any(s.strip() for s in req.scopes):
-        raise HTTPException(status_code=422, detail="scopes is required and must not be empty")
     _uid, scopes, tenant = _authorize_read(authorization, req.scopes, req.tenant_id)
+    if not tenant or not scopes or not any(s.strip() for s in scopes):
+        raise HTTPException(status_code=422, detail="scopes and tenant_id are required in local mode")
     k = max(1, min(req.k, 50))
+    profile, profile_name = _resolve_profile(tenant, req.profile)
     hits = retrieve(req.query, embedder, reranker, scopes, tenant,
                     limit=k, sparse_embedder=sparse,
-                    note_signals=_note_signals_provider(tenant, req.query))
+                    note_signals=_note_signals_provider(tenant, req.query),
+                    profile=profile,
+                    seed_note_ids=_tag_seed_ids(tenant, req.query, scopes))
     # Fetch note metadata (title, scope) for the returned hits in one query.
     note_ids = list(dict.fromkeys(h.note_id for h in hits))
     note_meta = {}
@@ -1595,7 +2035,90 @@ def search(req: SearchReq, embedder=Depends(get_embedder), reranker=Depends(get_
             "score": round(h.score, 4),
         })
     _audit("search", tenant, _uid, scopes, req.query, len(hits))
-    return {"results": results, "scopes_used": list(scopes)}
+    return {"results": results, "scopes_used": list(scopes), "profile": profile_name}
+
+
+class RebuildReq(BaseModel):
+    confirm: bool = False
+
+
+@app.post("/admin/rebuild-index")
+def admin_rebuild_index(req: RebuildReq,
+                        authorization: Optional[str] = Header(default=None)):
+    """Re-embed every note with the current model. DESTRUCTIVE: drops the whole
+    vector collection first (all tenants — one collection holds them all), then
+    regenerates from `notes.body`.
+
+    Root-only, deliberately outside the /api/v1 contract: an admin recovery lever,
+    not product surface. Uses the UNGATED embedder, because the case this exists
+    for is exactly the one where the gate is refusing every other request.
+    """
+    _require_key_admin(authorization)
+    if not req.confirm:
+        raise HTTPException(400, "destructive: pass confirm=true to drop and "
+                                 "regenerate every vector")
+    return rebuild_index(_conn, _build_embedder(), get_sparse_embedder())
+
+
+# --- Named retrieval profiles ----------------------------------------------
+# Retrieval tuning as data: several apps share ONE engine process and each still
+# gets its own recency/rerank/entity weights, instead of needing its own daemon
+# with its own env vars (which is what per-app tuning used to require).
+
+class ProfileReq(BaseModel):
+    """A profile's name plus any RetrievalProfile knobs to override.
+    Unknown knobs are rejected (400) rather than silently ignored."""
+    model_config = {"extra": "allow"}
+    name: str
+    tenant_id: Optional[str] = None
+
+
+def _profile_tenant(authorization, tenant):
+    """Tenant for a profile-management call; requires identity in service mode."""
+    if _service_mode():
+        require_user(authorization)
+        tenant = tenant or (_PRINCIPAL.get() or {}).get("tenant_id")
+    if not tenant:
+        raise HTTPException(422, "tenant is required")
+    return tenant
+
+
+@app.post("/profiles")
+def create_profile(req: ProfileReq, authorization: Optional[str] = Header(default=None)):
+    """Create or update a named retrieval profile for a tenant."""
+    tenant = _profile_tenant(authorization, req.tenant_id)
+    knobs = dict(req.model_extra or {})
+    knobs["name"] = req.name
+    try:
+        profile = profiles_mod.save_profile(_conn, tenant, profiles_mod.from_dict(knobs))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+    return {"profile": profiles_mod.to_dict(profile)}
+
+
+@app.get("/profiles")
+def list_profiles(tenant: Optional[str] = None,
+                  authorization: Optional[str] = Header(default=None)):
+    t = _profile_tenant(authorization, tenant)
+    return {"profiles": [profiles_mod.to_dict(p)
+                         for p in profiles_mod.list_profiles(_conn, t)]}
+
+
+@app.get("/profiles/{name}")
+def get_profile(name: str, tenant: Optional[str] = None,
+                authorization: Optional[str] = Header(default=None)):
+    t = _profile_tenant(authorization, tenant)
+    p = profiles_mod.load_profile(_conn, t, name)
+    if p is None:
+        raise HTTPException(404, f"unknown retrieval profile: {name}")
+    return {"profile": profiles_mod.to_dict(p)}
+
+
+@app.delete("/profiles/{name}")
+def delete_profile(name: str, tenant: Optional[str] = None,
+                   authorization: Optional[str] = Header(default=None)):
+    t = _profile_tenant(authorization, tenant)
+    return {"deleted": profiles_mod.delete_profile(_conn, t, name)}
 
 
 # --- Upkeep state (in-process; reset on restart) ---
@@ -1611,6 +2134,8 @@ class UpkeepRunReq(BaseModel):
     auto_file: bool = False          # opt-in (cfg.autoFileObvious): record unambiguous notes
                                      # into existing applied sections (state only; desktop moves)
     auto_journal: bool = False       # opt-in (cfg.autoJournal): materialize a daily journal note
+    classify_burst: bool = False     # onboarding burst: loop classification past the
+                                     # 80/run cap (max 2,000 notes) for bulk dumps
 
 @app.post("/upkeep/run")
 def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
@@ -1637,6 +2162,20 @@ def upkeep_run(req: UpkeepRunReq, embedder=Depends(get_embedder)):
     # the column existed) gets it derived now from its source file, so the graph
     # date-scrubber keeps improving as upkeep runs without a separate user action.
     stats["createdBackfilled"] = backfill_created_at(_conn, req.tenant)
+    # Onboarding burst (2026-07-21 cold-start findings): the 80-notes-per-run
+    # classification cap is right for trickle capture but means a 3k dump
+    # takes ~38 daily runs to organize. classify_burst loops classification
+    # until coverage or the burst budget (2,000 notes / 25 loops) is reached.
+    if req.classify_burst and req.auto_classify:
+        from .classify import classify_untagged
+        burst_tagged = 0
+        for _ in range(25):
+            s = classify_untagged(_conn, req.tenant, scope=req.scope)
+            burst_tagged += s["notesTagged"]
+            if s["notesTagged"] == 0 or s["status"] == "provider-unavailable" \
+                    or burst_tagged >= 2000:
+                break
+        stats["burstTagged"] = burst_tagged
     # Opportunistic relation enrichment: typed edges (depends_on/supersedes/…)
     # for notes whose body changed, small batch per pass so upkeep stays cheap.
     # Degrades cleanly when no LLM provider is configured (status in stats).
@@ -1677,6 +2216,9 @@ class SectionApplyReq(BaseModel):
 
 class SectionReq(BaseModel):
     tenant: str
+    # undo only: land in 'dismissed' (sticky) instead of 'proposed'. Auto-apply
+    # mode sets this so an undone section is not re-applied on the next upkeep run.
+    dismiss: bool = False
 
 class SectionCreateReq(BaseModel):
     tenant: str
@@ -1709,6 +2251,181 @@ def sections_apply(section_id: str, req: SectionApplyReq):
         raise HTTPException(status_code=409, detail=str(e))
 
 
+# --- User-owned memory documents -------------------------------------------
+
+class PersonalMemoryWriteReq(BaseModel):
+    tenant: str
+    owner: str
+    scope: str
+    text: str
+    origin_session: Optional[str] = None
+
+
+class PersonalMemoryMutationReq(BaseModel):
+    tenant: str
+    owner: str
+    scope: str
+
+
+class PersonalMemoryRollbackReq(PersonalMemoryMutationReq):
+    version: int
+
+
+@app.get("/learn/memory")
+def personal_memory_list(tenant: str, owner: str, scopes: str,
+                         authorization: Optional[str] = Header(default=None)):
+    user_id, effective_scopes, tenant = _authorize_read(
+        authorization, _as_scope_list(scopes), tenant)
+    effective_owner = user_id or owner
+    if not effective_owner:
+        raise HTTPException(status_code=422, detail="owner is required")
+    return {"documents": personal_memory.list_documents(
+        _conn, tenant, effective_owner, effective_scopes)}
+
+
+@app.get("/learn/memory/export")
+def personal_memory_export(tenant: str, owner: str, scope: str,
+                           authorization: Optional[str] = Header(default=None)):
+    user_id, effective_scopes, tenant = _authorize_read(
+        authorization, [scope], tenant)
+    if scope not in effective_scopes:
+        raise HTTPException(status_code=403, detail="scope not authorized")
+    effective_owner = user_id or owner
+    if not effective_owner:
+        raise HTTPException(status_code=422, detail="owner is required")
+    return personal_memory.export_bundle(
+        _conn, tenant=tenant, owner=effective_owner, scope=scope)
+
+
+@app.put("/learn/memory/{kind}")
+def personal_memory_replace(kind: str, req: PersonalMemoryWriteReq,
+                            authorization: Optional[str] = Header(default=None)):
+    owner, scope, tenant = _authorize_write(
+        authorization, req.scope, req.owner, req.tenant)
+    try:
+        return personal_memory.replace_document(
+            _conn, tenant=tenant, owner=owner, scope=scope, kind=kind,
+            text=req.text, origin_session=req.origin_session,
+            embedder=_local_embedder(), sparse_embedder=_local_sparse())
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@app.get("/learn/memory/{kind}/history")
+def personal_memory_history(kind: str, tenant: str, owner: str, scope: str,
+                            authorization: Optional[str] = Header(default=None)):
+    user_id, effective_scopes, tenant = _authorize_read(
+        authorization, [scope], tenant)
+    if scope not in effective_scopes:
+        raise HTTPException(status_code=403, detail="scope not authorized")
+    try:
+        versions = personal_memory.history(
+            _conn, tenant=tenant, owner=user_id or owner, scope=scope, kind=kind)
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"versions": versions}
+
+
+@app.post("/learn/memory/{kind}/rollback")
+def personal_memory_rollback(kind: str, req: PersonalMemoryRollbackReq,
+                             authorization: Optional[str] = Header(default=None)):
+    owner, scope, tenant = _authorize_write(
+        authorization, req.scope, req.owner, req.tenant)
+    try:
+        return personal_memory.rollback_document(
+            _conn, tenant=tenant, owner=owner, scope=scope, kind=kind,
+            version=req.version, embedder=_local_embedder(),
+            sparse_embedder=_local_sparse())
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@app.delete("/learn/memory/{kind}")
+def personal_memory_delete(kind: str, req: PersonalMemoryMutationReq,
+                           authorization: Optional[str] = Header(default=None)):
+    owner, scope, tenant = _authorize_write(
+        authorization, req.scope, req.owner, req.tenant)
+    try:
+        deleted = personal_memory.delete_document(
+            _conn, tenant=tenant, owner=owner, scope=scope, kind=kind)
+    except personal_memory.PersonalMemoryError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"ok": True, "deleted": deleted}
+
+
+# --- First-class captured-session recall -----------------------------------
+
+class SessionRecallReq(BaseModel):
+    mode: str
+    tenant: str
+    scopes: list[str]
+    query: Optional[str] = None
+    note_id: Optional[str] = None
+    offset: int = 0
+    limit: int = 20
+
+
+@app.post("/sessions/recall")
+def session_recall(req: SessionRecallReq, embedder=Depends(get_embedder),
+                   reranker=Depends(get_reranker), sparse=Depends(get_sparse_embedder),
+                   authorization: Optional[str] = Header(default=None)):
+    _, effective_scopes, tenant = _authorize_read(
+        authorization, req.scopes, req.tenant)
+    mode = (req.mode or "").strip().lower()
+    if mode == "browse":
+        return {"mode": mode, "sessions": sessions.browse(
+            _conn, tenant=tenant, scopes=effective_scopes, limit=req.limit)}
+    if mode == "scroll":
+        if not req.note_id:
+            raise HTTPException(status_code=422, detail="note_id is required for scroll")
+        result = sessions.scroll(
+            _conn, tenant=tenant, scopes=effective_scopes, note_id=req.note_id,
+            offset=req.offset, limit=req.limit)
+        if not result:
+            raise HTTPException(status_code=404, detail="session not found")
+        return {"mode": mode, **result}
+    if mode == "discovery":
+        if not (req.query or "").strip():
+            raise HTTPException(status_code=422, detail="query is required for discovery")
+        limit = max(1, min(int(req.limit), 50))
+        candidate_limit = min(50, max(limit, limit * 4))
+        hits = retrieve(
+            req.query, embedder, reranker, effective_scopes, tenant,
+            limit=candidate_limit, sparse_embedder=sparse,
+            note_signals=_note_signals_provider(tenant, req.query),
+            source_types=sessions.SOURCE_TYPES)
+        note_ids = list(dict.fromkeys(h.note_id for h in hits))
+        metadata = {}
+        if note_ids:
+            pred, params = in_clause("id", note_ids)
+            rows = _conn.execute(
+                f"select id,title,scope_id from notes where tenant_id=%s and {pred}",
+                (tenant, *params),
+            ).fetchall()
+            metadata = {r[0]: (r[1], r[2]) for r in rows}
+        results = []
+        seen_notes = set()
+        for h in hits:
+            if h.note_id in seen_notes:
+                continue
+            seen_notes.add(h.note_id)
+            results.append({
+                "note_id": h.note_id,
+                "title": metadata.get(h.note_id, (None, None))[0],
+                "scope": metadata.get(h.note_id, (None, None))[1],
+                "heading_path": h.heading_path,
+                "text": h.text,
+                "score": round(h.score, 4),
+                "why": "Matched your search",
+                "retrieval_trace": h.why,
+            })
+            if len(results) >= limit:
+                break
+        _audit("session-recall", tenant, None, effective_scopes, req.query, len(results))
+        return {"mode": mode, "sessions": results}
+    raise HTTPException(status_code=422, detail="mode must be browse, discovery, or scroll")
+
+
 @app.post("/sections/create")
 def sections_create(req: SectionCreateReq):
     """Create an APPLIED section from an explicit note set (chat-driven wizard
@@ -1733,11 +2450,12 @@ def sections_dismiss(section_id: str, req: SectionReq):
 
 @app.post("/sections/{section_id}/undo")
 def sections_undo(section_id: str, req: SectionReq):
-    """Revert an applied section to proposed; return the recorded original paths
-    so the DESKTOP can move the files back."""
+    """Revert an applied section to proposed (or dismissed when body sets
+    dismiss=true — auto-apply mode's anti-reapply guard); return the recorded
+    original paths so the DESKTOP can move the files back."""
     from . import sections
     try:
-        return sections.undo_section(_conn, req.tenant, section_id)
+        return sections.undo_section(_conn, req.tenant, section_id, dismiss=req.dismiss)
     except sections.SectionError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -2173,8 +2891,309 @@ def upkeep_status():
     return {"lastRun": _upkeep_last_run, **_upkeep_last_stats}
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def home():
-    path = os.path.join(os.path.dirname(__file__), "static", "app.html")
-    with open(path, encoding="utf-8") as f:
-        return f.read()
+    """Headless service banner (the desktop web UI was retired with lore-arch)."""
+    from .version import ENGINE_VERSION, API_VERSION
+    return {"engine": "lore", "engine_version": ENGINE_VERSION,
+            "api_version": API_VERSION, "health": "/api/v1/health", "docs": "/docs"}
+
+
+# --- API key management (/api/v1/keys) ---------------------------------------
+# Bootstrap: in LOCAL mode (no LORE_API_KEYS/LORE_SERVER_MODE) creation is open —
+# the box owner mints their first admin key before enabling service mode. Once
+# service mode is on, key management requires an ADMIN-role key.
+
+class KeyCreateReq(BaseModel):
+    user_id: str
+    label: str = ""
+    role: str = "member"          # member | admin
+    tenant: Optional[str] = None  # defaults to the admin key's tenant in service mode
+    email: Optional[str] = None   # enables team-invite accept for this key's user
+
+
+def _require_key_admin(authorization) -> Optional[dict]:
+    """Service mode: only an admin-role API key may manage keys. Local mode: open."""
+    if not _service_mode():
+        return None
+    require_user(authorization)
+    principal = _PRINCIPAL.get()
+    if not principal or principal.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="admin API key required")
+    return principal
+
+
+@app.post("/api/v1/keys", tags=["v1"])
+def keys_create(req: KeyCreateReq, authorization: Optional[str] = Header(default=None)):
+    admin = _require_key_admin(authorization)
+    tenant = req.tenant or (admin["tenant_id"] if admin else None) or "default"
+    if req.role not in ("member", "admin"):
+        raise HTTPException(422, "role must be member|admin")
+    if req.email:
+        _conn.execute(
+            "insert into users(id, email) values(%s,%s) "
+            "on conflict (id) do update set email=excluded.email",
+            (req.user_id, req.email))
+    return apikeys.create_key(_conn, tenant, req.user_id, req.label, role=req.role)
+
+
+@app.get("/api/v1/keys", tags=["v1"])
+def keys_list(tenant: Optional[str] = None,
+              authorization: Optional[str] = Header(default=None)):
+    admin = _require_key_admin(authorization)
+    t = tenant or (admin["tenant_id"] if admin else None) or "default"
+    return {"keys": apikeys.list_keys(_conn, t)}
+
+
+@app.delete("/api/v1/keys/{key_id}", tags=["v1"])
+def keys_revoke(key_id: str, tenant: Optional[str] = None,
+                authorization: Optional[str] = Header(default=None)):
+    admin = _require_key_admin(authorization)
+    t = tenant or (admin["tenant_id"] if admin else None) or "default"
+    apikeys.revoke_key(_conn, t, key_id)
+    return {"revoked": key_id}
+
+
+# --- Scopes + teams surface (/api/v1) ----------------------------------------
+
+class ScopeCreateReq(BaseModel):
+    name: str
+
+
+class GrantReq(BaseModel):
+    user_id: str
+    role: str = "read"
+
+
+class TeamCreateReq(BaseModel):
+    name: str
+
+
+class TeamInviteReq(BaseModel):
+    email: str
+    role: str = "member"
+
+
+def _require_principal(authorization):
+    """Authenticated caller for the scopes/teams surface. Returns (user_id, tenant).
+    Key principals carry their tenant; JWT callers default to 'default'."""
+    user_id = require_user(authorization)
+    principal = _PRINCIPAL.get()
+    return user_id, (principal["tenant_id"] if principal else "default")
+
+
+@app.post("/api/v1/scopes", tags=["v1"])
+def scopes_create(req: ScopeCreateReq,
+                  authorization: Optional[str] = Header(default=None)):
+    user_id, tenant = _require_principal(authorization)
+    try:
+        return scopes_mod.create_scope(_conn, tenant, user_id, req.name)
+    except scopes_mod.ScopeError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/v1/scopes", tags=["v1"])
+def scopes_list(authorization: Optional[str] = Header(default=None)):
+    user_id, tenant = _require_principal(authorization)
+    return {"scopes": scopes_mod.list_scopes(_conn, tenant, user_id)}
+
+
+@app.post("/api/v1/scopes/{scope_id}/grants", tags=["v1"])
+def scopes_grant(scope_id: str, req: GrantReq,
+                 authorization: Optional[str] = Header(default=None)):
+    user_id, tenant = _require_principal(authorization)
+    try:
+        return scopes_mod.grant(_conn, tenant, scope_id, req.user_id, req.role,
+                                granted_by=user_id)
+    except scopes_mod.ScopeError as e:
+        raise HTTPException(403, str(e))
+
+
+@app.delete("/api/v1/scopes/{scope_id}/grants/{user_id}", tags=["v1"])
+def scopes_revoke_grant(scope_id: str, user_id: str,
+                        authorization: Optional[str] = Header(default=None)):
+    caller, tenant = _require_principal(authorization)
+    try:
+        scopes_mod.revoke_grant(_conn, tenant, scope_id, user_id, revoked_by=caller)
+    except scopes_mod.ScopeError as e:
+        raise HTTPException(403, str(e))
+    return {"revoked": {"scope_id": scope_id, "user_id": user_id}}
+
+
+@app.post("/api/v1/teams", tags=["v1"])
+def teams_create_v1(req: TeamCreateReq,
+                    authorization: Optional[str] = Header(default=None)):
+    user_id, _tenant = _require_principal(authorization)
+    try:
+        return tenancy.create_team(_conn, req.name, owner_user_id=user_id)
+    except tenancy.InviteError as e:
+        raise HTTPException(422, str(e))
+
+
+@app.get("/api/v1/sections", tags=["v1"])
+def v1_sections_list(authorization: Optional[str] = Header(default=None)):
+    _user, tenant = _require_principal(authorization)
+    from . import sections
+    return {"sections": sections.list_sections(_conn, tenant)}
+
+
+@app.post("/api/v1/sections/{section_id}/apply", tags=["v1"])
+def v1_sections_apply(section_id: str,
+                      authorization: Optional[str] = Header(default=None)):
+    """Metadata-only apply: marks the section applied and claims its notes
+    (STATE, exactly what the engine records). No filesystem moves happen here —
+    the returned plan is for whatever owns the files (desktop, a sync agent)."""
+    _user, tenant = _require_principal(authorization)
+    from . import sections
+    try:
+        return sections.apply_section(_conn, tenant, section_id)
+    except sections.SectionError:
+        raise HTTPException(404, "no such section")
+
+
+@app.get("/api/v1/wizards", tags=["v1"])
+def v1_wizards_list(authorization: Optional[str] = Header(default=None)):
+    _user, tenant = _require_principal(authorization)
+    from . import sections
+    return {"wizards": sections.list_personal_wizards(_conn, tenant)}
+
+
+@app.get("/api/v1/wizards/{wizard_id}", tags=["v1"])
+def v1_wizard_get(wizard_id: str,
+                  authorization: Optional[str] = Header(default=None)):
+    _user, tenant = _require_principal(authorization)
+    from . import sections
+    try:
+        return {"notes": sections.wizard_notes(_conn, tenant, wizard_id),
+                "chat": sections.wizard_chat(_conn, tenant, wizard_id)}
+    except sections.SectionError:
+        raise HTTPException(404, "no such wizard")
+
+
+class WizardMsgReq(BaseModel):
+    role: str = "user"
+    text: str
+
+
+@app.post("/api/v1/wizards/{wizard_id}/chat", tags=["v1"])
+def v1_wizard_chat_append(wizard_id: str, req: WizardMsgReq,
+                          authorization: Optional[str] = Header(default=None)):
+    _user, tenant = _require_principal(authorization)
+    from . import sections
+    try:
+        mid = sections.append_wizard_chat(_conn, tenant, wizard_id,
+                                          req.role, req.text)
+    except sections.SectionError:
+        raise HTTPException(404, "no such wizard")
+    return {"message_id": mid}
+
+
+@app.post("/api/v1/invites/{invite_id}/accept", tags=["v1"])
+def invites_accept_v1(invite_id: str,
+                      authorization: Optional[str] = Header(default=None)):
+    """Accept a pending team invite as the authenticated caller. The caller's
+    email comes from the users table (set at key creation) — never from the
+    request, so an invite can only be claimed by its addressee."""
+    user_id, _tenant = _require_principal(authorization)
+    row = _conn.execute("select email from users where id=%s", (user_id,)).fetchone()
+    if not row or not row[0]:
+        raise HTTPException(422, "no email on record for this user "
+                                 "(recreate the key with an email)")
+    try:
+        return tenancy.accept_invite(_conn, invite_id, user_id, row[0])
+    except tenancy.InviteError as e:
+        raise HTTPException(403, str(e))
+
+
+@app.post("/api/v1/teams/{team_id}/invites", tags=["v1"])
+def teams_invite_v1(team_id: str, req: TeamInviteReq,
+                    authorization: Optional[str] = Header(default=None)):
+    user_id, _tenant = _require_principal(authorization)
+    try:
+        return tenancy.invite_to_team(_conn, team_id, req.email,
+                                      invited_by=user_id, role=req.role)
+    except tenancy.InviteError as e:
+        raise HTTPException(403, str(e))
+
+
+# --- File upload + bulk export (/api/v1) -------------------------------------
+
+_UPLOAD_EXTS = {".md", ".txt", ".pdf", ".docx"}
+_UPLOAD_MAX = 25 * 1024 * 1024
+
+
+@app.post("/api/v1/files", tags=["v1"])
+async def files_upload(file: UploadFile = FastFile(...),
+                       source_id: Optional[str] = Form(default=None),
+                       title: Optional[str] = Form(default=None),
+                       scope: Optional[str] = Form(default=None),
+                       tenant: Optional[str] = Form(default=None),
+                       owner: Optional[str] = Form(default=None),
+                       authorization: Optional[str] = Header(default=None)):
+    """Upload a document (md/txt/pdf/docx) and index it through the full lore
+    pipeline: distill/extract (incl. the OCR router for scanned PDFs) → chunk →
+    embed → store. The remote-service twin of local /reindex."""
+    import tempfile
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in _UPLOAD_EXTS:
+        raise HTTPException(422, f"unsupported file type '{ext}' (md/txt/pdf/docx)")
+    blob = await file.read()
+    if len(blob) > _UPLOAD_MAX:
+        raise HTTPException(413, "file exceeds 25 MB upload cap")
+    w_owner, w_scope, w_tenant = _authorize_write(authorization, scope, owner, tenant)
+    if not (w_scope and w_owner and w_tenant):
+        raise HTTPException(422, "scope, owner and tenant are required in local mode")
+    tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
+    try:
+        tmp.write(blob)
+        tmp.close()
+        derived_id, d_title, md, _prov = distill_document(tmp.name)
+        if not (md or "").strip():
+            raise HTTPException(422, "no extractable text in the uploaded file")
+        nid = source_id or f"file-{hashlib.sha256(blob).hexdigest()[:16]}"
+        embedder = FakeEmbedder() if _FAKE else LocalEmbedder()
+        sparse = None if _FAKE else LocalSparseEmbedder()
+        n = index_document(
+            source_id=nid, title=title or d_title or (file.filename or nid),
+            text=md, scope_id=w_scope, owner_id=w_owner, tenant_id=w_tenant,
+            embedder=embedder, conn=_conn, sparse_embedder=sparse,
+            source_type="file")
+        return {"ok": True, "note_id": nid, "chunks": n,
+                "extracted_chars": len(md)}
+    finally:
+        try:
+            os.unlink(tmp.name)
+        except OSError:
+            pass
+
+
+@app.get("/api/v1/export", tags=["v1"])
+def export_notes(tenant: Optional[str] = None, scopes: Optional[str] = None,
+                 authorization: Optional[str] = Header(default=None)):
+    """Bulk data-out: every note the caller may read, lossless bodies included.
+    Service mode: scoped to the caller's authorized scopes. Local mode: tenant
+    (and optionally scopes) must be explicit."""
+    _uid, eff_scopes, tenant = _authorize_read(authorization, scopes, tenant)
+    if not tenant:
+        raise HTTPException(422, "tenant is required in local mode")
+    q = ("select id, title, scope_id, source_type, created_at, updated_at, body "
+         "from notes where tenant_id=%s")
+    params = [tenant]
+    eff = _as_scope_list(eff_scopes)
+    if eff:
+        frag, vals = in_clause("scope_id", eff)
+        q += f" and {frag}"
+        params.extend(vals)
+    q += " order by updated_at, id"
+    notes = [{"id": r[0], "title": r[1], "scope": r[2], "source_type": r[3],
+              "created_at": str(r[4] or ""), "updated_at": str(r[5] or ""),
+              "body": r[6]}
+             for r in _conn.execute(q, params).fetchall()]
+    return {"count": len(notes), "tenant": tenant, "scopes": eff or "all",
+            "notes": notes}
+
+
+# --- /api/v1: the frozen, versioned product contract ------------------------
+# Mounted LAST so every allowlisted root route above is declared and mirrorable.
+from .api_v1 import mount_v1  # noqa: E402
+mount_v1(app)

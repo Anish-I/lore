@@ -58,6 +58,20 @@ def ensure_collection(dim, with_sparse=False):
     ensure_text_index()  # always (idempotent) so the exact-identifier lane works
 
 
+def drop_collection() -> bool:
+    """Delete the whole collection — every vector. Used only by a rebuild, where
+    the vectors are about to be regenerated from the relational source of truth.
+    Returns False if there was nothing to drop."""
+    try:
+        existing = [c.name for c in _client.get_collections().collections]
+    except Exception:
+        return False
+    if COLLECTION not in existing:
+        return False
+    _client.delete_collection(COLLECTION)
+    return True
+
+
 def delete_note(note_id: str) -> None:
     """Delete all Qdrant points whose payload note_id matches the given note_id.
 
@@ -119,15 +133,23 @@ def upsert(points):
     _client.upsert(COLLECTION, points=struct_points)
 
 
-def search(vector, allowed_scope_ids, tenant_id, limit=40):
+def _search_filter(allowed_scope_ids, tenant_id, source_types=None, should=None):
+    must = [
+        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
+        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
+    ]
+    if source_types:
+        must.append(qm.FieldCondition(
+            key="source_type", match=qm.MatchAny(any=list(source_types))))
+    return qm.Filter(must=must, should=should)
+
+
+def search(vector, allowed_scope_ids, tenant_id, limit=40, source_types=None):
     """Dense-only ANN search over the named "dense" vector.
 
     Note: _client.search() was removed in qdrant-client 1.7+; using query_points instead.
     """
-    flt = qm.Filter(must=[
-        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
-        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
-    ])
+    flt = _search_filter(allowed_scope_ids, tenant_id, source_types)
     res = _client.query_points(
         collection_name=COLLECTION,
         query=vector,
@@ -155,15 +177,12 @@ def ensure_text_index():
         except Exception:
             pass
 
-def search_exact(token, allowed_scope_ids, tenant_id, limit=10):
+def search_exact(token, allowed_scope_ids, tenant_id, limit=10, source_types=None):
     """Filter-only retrieval of chunks whose text, heading path, or note title
     literally contains the token (used as an exact-identifier lane). ACL-filtered.
     Returns payload dicts. Payloads written before the 'title' field existed still
     match via the text clause."""
-    flt = qm.Filter(must=[
-        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
-        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
-    ], should=[
+    flt = _search_filter(allowed_scope_ids, tenant_id, source_types, should=[
         qm.FieldCondition(key="text", match=qm.MatchText(text=token)),
         qm.FieldCondition(key="heading_path", match=qm.MatchText(text=token)),
         qm.FieldCondition(key="title", match=qm.MatchText(text=token)),
@@ -175,12 +194,24 @@ def search_exact(token, allowed_scope_ids, tenant_id, limit=10):
     return [dict(p.payload) for p in pts]
 
 
-def search_sparse(sparse_vector, allowed_scope_ids, tenant_id, limit=40):
+def fetch_by_notes(note_ids, allowed_scope_ids, tenant_id, limit=24, source_types=None):
+    """ACL-filtered chunk fetch for explicit notes — the tag-seed lane
+    (2026-07-29): chunks of query-tag-matched notes join the rerank pool even
+    when the dense/sparse lanes missed them. Returns payload dicts."""
+    if not note_ids:
+        return []
+    flt = _search_filter(allowed_scope_ids, tenant_id, source_types)
+    flt.must.append(qm.FieldCondition(key="note_id", match=qm.MatchAny(any=list(note_ids))))
+    try:
+        pts, _ = _client.scroll(COLLECTION, scroll_filter=flt, limit=limit, with_payload=True)
+    except Exception:
+        return []
+    return [dict(p.payload) for p in pts]
+
+
+def search_sparse(sparse_vector, allowed_scope_ids, tenant_id, limit=40, source_types=None):
     """BM25-only sparse search over the "bm25" named sparse vector (for tracing/UI)."""
-    flt = qm.Filter(must=[
-        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
-        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
-    ])
+    flt = _search_filter(allowed_scope_ids, tenant_id, source_types)
     sv = qm.SparseVector(indices=sparse_vector["indices"], values=sparse_vector["values"])
     res = _client.query_points(
         collection_name=COLLECTION, query=sv, using="bm25",
@@ -189,7 +220,8 @@ def search_sparse(sparse_vector, allowed_scope_ids, tenant_id, limit=40):
     return [{"score": r.score, **r.payload} for r in res.points]
 
 
-def search_hybrid(dense_vector, sparse_vector, allowed_scope_ids, tenant_id, limit=40):
+def search_hybrid(dense_vector, sparse_vector, allowed_scope_ids, tenant_id, limit=40,
+                  source_types=None):
     """Two-lane prefetch (dense ANN + BM25 sparse) fused via Qdrant RRF.
 
     ACL filter is applied inside each prefetch lane so tenant/scope access
@@ -199,10 +231,7 @@ def search_hybrid(dense_vector, sparse_vector, allowed_scope_ids, tenant_id, lim
     Returns the same structure as search(): list of {score, **payload} dicts,
     where score is Qdrant's RRF-fused relevance score.
     """
-    flt = qm.Filter(must=[
-        qm.FieldCondition(key="tenant_id", match=qm.MatchValue(value=tenant_id)),
-        qm.FieldCondition(key="scope_ids", match=qm.MatchAny(any=list(allowed_scope_ids))),
-    ])
+    flt = _search_filter(allowed_scope_ids, tenant_id, source_types)
     sv = qm.SparseVector(
         indices=sparse_vector["indices"],
         values=sparse_vector["values"],

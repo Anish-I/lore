@@ -1,8 +1,8 @@
 import datetime, hashlib, os, re, uuid
-from . import qdrant_store
+from . import embed_identity, qdrant_store
 from .chunker import chunk_markdown
 from .contextualize import apply_context
-from .distill import distill_md
+from .distill import distill_document
 from . import relations
 
 # --- Edge extraction constants ---
@@ -32,6 +32,19 @@ def _parse_fm_datetime(raw):
     except ValueError:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=datetime.timezone.utc)
+
+
+def parse_created_at(raw):
+    """Parse a caller-supplied ISO-8601 creation timestamp (``2023-05-20`` or
+    ``2023-05-20T09:30:00Z``) to a tz-aware UTC datetime, or None if unparseable.
+
+    Public seam for API callers that KNOW a document's real creation date —
+    importers and the eval harness replaying dated corpora. It feeds the same
+    `mtime` tier as a file's mtime, so document frontmatter still wins.
+    """
+    if not raw:
+        return None
+    return _parse_fm_datetime(raw)
 
 
 def derive_created_at(text, mtime=None):
@@ -214,9 +227,21 @@ def memory_type_of(source_type: str) -> str:
     return "durable"
 
 
+def _persist_doc_nodes(conn, tenant_id, note_id, nodes, builder_version):
+    """Replace a note's derived doc_nodes rows (caller clears old rows first)."""
+    for n in nodes:
+        conn.execute(
+            "insert into doc_nodes(id,tenant_id,note_id,parent_id,title,level,"
+            "page_start,page_end,source,confidence,builder_version) "
+            "values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (n.id, tenant_id, note_id, n.parent_id, n.title, n.level,
+             n.page_start, n.page_end, n.source, n.confidence, builder_version))
+
+
 def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                    embedder, conn, sparse_embedder=None, path=None,
-                   source_type="note", content_hash=None, mtime=None):
+                   source_type="note", content_hash=None, mtime=None,
+                   provenance=None):
     """Index a document (note or external source) into Postgres + Qdrant.
 
     This is the shared indexing spine.  index_note() reads a file then delegates
@@ -241,8 +266,43 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     Returns:
         Number of indexed chunks (0 if the document produced no chunks).
     """
+    # Ingest hygiene (2026-07-21 cold-start findings): redact BEFORE anything
+    # is stored or embedded. /capture already redacts upstream (idempotent);
+    # this closes the gap for directly indexed files — dumped exports carry
+    # credentials, and the stored body is served verbatim by GET /notes/{id}.
+    from .redact import redact as _redact
+    text = _redact(text or "")
+
+    # Doc-tree structure pass (LORE_DOC_TREE, default off): rewrite flat
+    # `## Page N` markdown into a real heading hierarchy BEFORE the body is
+    # stored/chunked, so chunks inherit rich heading_paths. structure.build is
+    # never-worse-than-off (returns the original text on any failure). Runs
+    # after redact: node titles must come from redacted text. Nodes are
+    # persisted after the notes upsert (doc_nodes FK references notes.id).
+    from . import structure as _structure
+    _doc_nodes = []
+    builder_version = None
+    if _structure.enabled() and _structure._PAGE_MARKER_RE.search(text):
+        text, _doc_nodes = _structure.build(
+            title, text, provenance, note_id=source_id, llm=None)
+        builder_version = _structure.BUILDER_VERSION
+
     # Compute and store the original body (lossless round-trip; chunk text is NOT lossless).
     body_sha256 = hashlib.sha256(text.encode()).hexdigest()
+
+    # Cross-note exact-duplicate detection (same tenant, same redacted body,
+    # different id). Duplicates cost 8.9% of top-5 answer slots on the raw-dump
+    # sim; the copy's note row is still stored (body stays readable) but it is
+    # NOT chunked or embedded, so retrieval sees one instance.
+    # Only an INDEXED note (one that owns chunks) counts as the canonical —
+    # otherwise re-ingesting the canonical would dedup itself against one of
+    # its own skipped copies (the check must not be symmetric).
+    _dup_row = conn.execute(
+        "select n.id from notes n where n.tenant_id=%s and n.body_sha256=%s "
+        "and n.id<>%s and exists (select 1 from chunks c where c.note_id=n.id) "
+        "limit 1",
+        (tenant_id, body_sha256, source_id)).fetchone()
+    duplicate_of = _dup_row[0] if _dup_row else None
 
     # The note's REAL creation time (frontmatter → mtime → first-seen). Stored as an
     # ISO string (both sqlite's `timestamp` converter and PG's timestamptz parse it).
@@ -256,8 +316,8 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     conn.execute(
         """insert into notes(id, tenant_id, owner_id, scope_id, source_path, title,
                              source_type, memory_type, body, body_sha256, content_hash,
-                             created_at, updated_at)
-           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+                             builder_version, created_at, updated_at)
+           values(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
            on conflict (id) do update
            set title=excluded.title, scope_id=excluded.scope_id,
                owner_id=excluded.owner_id, source_path=excluded.source_path,
@@ -265,12 +325,30 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
                memory_type=excluded.memory_type,
                body=excluded.body, body_sha256=excluded.body_sha256,
                content_hash=excluded.content_hash,
+               builder_version=excluded.builder_version,
                created_at=coalesce(notes.created_at, excluded.created_at),
                updated_at=now()""",
         (source_id, tenant_id, owner_id, scope_id, path, title, source_type,
          memory_type_of(source_type),
-         text, body_sha256, content_hash, created_at),
+         text, body_sha256, content_hash, builder_version, created_at),
     )
+
+    # Doc-tree nodes: disposable derived structure, replaced wholesale each
+    # (re)index. Old rows always cleared; new rows only for notes that will own
+    # chunks — a dedup-skipped copy owns no chunks, so it owns no tree either
+    # (stale_notes would otherwise flag the copy forever once the flag is off).
+    conn.execute("delete from doc_nodes where note_id=%s", (source_id,))
+
+    if duplicate_of:
+        # Exact duplicate of an already-indexed note: keep the row, skip the
+        # index. Clears stale chunks/vectors in case this note USED to be the
+        # canonical copy of earlier content.
+        conn.execute("delete from chunks where note_id=%s", (source_id,))
+        qdrant_store.delete_note(source_id)
+        return 0
+
+    if builder_version is not None:
+        _persist_doc_nodes(conn, tenant_id, source_id, _doc_nodes, builder_version)
 
     chunks = apply_context(chunk_markdown(source_id, text), title, llm=None)
     if not chunks:
@@ -281,6 +359,9 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
 
     texts = [c.has_context_text() for c in chunks]
     vectors = embedder.embed(texts)
+    # Bind the collection to this model (or refuse if it belongs to another one).
+    # Before the first write, so a swapped embedder can never reach the store.
+    embed_identity.enforce(conn, embed_identity.identity_of(embedder, len(vectors[0])))
     qdrant_store.ensure_collection(len(vectors[0]), with_sparse=sparse_embedder is not None)
     qdrant_store.delete_note(source_id)
 
@@ -359,10 +440,48 @@ def index_document(*, source_id, title, text, scope_id, owner_id, tenant_id,
     return len(points)
 
 
+def rebuild_index(conn, embedder, sparse_embedder=None) -> dict:
+    """Re-embed every note from scratch with the CURRENT model.
+
+    The recovery path the embedding-identity guard points at. Vectors from a
+    different model cannot be translated into a new space, so the only correct
+    response to a model change is to regenerate them — which is possible because
+    `notes.body` is the source of truth and the vector index is derived.
+
+    GLOBAL, not per-tenant: one Qdrant collection holds every tenant's vectors, so
+    dropping it for one tenant would destroy the others'. Order matters — the drop
+    comes first, because rebinding while old vectors remain is exactly the
+    corruption the guard exists to prevent.
+
+    Re-runnable: a run that dies partway leaves a partial index that the next run
+    rebuilds from the same source rows.
+    """
+    rows = conn.execute(
+        "select id, title, body, scope_id, owner_id, tenant_id, source_path, source_type "
+        "from notes where body is not null and body <> '' order by id").fetchall()
+
+    qdrant_store.drop_collection()
+    conn.execute("delete from chunks")
+    embed_identity.unbind(conn)
+
+    chunks = 0
+    for nid, title, body, scope_id, owner_id, tenant_id, path, source_type in rows:
+        chunks += index_document(
+            source_id=nid, title=title or nid, text=body, scope_id=scope_id,
+            owner_id=owner_id, tenant_id=tenant_id, embedder=embedder, conn=conn,
+            sparse_embedder=sparse_embedder, path=path,
+            source_type=source_type or "note")
+    ident = embed_identity.recorded(conn)
+    return {"notes": len(rows), "chunks": chunks,
+            "model_id": ident.model_id if ident else None,
+            "dim": ident.dim if ident else None}
+
+
 def index_note(path, embedder, conn, owner_id, scope_id, tenant_id, sparse_embedder=None):
     """Index a markdown file into Postgres + Qdrant.
 
-    Reads the file via distill_md, then delegates to index_document.
+    Reads the file via distill_document (provenance included), then delegates
+    to index_document.
 
     Args:
         sparse_embedder: Optional SparseEmbedder instance.  When provided, BM25
@@ -370,7 +489,7 @@ def index_note(path, embedder, conn, owner_id, scope_id, tenant_id, sparse_embed
             enabling hybrid search in the recall layer.  When None (default) only
             dense vectors are stored (existing behaviour, all tests green).
     """
-    note_id, title, md = distill_md(path)
+    note_id, title, md, provenance = distill_document(path)
     try:
         mtime = os.path.getmtime(path)
     except OSError:
@@ -379,7 +498,7 @@ def index_note(path, embedder, conn, owner_id, scope_id, tenant_id, sparse_embed
         source_id=note_id, title=title, text=md,
         scope_id=scope_id, owner_id=owner_id, tenant_id=tenant_id,
         embedder=embedder, conn=conn, sparse_embedder=sparse_embedder,
-        path=path, mtime=mtime,
+        path=path, mtime=mtime, provenance=provenance,
     )
 
 

@@ -32,9 +32,17 @@ def main():
         return
     import uvicorn
     port = int(os.environ.get("LORE_PORT", "8099"))
+    # LORE_BIND beyond localhost requires the API-key service mode — fail closed:
+    # never expose the unauthenticated local data plane to a network.
+    host = os.environ.get("LORE_BIND", "127.0.0.1")
+    if host not in ("127.0.0.1", "localhost") and \
+            os.environ.get("LORE_API_KEYS") != "1" and \
+            os.environ.get("LORE_SERVER_MODE") != "1":
+        sys.exit(f"refusing to bind {host}: set LORE_API_KEYS=1 (or LORE_SERVER_MODE=1) "
+                 "to expose the API beyond localhost")
     # import here so a --collect-all of lore happens via this module's import graph
     from lore.api import app
-    uvicorn.run(app, host="127.0.0.1", port=port, log_level="warning")
+    uvicorn.run(app, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

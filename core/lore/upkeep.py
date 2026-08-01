@@ -523,6 +523,13 @@ def run_upkeep(conn, embedder, tenant: str, scope: str = None,
         from . import classify as classify_mod
         result["classify"] = classify_mod.classify_untagged(
             conn, tenant, llm_call=classify_llm, scope=scope)
+        # Hub split runs AFTER classification (fresh counts) and BEFORE propose
+        # (sections must form on the split sub-topics, not the hub). Numeric
+        # trigger + LLM reassignment; no-op without a provider (hub_split.py).
+        from . import hub_split as hub_split_mod
+        if hub_split_mod.enabled():
+            result["hubSplit"] = hub_split_mod.split_hubs(
+                conn, tenant, llm_call=classify_llm)
     # Auto-file (opt-in, OFF by default) runs AFTER classification (fresh topics
     # count) and BEFORE propose (filed notes are claimed → never re-proposed).
     # State only: the returned moves are executed by the desktop, never here.

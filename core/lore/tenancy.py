@@ -26,6 +26,21 @@ _SCHEMA = [
          status text default 'pending',
          created_at timestamptz default now(), accepted_at timestamptz,
          accepted_by text)""",
+    """create table if not exists api_keys (
+         id text primary key, tenant_id text not null, user_id text not null,
+         key_hash text unique not null, label text, role text default 'member',
+         created_at timestamptz default now(), last_used timestamptz,
+         revoked integer default 0,
+         profile text)""",
+    """create table if not exists scopes (
+         scope_id text primary key, tenant_id text not null, name text not null,
+         owner_user_id text not null, scope_type text default 'shared',
+         created_at timestamptz default now())""",
+    """create table if not exists scope_grants (
+         scope_id text not null, user_id text not null,
+         role text not null check (role in ('read','write')),
+         granted_by text, created_at timestamptz default now(),
+         primary key (scope_id, user_id))""",
 ]
 
 # SQLite variant of the tenancy DDL: mirrors _SCHEMA above with dialect-legal
@@ -50,15 +65,43 @@ _SCHEMA_SQLITE = [
          status text default 'pending',
          created_at timestamp default current_timestamp, accepted_at timestamp,
          accepted_by text)""",
+    """create table if not exists api_keys (
+         id text primary key, tenant_id text not null, user_id text not null,
+         key_hash text unique not null, label text, role text default 'member',
+         created_at timestamp default current_timestamp, last_used timestamp,
+         revoked integer default 0,
+         profile text)""",
+    """create table if not exists scopes (
+         scope_id text primary key, tenant_id text not null, name text not null,
+         owner_user_id text not null, scope_type text default 'shared',
+         created_at timestamp default current_timestamp)""",
+    """create table if not exists scope_grants (
+         scope_id text not null, user_id text not null,
+         role text not null check (role in ('read','write')),
+         granted_by text, created_at timestamp default current_timestamp,
+         primary key (scope_id, user_id))""",
 ]
 
 
+# api_keys.profile (retrieval-profile binding) for stores created before it
+# shipped: CREATE TABLE IF NOT EXISTS won't add a column to an existing table.
+# PG takes ADD COLUMN IF NOT EXISTS; SQLite has no such form, so it gets the bare
+# ALTER and the try/except absorbs "duplicate column" on the second run.
+_MIGRATIONS = ["alter table api_keys add column if not exists profile text"]
+_MIGRATIONS_SQLITE = ["alter table api_keys add column profile text"]
+
+
 def bootstrap_tenancy(conn) -> None:
-    """Create the tenancy tables. Idempotent — safe on every server start."""
+    """Create or migrate the tenancy tables. Idempotent — safe on every server start."""
     from . import db as _db
-    stmts = _SCHEMA_SQLITE if isinstance(conn, _db._SqliteConn) else _SCHEMA
-    for stmt in stmts:
+    sqlite = isinstance(conn, _db._SqliteConn)
+    for stmt in (_SCHEMA_SQLITE if sqlite else _SCHEMA):
         conn.execute(stmt)
+    for stmt in (_MIGRATIONS_SQLITE if sqlite else _MIGRATIONS):
+        try:
+            conn.execute(stmt)
+        except Exception:
+            pass  # column already present
 
 
 def team_scope_id(team_id) -> str:
@@ -82,10 +125,22 @@ def authorized_team_scope_ids(conn, user_id: str) -> list[str]:
     return [team_scope_id(r[0]) for r in rows]
 
 
+def granted_scope_ids(conn, user_id: str) -> list[str]:
+    """Named scopes the user OWNS or holds a grant on (Phase C scopes/grants).
+    Server-side source of truth, same trust posture as team memberships."""
+    rows = conn.execute(
+        "select scope_id from scopes where owner_user_id=%s "
+        "union select scope_id from scope_grants where user_id=%s",
+        (user_id, user_id)).fetchall()
+    return [r[0] for r in rows]
+
+
 def authorize_scopes(conn, user_id: str, requested) -> list:
     """Scopes the server will query with. Without a request → all authorized scopes.
-    With a request → requested ∩ authorized, so a client can never widen its access."""
+    With a request → requested ∩ authorized, so a client can never widen its access.
+    Authorized = team scopes (membership) ∪ named scopes (ownership/grants)."""
     authorized = set(authorized_team_scope_ids(conn, user_id))
+    authorized.update(granted_scope_ids(conn, user_id))
     if not requested:
         return sorted(authorized)
     return sorted(authorized.intersection(requested))

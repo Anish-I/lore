@@ -1,0 +1,25 @@
+{
+  "eval": "inbox-tagging-ellington-api",
+  "date": "2026-07-28",
+  "baseline": "inbox-tagging-ellington-494-roles-2026-07-27.json (engine-level role run)",
+  "harness": {
+    "path": "pure HTTP against lore.api on 127.0.0.1:8123 (fresh sqlite, VAULT_FAKE embedder, codex CLI low effort)",
+    "flow": "POST /api/v1/ingest x494 (11s) -> POST /upkeep/run {auto_classify, classify_burst} (2083s, one call) -> GET /api/v1/notes/{id} read-back",
+    "note": "first end-to-end validation of the unified lore-arch engine (post two-fork merge, commit 63b24b9)"
+  },
+  "gates": {
+    "G1_spam_recall_by_solicitation_or_bulk": {"got": 1.000, "floor": 0.85, "pass": true},
+    "G2_nonspam_roled_solicitation": {"got": 0.000, "ceiling": 0.05, "pass": true},
+    "G3_human_mail_roled_correspondence": {"got": 0.965, "floor": 0.90, "pass": true},
+    "G4_distinct_topics": {"got": 42, "ceiling": 40, "pass": false, "engine_run": 40},
+    "G5_topic_class_purity": {"got": 0.767, "floor": 0.75, "pass": true, "engine_run": 0.753}
+  },
+  "role_distribution": {"correspondence": 357, "bulk": 97, "solicitation": 40,
+    "engine_run": {"correspondence": 358, "bulk": 96, "solicitation": 40}},
+  "notes": [
+    "Role axis reproduced EXACTLY at scale across two independent runs (spam recall 1.000 twice, roles within +/-1 email) - the role signal is stable, not a lucky draw.",
+    "G4 failed at 42 topics (engine run: 40, gate: 40) - the fragmentation wobble predicted in the 07-27 artifact ('G4/G5 sit exactly at their limits; watch on reruns'). Purity actually IMPROVED (0.767 vs 0.753). Remedy options: wire topic_merge into the eval before counting, or accept 40+/-5 with a purity floor.",
+    "API quirk found: /upkeep/run classify_burst returns only the FINAL internal batch's classify stats ({'notesTagged': 80}) while the DB shows all 494 tagged - burst should aggregate stats across its internal loops. Phase B polish item.",
+    "Service path fully validated: boot on fresh DB, v1 handshake, 494 ingests in 11s, single burst call classifies everything, note read-back over v1."
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "root": "C:\\Users\\ivatu\\Downloads\\anish-test-extract\\ANISH TEST",
+  "total_files": 789,
+  "supported_files": 50,
+  "file_types": {
+    ".pdf": 788,
+    ".docx": 1
+  },
+  "ingest": {
+    "indexed_with_chunks": 50,
+    "extracted_but_empty": 0,
+    "errored": 0,
+    "extraction_success_rate": 1.0,
+    "avg_chunks_per_doc": 1.7,
+    "seconds": 170.0,
+    "docs_per_sec": 0.29,
+    "ocr_pages": 22,
+    "ocr_review_pages": 18
+  },
+  "connections": {
+    "folder": 192,
+    "total": 192
+  },
+  "organization": {
+    "classified": 0,
+    "distinct_topics": 0,
+    "gold_folders": 2,
+    "top_topics": [],
+    "pairwise_vs_folders": {
+      "precision": null,
+      "recall": null,
+      "f1": null
+    },
+    "classifier": "deterministic-fallback",
+    "llm_tagged": 0
+  },
+  "sections": {
+    "proposed": 0,
+    "detail": []
+  }
+}

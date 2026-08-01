@@ -15,7 +15,10 @@ lore-mcp = "lore.mcp_server:main"
 # pymupdf: exercised by tests/test_extract.py (extract.py imports fitz lazily;
 # the desktop bundle ships it, a bare `pip install -e core` doesn't).
 dev = ["pytest","httpx","pymupdf"]
-local = ["fastembed"]   # offline semantic embeddings + cross-encoder rerank (no API key)
+# local = every offline model lane: embeddings + rerank + OCR (no API key).
+# OCR rides along so scanned PDFs work out of the box (ocr.enabled() is 'auto').
+local = ["fastembed","pymupdf","rapidocr-onnxruntime==1.4.4"]
+ocr = ["pymupdf","rapidocr-onnxruntime==1.4.4"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -110,6 +110,6 @@ def test_doctor_endpoint_refused_in_server_mode():
     os.environ["LORE_SERVER_MODE"] = "1"
     try:
         r = client.get("/doctor")
-        assert r.status_code == 403
+        assert r.status_code in (401, 403)  # refused: admin key required since loop-closure
     finally:
         os.environ.pop("LORE_SERVER_MODE", None)

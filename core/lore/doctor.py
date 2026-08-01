@@ -75,6 +75,37 @@ def check_model_cache(cache_root: Path = None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# index identity
+# ---------------------------------------------------------------------------
+
+def check_index_identity(conn, embedder, collection=None) -> dict:
+    """Is the running embedder the one that built the index?
+
+    A mismatch does not crash anything on its own — same-dimension models swap
+    cleanly and every query keeps returning confident nonsense. This is the check
+    that makes that visible.
+    """
+    from . import embed_identity
+    have = embed_identity.recorded(conn, collection)
+    live = getattr(embedder, "model_id", type(embedder).__name__)
+    if have is None:
+        return {"name": "index-identity", "ok": True,
+                "detail": "nothing indexed yet — the first write binds the model",
+                "fix": None}
+    if have.model_id == live:
+        return {"name": "index-identity", "ok": True,
+                "detail": f"index built with {have.model_id} ({have.dim}-dim), running the same",
+                "fix": None}
+    return {
+        "name": "index-identity",
+        "ok": False,
+        "detail": f"index built with {have.model_id} ({have.dim}-dim) but "
+                  f"{live} is running — every query is scored in the wrong vector space",
+        "fix": "rebuild the index with the running model, or restore the previous one",
+    }
+
+
+# ---------------------------------------------------------------------------
 # vector store
 # ---------------------------------------------------------------------------
 

@@ -1,6 +1,16 @@
+import os
+
 import tiktoken
 from .models import Chunk
 _enc = tiktoken.get_encoding("cl100k_base")
+
+# G2 (2026-07-20 ceiling-gaps doc): enrich EVERY chunk, not just short/pronoun
+# ones. The two-stage payload split (embed enriched text, rerank raw text) is
+# already in place, so full enrichment lifts dense recall without the near-dup
+# blur that made enriched-text reranking crater r@1. Env-gated for ablation;
+# default OFF until the bucketed gate passes. Requires re-index to take effect.
+_CONTEXT_ALL = os.environ.get("LORE_CONTEXT_ALL", "0") == "1"
+
 
 def needs_context(chunk: Chunk) -> bool:
     # heuristic: short chunks or chunks with dangling pronouns need situating
@@ -22,7 +32,7 @@ def build_context(note_title: str, chunk: Chunk, llm=None) -> str:
 
 def apply_context(chunks, note_title, llm=None):
     for c in chunks:
-        if needs_context(c):
+        if _CONTEXT_ALL or needs_context(c):
             c.context = build_context(note_title, c, llm=llm)
             c.has_context = True
     return chunks
