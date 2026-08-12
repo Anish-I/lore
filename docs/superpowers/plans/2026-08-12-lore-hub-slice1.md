@@ -106,6 +106,7 @@ line-length = 100
 ```
 __pycache__/
 .pytest_cache/
+.venv/
 data/
 .env
 *.egg-info/

@@ -1,0 +1,11 @@
+{
+  "name": "ct-clerk-puppeteer-discovery",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "dependencies": {
+    "puppeteer": "25.3.0"
+  }
+}

@@ -60,3 +60,8 @@ core/pyi-spec/
 ruvector.db
 *.rvf
 *.rvf.lock
+
+# session scratch & generated artifacts
+tmp/
+output/
+.claude/settings.local.json

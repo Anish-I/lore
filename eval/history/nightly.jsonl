@@ -15,3 +15,8 @@
 {"ts": "2026-07-25T03:00:07", "backend": "down"}
 {"ts": "2026-07-26T03:00:06", "backend": "down"}
 {"ts": "2026-07-27T03:00:06", "backend": "down"}
+{"ts": "2026-07-28T03:00:06", "backend": "down"}
+{"ts": "2026-07-31T03:01:47", "tenant": "solo", "queries": 46, "scored": 46, "stale_gold": 0, "kinds": {"paraphrase": {"n": 40, "recall@1": 0.0, "recall@5": 0.0, "mrr": 0.0}, "exact": {"n": 6, "recall@1": 0.0, "recall@5": 0.0, "mrr": 0.0}}, "recall@5": 0.0, "p50_ms": 2133.4, "p95_ms": 2667.7, "tokens_top5_avg": 55, "session_echo": 1.0}
+{"ts": "2026-08-01T03:01:43", "tenant": "solo", "queries": 46, "scored": 46, "stale_gold": 0, "kinds": {"paraphrase": {"n": 40, "recall@1": 0.0, "recall@5": 0.0, "mrr": 0.0}, "exact": {"n": 6, "recall@1": 0.0, "recall@5": 0.0, "mrr": 0.0}}, "recall@5": 0.0, "p50_ms": 2164.4, "p95_ms": 2190.8, "tokens_top5_avg": 78, "session_echo": 0.974}
+{"ts": "2026-08-02T03:00:05", "backend": "down"}
+{"ts": "2026-08-03T03:01:46", "tenant": "solo", "queries": 46, "scored": 46, "stale_gold": 0, "kinds": {"paraphrase": {"n": 40, "recall@1": 0.0, "recall@5": 0.0, "mrr": 0.0}, "exact": {"n": 6, "recall@1": 0.0, "recall@5": 0.0, "mrr": 0.0}}, "recall@5": 0.0, "p50_ms": 2188.1, "p95_ms": 2465.5, "tokens_top5_avg": 141, "session_echo": 0.983}
